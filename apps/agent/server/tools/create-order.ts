@@ -95,14 +95,13 @@ async function fetchUnitPriceWithFallback(
 export async function createOrderTool({
   client,
   impersonationId,
-  message: _message,
   token,
   createOrderParams: params
 }: CreateOrderToolInput): Promise<Record<string, unknown>> {
   const dataAsOf = new Date().toISOString();
   const sources = ['ghostfolio_api'];
 
-  if (!params || !params.symbol?.trim() || !params.type) {
+  if (!params?.symbol?.trim() || !params?.type) {
     return {
       success: true,
       needsClarification: true,

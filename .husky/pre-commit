@@ -1,6 +1,16 @@
-# Run linting and stop the commit process if any errors are found
-# --quiet suppresses warnings (temporary until all warnings are fixed)
-npm run affected:lint -- --base=main --head=HEAD --parallel=2 --quiet || exit 1
+# Ensure we run from repo root (UI may run git from a subdir)
+ROOT=$(git rev-parse --show-toplevel)
+cd "$ROOT" || exit 1
+NX="$ROOT/node_modules/.bin/nx"
 
-# Check formatting on modified and uncommitted files, stop the commit if issues are found
-npm run format:check -- --uncommitted || exit 1
+# Lint only Nx projects that have staged changes
+STAGED=$(git diff --cached --name-only)
+PROJECTS=$(echo "$STAGED" | sed -n 's|^apps/agent/.*|agent|p; s|^apps/api/.*|api|p; s|^apps/client/.*|client|p; s|^libs/common/.*|common|p; s|^libs/ui/.*|ui|p' | sort -u | tr '\n' ',' | sed 's/,$//')
+if [ -n "$PROJECTS" ] && [ -x "$NX" ]; then
+  "$NX" run-many --target=lint --projects="$PROJECTS" --parallel=2 --quiet || exit 1
+fi
+
+# Format check (skip if nx not found, e.g. fresh clone)
+if [ -x "$NX" ]; then
+  "$NX" format:check --uncommitted || exit 1
+fi

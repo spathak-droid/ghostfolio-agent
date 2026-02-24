@@ -19,4 +19,5 @@ RUN npm run build:agent-widget
 EXPOSE 4444
 ENV NODE_ENV=production
 
-CMD ["npx", "ts-node", "apps/agent/server/index.ts"]
+# Use standalone tsconfig so we don't depend on repo-root tsconfig.base.json in the image
+CMD ["npx", "ts-node", "--project", "apps/agent/tsconfig.docker.json", "apps/agent/server/index.ts"]

@@ -26,7 +26,6 @@ function asNumber(v: unknown): number | undefined {
 export async function updateOrderTool({
   client,
   impersonationId,
-  message: _message,
   token,
   updateOrderParams: params
 }: UpdateOrderToolInput): Promise<Record<string, unknown>> {
