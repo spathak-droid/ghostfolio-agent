@@ -1,6 +1,18 @@
-export function scoreConfidence({ hasErrors, invalid }: { hasErrors: boolean; invalid: boolean }) {
+export function scoreConfidence({
+  hasErrors,
+  invalid,
+  hasCriticalFlags
+}: {
+  hasErrors: boolean;
+  invalid: boolean;
+  hasCriticalFlags?: boolean;
+}) {
   if (hasErrors) {
     return 0.3;
+  }
+
+  if (hasCriticalFlags) {
+    return 0.4;
   }
 
   if (invalid) {

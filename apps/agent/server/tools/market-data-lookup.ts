@@ -2,14 +2,16 @@ import { GhostfolioClient } from '../ghostfolio-client';
 
 export async function marketDataLookupTool({
   client,
+  impersonationId,
   message,
   token
 }: {
   client: GhostfolioClient;
+  impersonationId?: string;
   message: string;
   token?: string;
 }) {
-  const data = await client.getMarketData(token);
+  const data = await client.getMarketData({ impersonationId, token });
 
   return {
     message,

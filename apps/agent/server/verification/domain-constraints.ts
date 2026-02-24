@@ -1,4 +1,8 @@
-export function applyDomainConstraints(answer: string, existingFlags: string[]) {
+export function applyDomainConstraints(
+  answer: string,
+  existingFlags: string[],
+  options?: { intent?: 'finance' | 'general' }
+) {
   const flags = [...existingFlags];
   const lowered = answer.toLowerCase();
 
@@ -10,8 +14,14 @@ export function applyDomainConstraints(answer: string, existingFlags: string[]) 
     flags.push('deterministic_financial_advice');
   }
 
+  const intent = options?.intent ?? 'finance';
+  const effectiveFlags =
+    intent === 'general'
+      ? flags.filter((flag) => flag !== 'missing_provenance')
+      : flags;
+
   return {
-    flags,
-    isValid: flags.length === 0
+    flags: effectiveFlags,
+    isValid: effectiveFlags.length === 0
   };
 }

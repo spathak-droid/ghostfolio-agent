@@ -1,8 +1,9 @@
 import { createAgent } from '../agent';
+import { SELECTABLE_TOOL_NAMES } from '../tools/tool-registry';
 
 export interface EvalCase {
   input: string;
-  expectedTool?: 'market_data_lookup' | 'portfolio_analysis' | 'transaction_categorize';
+  expectedTool?: (typeof SELECTABLE_TOOL_NAMES)[number];
   expectedContains?: string;
   expectedFlag?: string;
 }
@@ -17,14 +18,43 @@ export interface EvalSummary {
 export async function runEvalCases(cases: EvalCase[]): Promise<EvalSummary> {
   const agent = createAgent({
     tools: {
+      getTransactions: async () => {
+        return {
+          data_as_of: '2026-02-24T00:00:00Z',
+          sources: ['ghostfolio_api'],
+          summary: 'Fetched 0 transactions from Ghostfolio',
+          transactions: []
+        };
+      },
       marketDataLookup: async () => {
-        return { summary: 'Market data lookup from Ghostfolio API' };
+        return {
+          data_as_of: '2026-02-24T00:00:00Z',
+          sources: ['ghostfolio_api'],
+          summary: 'Market data lookup from Ghostfolio API'
+        };
       },
       portfolioAnalysis: async () => {
-        return { summary: 'Diversified portfolio composition' };
+        return {
+          data_as_of: '2026-02-24T00:00:00Z',
+          sources: ['ghostfolio_api'],
+          summary: 'Portfolio analysis from Ghostfolio data'
+        };
       },
       transactionCategorize: async ({ message }) => {
-        return { input: message, summary: 'Categorized transactions' };
+        return {
+          data_as_of: '2026-02-24T00:00:00Z',
+          input: message,
+          sources: ['agent_internal'],
+          summary: 'Transaction categorization completed'
+        };
+      },
+      transactionTimeline: async () => {
+        return {
+          data_as_of: '2026-02-24T00:00:00Z',
+          sources: ['agent_internal'],
+          summary: 'Found 0 matching transactions',
+          timeline: []
+        };
       }
     }
   });

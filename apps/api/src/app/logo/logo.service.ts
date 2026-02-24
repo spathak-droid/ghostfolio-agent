@@ -2,9 +2,14 @@ import { ConfigurationService } from '@ghostfolio/api/services/configuration/con
 import { SymbolProfileService } from '@ghostfolio/api/services/symbol-profile/symbol-profile.service';
 import { AssetProfileIdentifier } from '@ghostfolio/common/interfaces';
 
-import { HttpException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { DataSource } from '@prisma/client';
-import { StatusCodes, getReasonPhrase } from 'http-status-codes';
+
+/** 1x1 transparent PNG so missing-logo requests return 200 and avoid console 404s. */
+const TRANSPARENT_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64'
+);
 
 @Injectable()
 export class LogoService {
@@ -16,12 +21,9 @@ export class LogoService {
   public async getLogoByDataSourceAndSymbol({
     dataSource,
     symbol
-  }: AssetProfileIdentifier) {
+  }: AssetProfileIdentifier): Promise<{ buffer: Buffer; type: string }> {
     if (!DataSource[dataSource]) {
-      throw new HttpException(
-        getReasonPhrase(StatusCodes.NOT_FOUND),
-        StatusCodes.NOT_FOUND
-      );
+      return this.getPlaceholder();
     }
 
     const [assetProfile] = await this.symbolProfileService.getSymbolProfiles([
@@ -29,17 +31,29 @@ export class LogoService {
     ]);
 
     if (!assetProfile?.url) {
-      throw new HttpException(
-        getReasonPhrase(StatusCodes.NOT_FOUND),
-        StatusCodes.NOT_FOUND
-      );
+      return this.getPlaceholder();
     }
 
-    return this.getBuffer(assetProfile.url);
+    try {
+      return await this.getBuffer(assetProfile.url);
+    } catch {
+      return this.getPlaceholder();
+    }
   }
 
-  public getLogoByUrl(aUrl: string) {
-    return this.getBuffer(aUrl);
+  public async getLogoByUrl(aUrl: string): Promise<{ buffer: Buffer; type: string }> {
+    try {
+      return await this.getBuffer(aUrl);
+    } catch {
+      return this.getPlaceholder();
+    }
+  }
+
+  private getPlaceholder(): { buffer: Buffer; type: string } {
+    return {
+      buffer: TRANSPARENT_PNG,
+      type: 'image/png'
+    };
   }
 
   private async getBuffer(aUrl: string) {

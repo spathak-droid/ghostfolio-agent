@@ -111,7 +111,15 @@ export class HttpResponseInterceptor implements HttpInterceptor {
             });
           }
         } else if (error.status === StatusCodes.UNAUTHORIZED) {
-          if (!error.url.includes('/data-providers/ghostfolio/status')) {
+          const requestUrl = error.url ?? '';
+          const isSessionEndpoint =
+            requestUrl.includes('/api/v1/user') ||
+            requestUrl.includes('/api/v1/auth');
+          const shouldIgnoreUnauthorized =
+            requestUrl.includes('/data-providers/ghostfolio/status') ||
+            !isSessionEndpoint;
+
+          if (!shouldIgnoreUnauthorized) {
             if (this.webAuthnService.isEnabled()) {
               this.router.navigate(internalRoutes.webauthn.routerLink);
             } else {

@@ -1,11 +1,19 @@
+import 'dotenv/config';
+
 import express from 'express';
 import { existsSync } from 'fs';
+import { appendFileSync } from 'fs';
+import { join } from 'path';
 
 import { createAgent } from './agent';
+import { normalizeAuthToken } from './auth-token';
 import { GhostfolioClient } from './ghostfolio-client';
+import { createOpenAiClientFromEnv } from './openai-client';
+import { getTransactionsTool } from './tools/get-transactions';
 import { marketDataLookupTool } from './tools/market-data-lookup';
 import { portfolioAnalysisTool } from './tools/portfolio-analysis';
 import { transactionCategorizeTool } from './tools/transaction-categorize';
+import { transactionTimelineTool } from './tools/transaction-timeline';
 import { resolveWidgetCorsOrigin, resolveWidgetDistPath } from './widget-static';
 
 const app = express();
@@ -17,17 +25,79 @@ const widgetDistPath = resolveWidgetDistPath(
 );
 const widgetCorsOrigin = resolveWidgetCorsOrigin(process.env.AGENT_WIDGET_CORS_ORIGIN);
 const ghostfolioClient = new GhostfolioClient(ghostfolioBaseUrl);
+const llm = createOpenAiClientFromEnv();
 
+// traceable() calls the tool with (runtimeTrace, input); use second arg when present so token is passed
+function toolInput(
+  a: unknown,
+  b?: {
+    impersonationId?: string;
+    message: string;
+    token?: string;
+    transactions?: Record<string, unknown>[];
+  }
+): {
+  impersonationId?: string;
+  message: string;
+  token?: string;
+  transactions?: Record<string, unknown>[];
+} {
+  if (b && typeof b.message === 'string') return b;
+  return a as {
+    impersonationId?: string;
+    message: string;
+    token?: string;
+    transactions?: Record<string, unknown>[];
+  };
+}
+// Tool Registry execution wiring: each tool in TOOL_DEFINITIONS is implemented below and passed to the agent.
 const agent = createAgent({
+  llm,
   tools: {
-    marketDataLookup: ({ message, token }) => {
-      return marketDataLookupTool({ client: ghostfolioClient, message, token });
+    getTransactions: (a, b) => {
+      const { impersonationId, message, token } = toolInput(a, b);
+      return getTransactionsTool({
+        client: ghostfolioClient,
+        impersonationId,
+        message,
+        token
+      });
     },
-    portfolioAnalysis: ({ message, token }) => {
-      return portfolioAnalysisTool({ client: ghostfolioClient, message, token });
+    marketDataLookup: (a, b) => {
+      const { impersonationId, message, token } = toolInput(a, b);
+      return marketDataLookupTool({
+        client: ghostfolioClient,
+        impersonationId,
+        message,
+        token
+      });
     },
-    transactionCategorize: ({ message, token }) => {
-      return transactionCategorizeTool({ message, token });
+    portfolioAnalysis: (a, b) => {
+      const { impersonationId, message, token } = toolInput(a, b);
+      return portfolioAnalysisTool({
+        client: ghostfolioClient,
+        impersonationId,
+        message,
+        token
+      });
+    },
+    transactionCategorize: (a, b) => {
+      const { impersonationId, message, token, transactions } = toolInput(a, b);
+      return transactionCategorizeTool({
+        impersonationId,
+        message,
+        token,
+        transactions
+      });
+    },
+    transactionTimeline: (a, b) => {
+      const { impersonationId, message, token, transactions } = toolInput(a, b);
+      return transactionTimelineTool({
+        impersonationId,
+        message,
+        token,
+        transactions
+      });
     }
   }
 });
@@ -56,13 +126,50 @@ app.get('/health', (_request, response) => {
 });
 
 app.post('/chat', async (request, response) => {
-  const bearerHeader = request.headers.authorization;
-  const token = bearerHeader?.startsWith('Bearer ')
-    ? bearerHeader.slice('Bearer '.length)
-    : undefined;
+  const hasTokenFromHeader = Boolean(request.headers.authorization);
+  const hasTokenFromBody = Boolean(
+    typeof request.body?.accessToken === 'string' && request.body.accessToken.trim()
+  );
+  const token =
+    normalizeAuthToken(request.headers.authorization) ??
+    (typeof request.body?.accessToken === 'string' && request.body.accessToken.trim()
+      ? request.body.accessToken.trim()
+      : undefined);
+  const impersonationId =
+    typeof request.headers['impersonation-id'] === 'string'
+      ? request.headers['impersonation-id']
+      : undefined;
+
+  // #region agent log
+  try {
+    const logPath = join(process.cwd(), '.cursor', 'debug-af2e79.log');
+    appendFileSync(
+      logPath,
+      JSON.stringify({
+        location: 'agent/index.ts:chat',
+        message: 'agent received request',
+        hasTokenFromHeader,
+        hasTokenFromBody,
+        hasToken: Boolean(token),
+        ghostfolioBaseUrl,
+        timestamp: Date.now()
+      }) + '\n'
+    );
+  } catch {
+    // ignore
+  }
+  // eslint-disable-next-line no-console
+  console.log('[agent-auth] Agent received:', {
+    hasTokenFromHeader,
+    hasTokenFromBody,
+    hasToken: Boolean(token),
+    ghostfolioBaseUrl
+  });
+  // #endregion
 
   const chatResponse = await agent.chat({
     conversationId: request.body.conversationId,
+    impersonationId,
     message: request.body.message,
     token
   });

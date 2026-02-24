@@ -28,21 +28,53 @@ describe('AgentController', () => {
       chat: chatMock
     } as unknown as AgentService;
 
-    const controller = new AgentController(agentService, {
-      headers: { authorization: 'Bearer jwt-token' }
-    } as never);
+    const controller = new AgentController(agentService);
 
-    await controller.chat({
-      conversationId: 'conv-1',
-      message: 'Analyze my portfolio allocation'
-    });
+    await controller.chat(
+      {
+        conversationId: 'conv-1',
+        message: 'Analyze my portfolio allocation'
+      },
+      'Bearer jwt-token'
+    );
 
     expect(chatMock).toHaveBeenCalledWith(
       {
         conversationId: 'conv-1',
         message: 'Analyze my portfolio allocation'
       },
-      'Bearer jwt-token'
+      'Bearer jwt-token',
+      undefined
+    );
+  });
+
+  it('uses body accessToken when Authorization header is missing', async () => {
+    const chatMock = jest.fn().mockResolvedValue({
+      answer: 'Ok',
+      conversation: [],
+      errors: [],
+      toolCalls: [],
+      verification: { confidence: 0.5, isValid: true }
+    } satisfies AgentChatResponse);
+
+    const controller = new AgentController({
+      chat: chatMock
+    } as unknown as AgentService);
+
+    await controller.chat(
+      {
+        conversationId: 'c-1',
+        message: 'Hi',
+        accessToken: 'raw-jwt-token'
+      },
+      undefined,
+      undefined
+    );
+
+    expect(chatMock).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: 'c-1', message: 'Hi' }),
+      'Bearer raw-jwt-token',
+      undefined
     );
   });
 
@@ -62,11 +94,9 @@ describe('AgentController', () => {
     };
     responseMock.status.mockReturnValue(responseMock);
 
-    const controller = new AgentController(agentService, {
-      headers: {}
-    } as never);
+    const controller = new AgentController(agentService);
 
-    await controller.widgetAsset('index.js', responseMock as never);
+    await controller.widgetAssetSingle('index.js', responseMock as never);
 
     expect(agentService.fetchWidgetAsset).toHaveBeenCalledWith('index.js');
     expect(responseMock.status).toHaveBeenCalledWith(200);
@@ -77,5 +107,34 @@ describe('AgentController', () => {
     expect(responseMock.send).toHaveBeenCalledWith(
       Buffer.from('console.log("widget")')
     );
+  });
+
+  it('proxies nested widget asset responses', async () => {
+    const agentService = {
+      fetchWidgetAsset: jest.fn().mockResolvedValue({
+        body: Buffer.from('<svg/>'),
+        contentType: 'image/svg+xml',
+        status: 200
+      })
+    } as unknown as AgentService;
+
+    const responseMock = {
+      send: jest.fn(),
+      setHeader: jest.fn(),
+      status: jest.fn()
+    };
+    responseMock.status.mockReturnValue(responseMock);
+
+    const controller = new AgentController(agentService);
+
+    await controller.widgetAssetNested('asset', 'ghost.svg', responseMock as never);
+
+    expect(agentService.fetchWidgetAsset).toHaveBeenCalledWith('asset/ghost.svg');
+    expect(responseMock.status).toHaveBeenCalledWith(200);
+    expect(responseMock.setHeader).toHaveBeenCalledWith(
+      'Content-Type',
+      'image/svg+xml'
+    );
+    expect(responseMock.send).toHaveBeenCalledWith(Buffer.from('<svg/>'));
   });
 });

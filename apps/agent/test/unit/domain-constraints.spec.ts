@@ -10,4 +10,13 @@ describe('domain constraints', () => {
     expect(constrained.isValid).toBe(false);
     expect(constrained.flags).toContain('deterministic_financial_advice');
   });
+
+  it('allows general education responses without provenance flags', () => {
+    const constrained = applyDomainConstraints('Hello! How can I help?', ['missing_provenance'], {
+      intent: 'general'
+    });
+
+    expect(constrained.isValid).toBe(true);
+    expect(constrained.flags).not.toContain('missing_provenance');
+  });
 });

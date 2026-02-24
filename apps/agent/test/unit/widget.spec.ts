@@ -20,7 +20,13 @@ describe('agent widget mount', () => {
     expect(container.querySelector('.agent-widget--open')).toBeNull();
   });
 
-  it('appends a user message when the form is submitted with text', () => {
+  it('appends a user message when the form is submitted with text', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ answer: 'Agent reply' })
+    });
+    global.fetch = fetchMock;
+
     mountChatWidget(container);
 
     container
@@ -41,7 +47,19 @@ describe('agent widget mount', () => {
       '.agent-widget__message--user'
     );
     expect(messageItems.length).toBe(1);
-    expect(messageItems[0].textContent).toContain('Hello agent');
+    const userBody = messageItems[0].querySelector('.agent-widget__message-body');
+    expect(userBody?.textContent).toContain('Hello agent');
+
+    await Promise.resolve();
+    await Promise.resolve();
+    const assistantItems = container.querySelectorAll(
+      '.agent-widget__message--assistant'
+    );
+    expect(assistantItems.length).toBeGreaterThanOrEqual(1);
+    const replyMessage = Array.from(assistantItems).find(
+      (el) => el.querySelector('.agent-widget__message-body')?.textContent === 'Agent reply'
+    );
+    expect(replyMessage).toBeTruthy();
   });
 
   it('toggles the chatbox when the launcher is clicked', () => {
@@ -78,5 +96,22 @@ describe('agent widget mount', () => {
 
     closeButton!.click();
     expect(container.querySelector('.agent-widget--open')).toBeNull();
+  });
+
+  it('resolves launcher icon path relative to widget script path', () => {
+    const script = document.createElement('script');
+    script.setAttribute('data-agent-widget-script', 'true');
+    script.src = 'http://localhost:3333/api/v1/agent/widget/index.js';
+    document.body.appendChild(script);
+
+    mountChatWidget(container);
+
+    const icon = container.querySelector<HTMLImageElement>(
+      '.agent-widget__launcher-icon'
+    );
+
+    expect(icon?.src).toBe(
+      'http://localhost:3333/api/v1/agent/widget/asset/ghost.svg'
+    );
   });
 });

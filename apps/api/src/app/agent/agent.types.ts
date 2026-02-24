@@ -10,10 +10,12 @@ export interface AgentConversationMessage {
 
 export interface AgentToolCall {
   toolName:
+    | 'get_transactions'
     | 'market_data'
     | 'market_data_lookup'
     | 'portfolio_analysis'
-    | 'transaction_categorize';
+    | 'transaction_categorize'
+    | 'transaction_timeline';
   success: boolean;
   result: Record<string, unknown>;
 }

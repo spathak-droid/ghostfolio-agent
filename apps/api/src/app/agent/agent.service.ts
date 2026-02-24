@@ -14,13 +14,19 @@ export class AgentService {
 
   public async chat(
     payload: AgentChatRequest,
-    authorizationHeader?: string
+    authorizationHeader?: string,
+    impersonationId?: string
   ): Promise<AgentChatResponse> {
     try {
+      const body = {
+        conversationId: payload.conversationId,
+        message: payload.message
+      };
       const response = await fetch(`${this.agentServiceUrl}/chat`, {
-        body: JSON.stringify(payload),
+        body: JSON.stringify(body),
         headers: {
           ...(authorizationHeader ? { Authorization: authorizationHeader } : {}),
+          ...(impersonationId ? { 'Impersonation-Id': impersonationId } : {}),
           'Content-Type': 'application/json'
         },
         method: 'POST'

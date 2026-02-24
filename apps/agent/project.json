@@ -15,7 +15,7 @@
       "executor": "nx:run-commands",
       "cache": false,
       "options": {
-        "command": "npm run build:agent-widget && ts-node apps/agent/server/index.ts"
+        "command": "npm run build:agent-widget && DOTENV_CONFIG_PATH=.env ts-node apps/agent/server/index.ts"
       }
     },
     "lint": {

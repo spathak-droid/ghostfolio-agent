@@ -93,14 +93,17 @@ export class GfAppComponent
     this.route.queryParams
       .pipe(takeUntil(this.unsubscribeSubject))
       .subscribe((params: Record<string, string | undefined>) => {
+        const dataSource = parseDataSource(params['dataSource']);
+        const symbol = params['symbol'];
+
         if (
-          params['dataSource'] &&
+          dataSource &&
           params['holdingDetailDialog'] &&
-          params['symbol']
+          symbol
         ) {
           this.openHoldingDetailDialog({
-            dataSource: params['dataSource'],
-            symbol: params['symbol']
+            dataSource,
+            symbol
           });
         }
       });
@@ -365,4 +368,14 @@ export class GfAppComponent
       .querySelector('meta[name="theme-color"]')
       .setAttribute('content', themeColor);
   }
+}
+
+function parseDataSource(value: string | undefined): DataSource | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  return Object.values(DataSource).includes(value as DataSource)
+    ? (value as DataSource)
+    : undefined;
 }
