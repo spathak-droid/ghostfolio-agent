@@ -9,16 +9,19 @@ import { createAgent } from './agent';
 import { normalizeAuthToken } from './auth-token';
 import { GhostfolioClient } from './ghostfolio-client';
 import { createOpenAiClientFromEnv } from './openai-client';
+import { createOrderTool } from './tools/create-order';
 import { getTransactionsTool } from './tools/get-transactions';
 import { marketDataTool } from './tools/market-data';
 import { marketDataLookupTool } from './tools/market-data-lookup';
 import { portfolioAnalysisTool } from './tools/portfolio-analysis';
 import { transactionCategorizeTool } from './tools/transaction-categorize';
 import { transactionTimelineTool } from './tools/transaction-timeline';
+import { updateOrderTool } from './tools/update-order';
 import { resolveWidgetCorsOrigin, resolveWidgetDistPath } from './widget-static';
 
 const app = express();
-const port = Number(process.env.AGENT_PORT ?? '4444');
+// Railway and similar platforms set PORT; fall back to AGENT_PORT for local dev
+const port = Number(process.env.PORT ?? process.env.AGENT_PORT ?? '4444');
 const ghostfolioBaseUrl = process.env.GHOSTFOLIO_BASE_URL ?? 'http://localhost:3333';
 const widgetDistPath = resolveWidgetDistPath(
   process.cwd(),
@@ -36,12 +39,16 @@ function toolInput(
     message: string;
     token?: string;
     transactions?: Record<string, unknown>[];
+    createOrderParams?: import('./types').CreateOrderParams;
+    updateOrderParams?: import('./types').UpdateOrderParams;
   }
 ): {
   impersonationId?: string;
   message: string;
   token?: string;
   transactions?: Record<string, unknown>[];
+  createOrderParams?: import('./types').CreateOrderParams;
+  updateOrderParams?: import('./types').UpdateOrderParams;
 } {
   if (b && typeof b.message === 'string') return b;
   return a as {
@@ -49,6 +56,8 @@ function toolInput(
     message: string;
     token?: string;
     transactions?: Record<string, unknown>[];
+    createOrderParams?: import('./types').CreateOrderParams;
+    updateOrderParams?: import('./types').UpdateOrderParams;
   };
 }
 // Tool Registry execution wiring: each tool in TOOL_DEFINITIONS is implemented below and passed to the agent.
@@ -107,6 +116,26 @@ const agent = createAgent({
         message,
         token,
         transactions
+      });
+    },
+    createOrder: (a, b) => {
+      const { impersonationId, message, token, createOrderParams } = toolInput(a, b);
+      return createOrderTool({
+        client: ghostfolioClient,
+        impersonationId,
+        message,
+        token,
+        createOrderParams
+      });
+    },
+    updateOrder: (a, b) => {
+      const { impersonationId, message, token, updateOrderParams } = toolInput(a, b);
+      return updateOrderTool({
+        client: ghostfolioClient,
+        impersonationId,
+        message,
+        token,
+        updateOrderParams
       });
     }
   }
@@ -187,7 +216,8 @@ app.post('/chat', async (request, response) => {
   response.status(200).json(chatResponse);
 });
 
-app.listen(port, () => {
+const host = process.env.HOST ?? '0.0.0.0';
+app.listen(port, host, () => {
   // eslint-disable-next-line no-console
-  console.log(`[agent] listening on http://localhost:${port}`);
+  console.log(`[agent] listening on http://${host}:${port}`);
 });

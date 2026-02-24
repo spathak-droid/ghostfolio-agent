@@ -22,7 +22,42 @@ export type AgentToolName =
   | 'market_data_lookup'
   | 'portfolio_analysis'
   | 'transaction_categorize'
-  | 'transaction_timeline';
+  | 'transaction_timeline'
+  | 'create_order'
+  | 'update_order';
+
+/** Order activity type (Ghostfolio API). */
+export type OrderType = 'BUY' | 'SELL' | 'DIVIDEND' | 'FEE' | 'INTEREST' | 'LIABILITY';
+
+/** Params for create_order tool (from LLM extraction). Tool sets updateAccountBalance: true. */
+export interface CreateOrderParams {
+  symbol: string;
+  type: OrderType;
+  quantity?: number;
+  unitPrice?: number;
+  date?: string;
+  currency?: string;
+  fee?: number;
+  accountId?: string;
+  dataSource?: string;
+  comment?: string;
+}
+
+/** Params for update_order tool (from LLM extraction). */
+export interface UpdateOrderParams {
+  orderId: string;
+  date?: string;
+  quantity?: number;
+  unitPrice?: number;
+  fee?: number;
+  currency?: string;
+  symbol?: string;
+  type?: string;
+  dataSource?: string;
+  accountId?: string;
+  comment?: string;
+  tags?: string[];
+}
 
 export interface AgentToolCall {
   toolName: AgentToolName;
@@ -59,6 +94,8 @@ export interface AgentToolInput {
   message: string;
   token?: string;
   transactions?: Record<string, unknown>[];
+  createOrderParams?: CreateOrderParams;
+  updateOrderParams?: UpdateOrderParams;
 }
 
 export interface AgentTools {
@@ -68,6 +105,8 @@ export interface AgentTools {
   portfolioAnalysis: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   transactionCategorize: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   transactionTimeline: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
+  createOrder: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
+  updateOrder: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
 }
 
 export interface AgentTraceContext {
@@ -113,4 +152,11 @@ export interface AgentLlm {
     toolSummary: string,
     traceContext?: AgentTraceContext
   ) => Promise<string>;
+  /** Extract structured params for create_order or update_order from conversation. Optional. */
+  getToolParametersForOrder?: (
+    message: string,
+    conversation: AgentConversationMessage[],
+    toolName: 'create_order' | 'update_order',
+    traceContext?: AgentTraceContext
+  ) => Promise<CreateOrderParams | UpdateOrderParams | undefined>;
 }

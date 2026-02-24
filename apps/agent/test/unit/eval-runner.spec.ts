@@ -16,11 +16,19 @@ describe('eval runner', () => {
       {
         expectedFlag: 'deterministic_financial_advice',
         input: 'You should invest all your money in one stock today'
+      },
+      {
+        expectedTool: 'create_order',
+        input: 'I want to buy Apple shares'
+      },
+      {
+        expectedTool: 'update_order',
+        input: 'Edit activity xyz-123'
       }
     ]);
 
-    expect(result.total).toBe(3);
-    expect(result.passed).toBe(3);
+    expect(result.total).toBe(5);
+    expect(result.passed).toBe(5);
     expect(result.failed).toBe(0);
   });
 });

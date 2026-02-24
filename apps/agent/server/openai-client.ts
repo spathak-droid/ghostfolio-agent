@@ -4,7 +4,9 @@ import {
   AgentLlm,
   AgentReasoningDecision,
   AgentTraceContext,
-  AgentToolName
+  AgentToolName,
+  CreateOrderParams,
+  UpdateOrderParams
 } from './types';
 import {
   formatToolsForLlm,
@@ -181,6 +183,7 @@ Now (UTC): ${nowUtc}
 Date rule: Treat year/month mentions as historical unless explicitly future. Parse any date the user mentions relative to Today (UTC). If parsed date < today → historical → use mode: tool_call (e.g. market_data for price). If parsed date > today → future/out of scope → direct_reply with a short explanation. "Last month" = 1 month lookback from today (UTC); anchor = nearest available daily close.
 
 When to use tool_call: User asks for data we can fetch (prices current or historical, portfolio, balance, transactions, holdings, performance). For any past date use tool_call. When in doubt, prefer tool_call so we try to fetch data.
+When to use tool_call for orders: User says they want to buy, sell, add an activity, or record a trade (e.g. "buy me a Tesla stock", "I want to buy Apple", "record a sell") — use mode: tool_call and tool: create_order even if quantity or other details are missing; the create_order tool will ask for them.
 When to use direct_reply: Greetings, definitions ("what is X?"), or clearly out-of-scope future requests only.
 
 If the question implies retrieval of data (price, balance, transactions, performance), set requires_factual_data to true and use mode: tool_call even when unsure.
@@ -302,6 +305,80 @@ Return strict JSON: {"tool":"${toolList}|none"}`,
           return result;
         },
         step: 'llm.synthesize_from_tool_results',
+        traceContext
+      });
+    },
+    async getToolParametersForOrder(message, conversation, toolName, traceContext) {
+      return runWithOptionalTrace({
+        fn: async () => {
+          const schema =
+            toolName === 'create_order'
+              ? 'CreateOrderParams: { symbol: string (ticker or name, e.g. AAPL or Apple), type: "BUY"|"SELL"|"DIVIDEND"|"FEE"|"INTEREST"|"LIABILITY", quantity?: number (required for BUY/SELL), unitPrice?: number, date?: string (ISO date), currency?: string (e.g. USD), fee?: number, accountId?: string, dataSource?: string, comment?: string }. Extract from the user message and conversation context (e.g. "10" after "How many shares?" means quantity 10). Use ticker when known (e.g. Apple -> AAPL).'
+              : 'UpdateOrderParams: { orderId: string (required; the activity/order id to update), date?: string (ISO), quantity?: number, unitPrice?: number, fee?: number, currency?: string, symbol?: string, type?: string, dataSource?: string, accountId?: string, comment?: string, tags?: string[] }. Extract from the user message and conversation.';
+          const content = await callOpenAi({
+            apiKey,
+            requireJson: true,
+            messages: [
+              {
+                content: `You extract structured parameters for a finance agent tool. Conversation and latest user message are below. Return a single JSON object with only the fields you can infer. Use null for missing optional fields; omit required fields if not mentioned (tool will ask). ${schema} Return strict JSON only, no markdown.`,
+                role: 'system'
+              },
+              ...conversation.slice(-6).map(({ content: pastContent, role }) => ({
+                content: pastContent,
+                role
+              })),
+              { content: message, role: 'user' }
+            ],
+            model
+          });
+          if (!content) return undefined;
+          try {
+            const parsed = JSON.parse(content) as Record<string, unknown>;
+            if (toolName === 'create_order') {
+              const symbol = typeof parsed.symbol === 'string' ? parsed.symbol.trim() : undefined;
+              const type = typeof parsed.type === 'string' ? (parsed.type as CreateOrderParams['type']) : undefined;
+              if (!symbol || !type) return undefined;
+              const params: CreateOrderParams = { symbol, type };
+              if (typeof parsed.quantity === 'number' && Number.isFinite(parsed.quantity))
+                params.quantity = parsed.quantity;
+              if (typeof parsed.unitPrice === 'number' && Number.isFinite(parsed.unitPrice))
+                params.unitPrice = parsed.unitPrice;
+              if (typeof parsed.date === 'string' && parsed.date.trim()) params.date = parsed.date.trim();
+              if (typeof parsed.currency === 'string' && parsed.currency.trim())
+                params.currency = parsed.currency.trim();
+              if (typeof parsed.fee === 'number' && Number.isFinite(parsed.fee)) params.fee = parsed.fee;
+              if (typeof parsed.accountId === 'string' && parsed.accountId.trim())
+                params.accountId = parsed.accountId.trim();
+              if (typeof parsed.dataSource === 'string' && parsed.dataSource.trim())
+                params.dataSource = parsed.dataSource.trim();
+              if (typeof parsed.comment === 'string') params.comment = parsed.comment.trim();
+              return params;
+            }
+            const orderId = typeof parsed.orderId === 'string' ? parsed.orderId.trim() : undefined;
+            if (!orderId) return undefined;
+            const params: UpdateOrderParams = { orderId };
+            if (typeof parsed.date === 'string' && parsed.date.trim()) params.date = parsed.date.trim();
+            if (typeof parsed.quantity === 'number' && Number.isFinite(parsed.quantity))
+              params.quantity = parsed.quantity;
+            if (typeof parsed.unitPrice === 'number' && Number.isFinite(parsed.unitPrice))
+              params.unitPrice = parsed.unitPrice;
+            if (typeof parsed.fee === 'number' && Number.isFinite(parsed.fee)) params.fee = parsed.fee;
+            if (typeof parsed.currency === 'string' && parsed.currency.trim())
+              params.currency = parsed.currency.trim();
+            if (typeof parsed.symbol === 'string' && parsed.symbol.trim()) params.symbol = parsed.symbol.trim();
+            if (typeof parsed.type === 'string' && parsed.type.trim()) params.type = parsed.type.trim();
+            if (typeof parsed.dataSource === 'string' && parsed.dataSource.trim())
+              params.dataSource = parsed.dataSource.trim();
+            if (typeof parsed.accountId === 'string' && parsed.accountId.trim())
+              params.accountId = parsed.accountId.trim();
+            if (typeof parsed.comment === 'string') params.comment = parsed.comment.trim();
+            if (Array.isArray(parsed.tags)) params.tags = (parsed.tags as string[]).filter((t) => typeof t === 'string');
+            return params;
+          } catch {
+            return undefined;
+          }
+        },
+        step: 'llm.get_tool_parameters_for_order',
         traceContext
       });
     }

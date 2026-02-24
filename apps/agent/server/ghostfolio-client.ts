@@ -3,6 +3,42 @@ import { join } from 'path';
 
 import { normalizeAuthToken } from './auth-token';
 
+/** Request body for POST /api/v1/order (create order). */
+export interface CreateOrderDtoBody {
+  type: string;
+  symbol: string;
+  currency: string;
+  date: string;
+  quantity: number;
+  unitPrice: number;
+  fee: number;
+  accountId?: string;
+  dataSource?: string;
+  comment?: string;
+  tags?: string[];
+  updateAccountBalance?: boolean;
+  assetClass?: string;
+  assetSubClass?: string;
+  customCurrency?: string;
+}
+
+/** Request body for PUT /api/v1/order/:id (update order). */
+export interface UpdateOrderDtoBody {
+  id: string;
+  type: string;
+  symbol: string;
+  dataSource: string;
+  currency: string;
+  date: string;
+  quantity: number;
+  unitPrice: number;
+  fee: number;
+  accountId?: string;
+  comment?: string;
+  tags?: string[];
+  updateAccountBalance?: boolean;
+}
+
 export class GhostfolioClient {
   public constructor(private readonly baseUrl: string) {}
 
@@ -72,6 +108,73 @@ export class GhostfolioClient {
     return this.get(path, { impersonationId, token });
   }
 
+  public async getUser({
+    impersonationId,
+    token
+  }: {
+    impersonationId?: string;
+    token?: string;
+  }) {
+    return this.get('/api/v1/user', { impersonationId, token });
+  }
+
+  public async getOrderById(
+    orderId: string,
+    {
+      impersonationId,
+      token
+    }: {
+      impersonationId?: string;
+      token?: string;
+    }
+  ) {
+    return this.get(`/api/v1/order/${encodeURIComponent(orderId)}`, {
+      impersonationId,
+      token
+    });
+  }
+
+  public async createOrder(
+    dto: CreateOrderDtoBody,
+    {
+      impersonationId,
+      token
+    }: {
+      impersonationId?: string;
+      token?: string;
+    }
+  ) {
+    const body = { ...dto, updateAccountBalance: true };
+    return this.post<{ id: string }>('/api/v1/order', body, { impersonationId, token });
+  }
+
+  public async updateOrder(
+    orderId: string,
+    dto: UpdateOrderDtoBody,
+    { token }: { token?: string }
+  ) {
+    const body = { ...dto, id: orderId, updateAccountBalance: true };
+    return this.put(`/api/v1/order/${encodeURIComponent(orderId)}`, body, { token });
+  }
+
+  private buildHeaders({
+    impersonationId,
+    token
+  }: {
+    impersonationId?: string;
+    token?: string;
+  }): Record<string, string> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const normalizedToken = normalizeAuthToken(token);
+    if (normalizedToken) {
+      headers.Authorization = `Bearer ${normalizedToken}`;
+    }
+    if (impersonationId) {
+      headers['Impersonation-Id'] = impersonationId;
+    }
+    return headers;
+  }
+
   private async get(
     path: string,
     {
@@ -82,9 +185,8 @@ export class GhostfolioClient {
       token?: string;
     }
   ) {
-    const headers: Record<string, string> = {};
-    const normalizedToken = normalizeAuthToken(token);
-    const hasToken = Boolean(normalizedToken);
+    const headers = this.buildHeaders({ impersonationId, token });
+    const hasToken = Boolean(normalizeAuthToken(token));
 
     // #region agent log
     try {
@@ -107,14 +209,6 @@ export class GhostfolioClient {
     console.log('[agent-auth] GhostfolioClient.get:', { hasToken, path, baseUrl: this.baseUrl });
     // #endregion
 
-    if (normalizedToken) {
-      headers.Authorization = `Bearer ${normalizedToken}`;
-    }
-
-    if (impersonationId) {
-      headers['Impersonation-Id'] = impersonationId;
-    }
-
     const response = await fetch(`${this.baseUrl}${path}`, { headers });
 
     if (!response.ok) {
@@ -122,5 +216,47 @@ export class GhostfolioClient {
     }
 
     return response.json();
+  }
+
+  private async post<T = unknown>(
+    path: string,
+    body: unknown,
+    {
+      impersonationId,
+      token
+    }: {
+      impersonationId?: string;
+      token?: string;
+    }
+  ): Promise<T> {
+    const headers = this.buildHeaders({ impersonationId, token });
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      body: JSON.stringify(body),
+      headers,
+      method: 'POST'
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Ghostfolio API request failed: ${response.status} ${text}`);
+    }
+    return response.json() as Promise<T>;
+  }
+
+  private async put<T = unknown>(
+    path: string,
+    body: unknown,
+    { token }: { token?: string }
+  ): Promise<T> {
+    const headers = this.buildHeaders({ token });
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      body: JSON.stringify(body),
+      headers,
+      method: 'PUT'
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Ghostfolio API request failed: ${response.status} ${text}`);
+    }
+    return response.json() as Promise<T>;
   }
 }

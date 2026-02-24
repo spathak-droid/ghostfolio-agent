@@ -247,6 +247,88 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     },
     error_model: TOOL_ERROR,
     idempotent: true
+  },
+  {
+    name: 'create_order',
+    description:
+      'Use when the user wants to add a buy, sell, dividend, or other activity (e.g. "I want to buy Apple", "Record a sell of 5 BTC", "Add a dividend"). ' +
+      'Requires symbol and type; for BUY/SELL also requires quantity. Do not invent unit price—leave blank so the tool fetches current price from market data. Always pass updateAccountBalance: true. ' +
+      'If required fields are missing, the tool returns a clarification question; ask the user and call again with the new info. ' +
+      'Good for: "Buy Apple shares", "I want to purchase 10 Tesla", "Add a buy order", "Record that I sold X".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        ...COMMON_INPUT.properties,
+        symbol: { type: 'string', description: 'Ticker or name (e.g. AAPL, Apple)' },
+        type: { type: 'string', description: 'BUY | SELL | DIVIDEND | FEE | INTEREST | LIABILITY' },
+        quantity: { type: 'number', description: 'Required for BUY/SELL' },
+        unitPrice: { type: 'number', description: 'Optional; tool fetches from market data if missing' },
+        date: { type: 'string', description: 'ISO date; default today' },
+        currency: { type: 'string', description: 'e.g. USD; default from user base currency' },
+        fee: { type: 'number', description: 'Optional; default 0' },
+        accountId: { type: 'string', description: 'Optional account to link' },
+        dataSource: { type: 'string', description: 'Optional (e.g. YAHOO, MANUAL)' },
+        comment: { type: 'string', description: 'Optional comment' }
+      },
+      required: ['message']
+    },
+    output_schema: {
+      type: 'object',
+      description: 'Create order result or clarification request',
+      properties: {
+        success: { type: 'boolean', description: 'Whether the order was created or clarification was returned' },
+        orderId: { type: 'string', description: 'Created order id when success' },
+        needsClarification: { type: 'boolean', description: 'True when required fields are missing' },
+        missingFields: { type: 'array', description: 'List of missing field names' },
+        answer: { type: 'string', description: 'Natural-language reply or follow-up question' },
+        summary: { type: 'string', description: 'Short summary' },
+        data_as_of: { type: 'string', description: 'ISO timestamp' },
+        sources: { type: 'array', description: 'Source identifiers' }
+      }
+    },
+    error_model: TOOL_ERROR,
+    idempotent: false
+  },
+  {
+    name: 'update_order',
+    description:
+      'Use when the user wants to edit an existing order/activity (e.g. "Update my last order", "Change the quantity of order X", "Edit activity id Y"). ' +
+      'Requires orderId. Always updateAccountBalance: true. Ask for order id if missing. ' +
+      'Good for: "Update order", "Edit activity", "Change my buy of AAPL".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        ...COMMON_INPUT.properties,
+        orderId: { type: 'string', description: 'Required; activity/order id to update' },
+        date: { type: 'string', description: 'ISO date' },
+        quantity: { type: 'number', description: 'New quantity' },
+        unitPrice: { type: 'number', description: 'New unit price' },
+        fee: { type: 'number', description: 'New fee' },
+        currency: { type: 'string', description: 'Currency' },
+        symbol: { type: 'string', description: 'Symbol' },
+        type: { type: 'string', description: 'Activity type' },
+        dataSource: { type: 'string', description: 'Data source' },
+        accountId: { type: 'string', description: 'Account id' },
+        comment: { type: 'string', description: 'Comment' },
+        tags: { type: 'array', description: 'Tag ids' }
+      },
+      required: ['message']
+    },
+    output_schema: {
+      type: 'object',
+      description: 'Update order result or clarification request',
+      properties: {
+        success: { type: 'boolean', description: 'Whether the order was updated or clarification was returned' },
+        needsClarification: { type: 'boolean', description: 'True when orderId or required fields missing' },
+        missingFields: { type: 'array', description: 'List of missing field names' },
+        answer: { type: 'string', description: 'Natural-language reply or follow-up question' },
+        summary: { type: 'string', description: 'Short summary' },
+        data_as_of: { type: 'string', description: 'ISO timestamp' },
+        sources: { type: 'array', description: 'Source identifiers' }
+      }
+    },
+    error_model: TOOL_ERROR,
+    idempotent: false
   }
 ] as const;
 
@@ -262,7 +344,9 @@ export const SELECTABLE_TOOL_NAMES: readonly AgentToolName[] = [
   'market_data',
   'market_data_lookup',
   'transaction_categorize',
-  'transaction_timeline'
+  'transaction_timeline',
+  'create_order',
+  'update_order'
 ];
 
 /** Tools that require get_transactions to run first (orchestrator runs get_transactions then this). */

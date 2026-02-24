@@ -63,6 +63,26 @@ export async function runEvalCases(cases: EvalCase[]): Promise<EvalSummary> {
           summary: 'Found 0 matching transactions',
           timeline: []
         };
+      },
+      createOrder: async () => {
+        return {
+          success: true,
+          needsClarification: true,
+          answer: 'How many shares do you want to buy?',
+          summary: 'Quantity required',
+          data_as_of: '2026-02-24T00:00:00Z',
+          sources: ['ghostfolio_api']
+        };
+      },
+      updateOrder: async () => {
+        return {
+          success: true,
+          needsClarification: true,
+          answer: 'Please provide the order/activity id to update.',
+          summary: 'Order id required',
+          data_as_of: '2026-02-24T00:00:00Z',
+          sources: ['ghostfolio_api']
+        };
       }
     }
   });

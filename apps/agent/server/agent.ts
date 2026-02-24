@@ -169,13 +169,31 @@ export function createAgent({
           }
 
           try {
+            let orderParams: { createOrderParams?: import('./types').CreateOrderParams; updateOrderParams?: import('./types').UpdateOrderParams } | undefined;
+            if (
+              (tool === 'create_order' || tool === 'update_order') &&
+              llm?.getToolParametersForOrder
+            ) {
+              const extracted = await llm.getToolParametersForOrder(
+                message,
+                conversation,
+                tool,
+                traceContext
+              );
+              if (extracted) {
+                if (tool === 'create_order') orderParams = { createOrderParams: extracted as import('./types').CreateOrderParams };
+                else orderParams = { updateOrderParams: extracted as import('./types').UpdateOrderParams };
+              }
+            }
             const result = await executeTool({
               impersonationId,
               message,
               token,
               tool,
               tools,
-              traceContext
+              traceContext,
+              createOrderParams: orderParams?.createOrderParams,
+              updateOrderParams: orderParams?.updateOrderParams
             });
             toolCalls.push({
               result,
@@ -324,18 +342,23 @@ export function createAgent({
 
         let baseAnswer = synthesized.answer;
         if (llm?.synthesizeFromToolResults) {
-          try {
-            const llmAnswer = await llm.synthesizeFromToolResults(
-              message,
-              conversation,
-              synthesized.answer,
-              traceContext
-            );
-            if (typeof llmAnswer === 'string' && llmAnswer.trim().length > 0) {
-              baseAnswer = llmAnswer.trim();
+          const clarification = getClarificationAnswerFromToolCalls(toolCalls);
+          if (clarification) {
+            baseAnswer = clarification;
+          } else {
+            try {
+              const llmAnswer = await llm.synthesizeFromToolResults(
+                message,
+                conversation,
+                synthesized.answer,
+                traceContext
+              );
+              if (typeof llmAnswer === 'string' && llmAnswer.trim().length > 0) {
+                baseAnswer = llmAnswer.trim();
+              }
+            } catch {
+              baseAnswer = synthesized.answer;
             }
-          } catch {
-            baseAnswer = synthesized.answer;
           }
         }
 
@@ -485,13 +508,29 @@ function detectInputFlags(message: string): string[] {
   return flags;
 }
 
+/**
+ * When the only tool result is a clarification (needsClarification + answer), return that answer
+ * so we use it directly instead of sending to the LLM (which may reply "I cannot execute trades").
+ */
+function getClarificationAnswerFromToolCalls(
+  toolCalls: AgentChatResponse['toolCalls']
+): string | undefined {
+  if (toolCalls.length !== 1 || !toolCalls[0].success) return undefined;
+  const result = toolCalls[0].result as Record<string, unknown>;
+  if (result?.needsClarification !== true) return undefined;
+  const answer = typeof result.answer === 'string' ? result.answer.trim() : undefined;
+  return answer && answer.length > 0 ? answer : undefined;
+}
+
 async function executeTool({
   impersonationId,
   message,
   traceContext,
   token,
   tool,
-  tools
+  tools,
+  createOrderParams,
+  updateOrderParams
 }: {
   impersonationId?: string;
   message: string;
@@ -499,6 +538,8 @@ async function executeTool({
   token?: string;
   tool: AgentToolName;
   tools: AgentTools;
+  createOrderParams?: import('./types').CreateOrderParams;
+  updateOrderParams?: import('./types').UpdateOrderParams;
 }) {
   const runtimeTrace = {
     metadata: buildTraceMetadata({
@@ -546,6 +587,20 @@ async function executeTool({
     })(runtimeTrace, { impersonationId, message, token });
   }
 
+  if (tool === 'create_order') {
+    return traceable(tools.createOrder, {
+      name: `tool.create_order.turn_${traceContext.turnId}`,
+      run_type: 'tool'
+    })(runtimeTrace, { impersonationId, message, token, createOrderParams });
+  }
+
+  if (tool === 'update_order') {
+    return traceable(tools.updateOrder, {
+      name: `tool.update_order.turn_${traceContext.turnId}`,
+      run_type: 'tool'
+    })(runtimeTrace, { impersonationId, message, token, updateOrderParams });
+  }
+
   return traceable(tools.transactionCategorize, {
     name: `tool.transaction_categorize.turn_${traceContext.turnId}`,
     run_type: 'tool'
@@ -586,7 +641,19 @@ const SELECTABLE_KEYWORD_HINTS: Readonly<Record<string, string[]>> = {
     'most recent transaction',
     'when i bought',
     'when i sold'
-  ]
+  ],
+  create_order: [
+    'buy',
+    'purchase',
+    'add activity',
+    'record buy',
+    'add order',
+    'record a buy',
+    'record a sell',
+    'i want to buy',
+    'i want to sell'
+  ],
+  update_order: ['update order', 'edit activity', 'change order', 'edit order', 'modify order']
 };
 
 function selectToolsByKeyword(message: string): AgentToolName[] {
@@ -682,6 +749,13 @@ async function decideRoute({
 
     if (decision.mode === 'direct_reply') {
       if (messageMatchesRetrievalPatterns(message) && inferredTools.length > 0) {
+        return { intent: decision.intent, tools: inferredTools };
+      }
+      // When user asks to buy/sell/add/update order, keep create_order or update_order so the tool can ask for missing fields (e.g. quantity)
+      const hasOrderTool = inferredTools.some(
+        (t) => t === 'create_order' || t === 'update_order'
+      );
+      if (hasOrderTool) {
         return { intent: decision.intent, tools: inferredTools };
       }
       return {

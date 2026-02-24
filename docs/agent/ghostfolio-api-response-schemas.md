@@ -346,6 +346,8 @@ Same as **Transactions** above: returns `{ activities, count }`. Each `activitie
 
 ## 10. POST /order (create order)
 
+The agent’s **create_order** tool calls this endpoint with `updateAccountBalance: true` when recording a buy/sell/activity.
+
 **Response:** Prisma `Order` (same core fields as `Activity` without the extended client fields)
 
 ```ts
@@ -372,6 +374,8 @@ Same as **Transactions** above: returns `{ activities, count }`. Each `activitie
 ---
 
 ## 11. PUT /order/:id (update order)
+
+The agent’s **update_order** tool calls this endpoint with `updateAccountBalance: true` when editing an activity.
 
 **Response:** Prisma `Order` (same as POST response)
 
