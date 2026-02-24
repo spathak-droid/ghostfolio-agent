@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="Ghostfolio agent icon">
+  <defs>
+    <linearGradient id="g-body" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#EAF2FF"/>
+      <stop offset="55%" stop-color="#DDE8FF"/>
+      <stop offset="100%" stop-color="#CFE0FF"/>
+    </linearGradient>
+
+    <linearGradient id="g-accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#2F7BFF"/>
+      <stop offset="100%" stop-color="#6EA8FF"/>
+    </linearGradient>
+
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#0B1B3A" flood-opacity="0.18"/>
+    </filter>
+
+    <filter id="inner" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="2" result="blur"/>
+      <feOffset dx="0" dy="1" result="off"/>
+      <feComposite in="off" in2="SourceAlpha" operator="arithmetic" k2="-1" k3="1" result="innerShadow"/>
+      <feColorMatrix in="innerShadow" type="matrix"
+        values="0 0 0 0 0.05  0 0 0 0 0.12  0 0 0 0 0.25  0 0 0 0.25 0"/>
+      <feComposite in2="SourceGraphic" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Background badge -->
+  <circle cx="128" cy="128" r="104" fill="#F6FAFF"/>
+  <circle cx="128" cy="128" r="104" fill="none" stroke="#D7E6FF" stroke-width="6"/>
+
+  <!-- Ghost (scaled to fill more of the circle) -->
+  <g transform="translate(128 129) scale(1.28) translate(-128 -129)" filter="url(#shadow)">
+    <!-- Body -->
+    <path
+      d="M128 48
+         C 92 48 70 76 70 108
+         V 170
+         C 70 196 90 210 110 210
+         C 120 210 124 202 128 198
+         C 132 202 136 210 146 210
+         C 166 210 186 196 186 170
+         V 108
+         C 186 76 164 48 128 48 Z"
+      fill="url(#g-body)"
+      stroke="#BFD4FF"
+      stroke-width="4"
+      filter="url(#inner)"
+    />
+
+    <!-- Bottom scallops -->
+    <path
+      d="M70 168
+         C 78 160 92 160 100 168
+         C 108 176 120 176 128 168
+         C 136 160 148 160 156 168
+         C 164 176 178 176 186 168"
+      fill="none"
+      stroke="#BFD4FF"
+      stroke-width="4"
+      stroke-linecap="round"
+    />
+
+    <!-- Visor / face panel -->
+    <rect x="86" y="92" width="84" height="46" rx="18" fill="#0F224A" opacity="0.92"/>
+    <rect x="92" y="98" width="72" height="34" rx="14" fill="url(#g-accent)" opacity="0.22"/>
+
+    <!-- Eyes -->
+    <circle cx="112" cy="115" r="6" fill="#EAF2FF"/>
+    <circle cx="144" cy="115" r="6" fill="#EAF2FF"/>
+
+    <!-- Smile -->
+    <path d="M116 128 C 122 136 134 136 140 128" fill="none" stroke="#EAF2FF" stroke-width="4" stroke-linecap="round"/>
+  </g>
+
+  <!-- Finance chart badge -->
+  <g transform="translate(160 156)" filter="url(#shadow)">
+    <rect x="-6" y="-6" width="68" height="68" rx="18" fill="#FFFFFF" stroke="#D7E6FF" stroke-width="4"/>
+    <path d="M8 44 L26 30 L38 36 L54 18" fill="none" stroke="url(#g-accent)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M52 18 L54 18 L54 34" fill="none" stroke="url(#g-accent)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="8" cy="44" r="4" fill="#2F7BFF"/>
+    <circle cx="26" cy="30" r="4" fill="#2F7BFF"/>
+    <circle cx="38" cy="36" r="4" fill="#2F7BFF"/>
+    <circle cx="54" cy="18" r="4" fill="#2F7BFF"/>
+  </g>
+</svg>

@@ -1,0 +1,7 @@
+{
+  "name": "aggressive",
+  "holdings": [
+    { "symbol": "QQQ", "weight": 60 },
+    { "symbol": "BTC", "weight": 40 }
+  ]
+}

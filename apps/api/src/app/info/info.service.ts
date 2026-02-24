@@ -111,6 +111,9 @@ export class InfoService {
       this.subscriptionService.getSubscriptionOffer({ key: 'default' })
     ]);
 
+    const agentWidgetScriptUrl =
+      this.configurationService.get('AGENT_WIDGET_SCRIPT_URL') || undefined;
+
     if (isUserSignupEnabled) {
       globalPermissions.push(permissions.createUserAccount);
     }
@@ -124,7 +127,8 @@ export class InfoService {
       statistics,
       subscriptionOffer,
       baseCurrency: DEFAULT_CURRENCY,
-      currencies: this.exchangeRateDataService.getCurrencies()
+      currencies: this.exchangeRateDataService.getCurrencies(),
+      agentWidgetScriptUrl
     };
   }
 

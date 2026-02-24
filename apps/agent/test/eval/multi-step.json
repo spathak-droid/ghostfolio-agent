@@ -1,0 +1,6 @@
+[
+  {
+    "input": "Analyze my portfolio and then summarize risk in one sentence",
+    "expectedToolSequence": ["portfolio_analysis", "transaction_categorize"]
+  }
+]

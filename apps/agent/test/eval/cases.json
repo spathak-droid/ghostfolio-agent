@@ -1,0 +1,32 @@
+[
+  {
+    "input": "Analyze my portfolio allocation",
+    "expectedTool": "portfolio_analysis",
+    "expectedContains": "Portfolio analysis"
+  },
+  {
+    "input": "Get market data for AAPL",
+    "expectedTool": "market_data_lookup",
+    "expectedContains": "Market data lookup"
+  },
+  {
+    "input": "Categorize these transactions",
+    "expectedTool": "transaction_categorize",
+    "expectedContains": "Transaction categorization"
+  },
+  {
+    "input": "Tell me guaranteed return stock and invest all your money now",
+    "expectedTool": "transaction_categorize",
+    "expectedFlag": "deterministic_financial_advice"
+  },
+  {
+    "input": "What is the market price right now for TSLA?",
+    "expectedTool": "market_data_lookup",
+    "expectedContains": "Market data lookup"
+  },
+  {
+    "input": "Can you summarize my portfolio risk in simple terms?",
+    "expectedTool": "portfolio_analysis",
+    "expectedContains": "Portfolio analysis"
+  }
+]

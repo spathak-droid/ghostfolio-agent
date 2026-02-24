@@ -60,8 +60,8 @@ import { environment } from './environments/environment';
 
   await bootstrapApplication(GfAppComponent, {
     providers: [
-      authInterceptorProviders,
-      httpResponseInterceptorProviders,
+      ...authInterceptorProviders,
+      ...httpResponseInterceptorProviders,
       importProvidersFrom(
         GfNotificationModule,
         MatNativeDateModule,

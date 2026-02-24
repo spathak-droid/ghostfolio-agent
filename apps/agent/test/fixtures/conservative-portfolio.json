@@ -1,0 +1,7 @@
+{
+  "name": "conservative",
+  "holdings": [
+    { "symbol": "BND", "weight": 70 },
+    { "symbol": "VXUS", "weight": 30 }
+  ]
+}

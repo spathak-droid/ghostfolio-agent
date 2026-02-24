@@ -41,4 +41,14 @@
   main {
     min-height: calc(100svh - var(--mat-toolbar-standard-height));
   }
+
+  #agent-widget-root.agent-widget-root {
+    position: fixed;
+    bottom: 1rem;
+    left: 1rem;
+    width: min(360px, calc(100% - 2rem));
+    height: min(520px, calc(100% - 2rem));
+    z-index: 1500;
+    pointer-events: auto;
+  }
 }

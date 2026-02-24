@@ -7,6 +7,7 @@ import { NotificationService } from '@ghostfolio/ui/notifications';
 import { DataService } from '@ghostfolio/ui/services';
 
 import {
+  AfterViewInit,
   ChangeDetectionStrategy,
   ChangeDetectorRef,
   Component,
@@ -37,6 +38,7 @@ import { GfFooterComponent } from './components/footer/footer.component';
 import { GfHeaderComponent } from './components/header/header.component';
 import { GfHoldingDetailDialogComponent } from './components/holding-detail-dialog/holding-detail-dialog.component';
 import { HoldingDetailDialogParams } from './components/holding-detail-dialog/interfaces/interfaces';
+import { AgentWidgetService } from './services/agent-widget.service';
 import { ImpersonationStorageService } from './services/impersonation-storage.service';
 import { TokenStorageService } from './services/token-storage.service';
 import { UserService } from './services/user/user.service';
@@ -48,11 +50,9 @@ import { UserService } from './services/user/user.service';
   styleUrls: ['./app.component.scss'],
   templateUrl: './app.component.html'
 })
-export class GfAppComponent implements OnDestroy, OnInit {
-  @HostBinding('class.has-info-message') get getHasMessage() {
-    return this.hasInfoMessage;
-  }
-
+export class GfAppComponent
+  implements AfterViewInit, OnDestroy, OnInit
+{
   public canCreateAccount: boolean;
   public currentRoute: string;
   public currentSubRoute: string;
@@ -68,6 +68,7 @@ export class GfAppComponent implements OnDestroy, OnInit {
   public routerLinkRegister = publicRoutes.register.routerLink;
   public showFooter = false;
   public user: User;
+  private hasViewInitialized = false;
 
   private unsubscribeSubject = new Subject<void>();
 
@@ -83,14 +84,15 @@ export class GfAppComponent implements OnDestroy, OnInit {
     private router: Router,
     private title: Title,
     private tokenStorageService: TokenStorageService,
-    private userService: UserService
+    private userService: UserService,
+    public readonly agentWidgetService: AgentWidgetService
   ) {
     this.initializeTheme();
     this.user = undefined;
 
     this.route.queryParams
       .pipe(takeUntil(this.unsubscribeSubject))
-      .subscribe((params) => {
+      .subscribe((params: Record<string, string | undefined>) => {
         if (
           params['dataSource'] &&
           params['holdingDetailDialog'] &&
@@ -104,6 +106,15 @@ export class GfAppComponent implements OnDestroy, OnInit {
       });
 
     addIcons({ openOutline });
+  }
+
+  @HostBinding('class.has-info-message') get getHasMessage() {
+    return this.hasInfoMessage;
+  }
+
+  public ngAfterViewInit() {
+    this.hasViewInitialized = true;
+    this.syncAgentWidgetMount();
   }
 
   public ngOnInit() {
@@ -204,6 +215,7 @@ export class GfAppComponent implements OnDestroy, OnInit {
       .pipe(takeUntil(this.unsubscribeSubject))
       .subscribe((state) => {
         this.user = state.user;
+        this.syncAgentWidgetMount();
 
         this.canCreateAccount = hasPermission(
           this.user?.permissions,
@@ -227,7 +239,7 @@ export class GfAppComponent implements OnDestroy, OnInit {
 
   public onClickSystemMessage() {
     if (this.user.systemMessage.routerLink) {
-      this.router.navigate(this.user.systemMessage.routerLink);
+      void this.router.navigate(this.user.systemMessage.routerLink);
     } else {
       this.notificationService.alert({
         title: this.user.systemMessage.message
@@ -240,6 +252,7 @@ export class GfAppComponent implements OnDestroy, OnInit {
   }
 
   public onSignOut() {
+    this.agentWidgetService.unmount();
     this.tokenStorageService.signOut();
     this.userService.remove();
 
@@ -249,6 +262,14 @@ export class GfAppComponent implements OnDestroy, OnInit {
   public ngOnDestroy() {
     this.unsubscribeSubject.next();
     this.unsubscribeSubject.complete();
+  }
+
+  private syncAgentWidgetMount() {
+    if (!this.hasViewInitialized) {
+      return;
+    }
+
+    this.agentWidgetService.mount({ isAuthenticated: Boolean(this.user) });
   }
 
   private initializeTheme(userPreferredColorScheme?: ColorScheme) {
@@ -316,7 +337,7 @@ export class GfAppComponent implements OnDestroy, OnInit {
           .afterClosed()
           .pipe(takeUntil(this.unsubscribeSubject))
           .subscribe(() => {
-            this.router.navigate([], {
+            void this.router.navigate([], {
               queryParams: {
                 dataSource: null,
                 holdingDetailDialog: null,

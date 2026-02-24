@@ -116,6 +116,7 @@ model AuthDevice {
   @@index([userId])
 }
 
+
 model MarketData {
   createdAt   DateTime        @default(now())
   dataSource  DataSource

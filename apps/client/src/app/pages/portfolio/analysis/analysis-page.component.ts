@@ -155,6 +155,10 @@ export class GfAnalysisPageComponent implements OnDestroy, OnInit {
             permissions.readAiPrompt
           );
 
+          // #region agent log
+          fetch('http://127.0.0.1:7808/ingest/4da1e7d4-b39c-44d9-a939-8c4e2776c91d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aa93eb'},body:JSON.stringify({sessionId:'aa93eb',location:'analysis-page.component.ts:stateChanged',message:'Analysis page user state',data:{isExperimentalFeatures:!!this.user?.settings?.isExperimentalFeatures,dateRange:this.user?.settings?.dateRange,hasUser:!!this.user},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+          // #endregion
+
           this.update();
         }
       });
@@ -291,6 +295,11 @@ export class GfAnalysisPageComponent implements OnDestroy, OnInit {
       .subscribe(({ chart, firstOrderDate, performance }) => {
         this.firstOrderDate = firstOrderDate ?? new Date();
 
+        // #region agent log
+        const chartLen = chart?.length ?? 0;
+        fetch('http://127.0.0.1:7808/ingest/4da1e7d4-b39c-44d9-a939-8c4e2776c91d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aa93eb'},body:JSON.stringify({sessionId:'aa93eb',location:'analysis-page.component.ts:fetchPortfolioPerformance',message:'Portfolio performance response',data:{chartLength:chartLen,currentValue:performance?.currentValueInBaseCurrency,netPerformance:performance?.netPerformanceWithCurrencyEffect,netPerformancePct:performance?.netPerformancePercentageWithCurrencyEffect,firstOrderDate:firstOrderDate?.toISOString?.()??String(firstOrderDate)},timestamp:Date.now(),hypothesisId:'B,C,D'})}).catch(()=>{});
+        // #endregion
+
         this.investments = [];
         this.performance = performance;
         this.performanceDataItems = [];
@@ -369,6 +378,10 @@ export class GfAnalysisPageComponent implements OnDestroy, OnInit {
           )
           .slice(-3)
           .reverse();
+
+        // #region agent log
+        fetch('http://127.0.0.1:7808/ingest/4da1e7d4-b39c-44d9-a939-8c4e2776c91d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aa93eb'},body:JSON.stringify({sessionId:'aa93eb',location:'analysis-page.component.ts:fetchPortfolioHoldings',message:'Holdings for Top/Bottom',data:{holdingsCount:holdings?.length??0,top3Count:this.top3?.length??0,bottom3Count:this.bottom3?.length??0},timestamp:Date.now(),hypothesisId:'D'})}).catch(()=>{});
+        // #endregion
 
         this.changeDetectorRef.markForCheck();
       });

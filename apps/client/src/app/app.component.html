@@ -46,6 +46,15 @@
   <router-outlet />
 </main>
 
+@if (agentWidgetService.isEnabled && !!user) {
+  <div
+    id="agent-widget-root"
+    class="agent-widget-root"
+    role="region"
+    aria-label="Agent chat widget"
+  ></div>
+}
+
 @if (showFooter) {
   <footer class="justify-content-center overflow-hidden w-100">
     <gf-footer class="py-4" [info]="info" [user]="user" />
