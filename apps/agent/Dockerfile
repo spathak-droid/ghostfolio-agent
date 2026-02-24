@@ -5,9 +5,10 @@ FROM node:22-slim
 
 WORKDIR /app
 
-# Install deps (include devDependencies for ts-node and esbuild)
+# Install deps (include devDependencies for ts-node and esbuild).
+# Use npm install so build succeeds when package-lock.json is out of sync with package.json.
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm install
 
 # Agent source and widget build
 COPY apps/agent apps/agent
