@@ -8,9 +8,16 @@ interface WidgetAssetProxyResponse {
   status: number;
 }
 
+/** Ensures URL has a scheme so fetch() does not throw "Failed to parse URL". */
+function normalizeAgentServiceUrl(raw: string | undefined): string {
+  const base = (raw ?? 'http://localhost:4444').trim();
+  if (/^https?:\/\//i.test(base)) return base;
+  return `https://${base}`;
+}
+
 @Injectable()
 export class AgentService {
-  private readonly agentServiceUrl = process.env.AGENT_SERVICE_URL ?? 'http://localhost:4444';
+  private readonly agentServiceUrl = normalizeAgentServiceUrl(process.env.AGENT_SERVICE_URL);
 
   public async chat(
     payload: AgentChatRequest,
@@ -22,7 +29,26 @@ export class AgentService {
         conversationId: payload.conversationId,
         message: payload.message
       };
-      const response = await fetch(`${this.agentServiceUrl}/chat`, {
+      const chatUrl = `${this.agentServiceUrl}/chat`;
+      // #region agent log
+      fetch('http://127.0.0.1:7808/ingest/4da1e7d4-b39c-44d9-a939-8c4e2776c91d', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '8ff55f' },
+        body: JSON.stringify({
+          sessionId: '8ff55f',
+          location: 'agent.service.ts:chat',
+          message: 'API calling agent',
+          data: {
+            rawEnv: process.env.AGENT_SERVICE_URL,
+            agentServiceUrl: this.agentServiceUrl,
+            chatUrl
+          },
+          timestamp: Date.now(),
+          hypothesisId: 'A'
+        })
+      }).catch(() => { /* ingest may be unavailable */ });
+      // #endregion
+      const response = await fetch(chatUrl, {
         body: JSON.stringify(body),
         headers: {
           ...(authorizationHeader ? { Authorization: authorizationHeader } : {}),
@@ -38,6 +64,22 @@ export class AgentService {
 
       return (await response.json()) as AgentChatResponse;
     } catch (error) {
+      // #region agent log
+      const errMsg = error instanceof Error ? error.message : 'agent service unavailable';
+      const errName = error instanceof Error ? error.name : 'unknown';
+      fetch('http://127.0.0.1:7808/ingest/4da1e7d4-b39c-44d9-a939-8c4e2776c91d', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '8ff55f' },
+        body: JSON.stringify({
+          sessionId: '8ff55f',
+          location: 'agent.service.ts:chat catch',
+          message: 'API chat fetch failed',
+          data: { errName, errMsg, chatUrl: `${this.agentServiceUrl}/chat` },
+          timestamp: Date.now(),
+          hypothesisId: 'B'
+        })
+      }).catch(() => { /* ingest may be unavailable */ });
+      // #endregion
       return {
         answer: 'I could not complete the request because a tool failed. Please retry.',
         conversation: [

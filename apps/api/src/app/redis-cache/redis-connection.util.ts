@@ -1,12 +1,12 @@
 import type { RedisOptions } from 'ioredis';
 
-type RedisEnvironment = {
+interface RedisEnvironment {
   REDIS_DB: number;
   REDIS_HOST: string;
   REDIS_PASSWORD: string;
   REDIS_PORT: number;
   REDIS_URL: string;
-};
+}
 
 export function buildRedisStoreUrl(environment: RedisEnvironment): string {
   if (environment.REDIS_URL) {

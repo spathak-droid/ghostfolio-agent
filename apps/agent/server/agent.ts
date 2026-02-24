@@ -449,10 +449,24 @@ export function createAgent({
       } catch (error) {
         const failureAnswer =
           'I could not complete the request because a tool failed. Please retry.';
-
+        const errMsg = error instanceof Error ? error.message : 'unknown tool failure';
+        // #region agent log
+        fetch('http://127.0.0.1:7808/ingest/4da1e7d4-b39c-44d9-a939-8c4e2776c91d', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '8ff55f' },
+          body: JSON.stringify({
+            sessionId: '8ff55f',
+            location: 'agent.ts:chat catch',
+            message: 'Agent returned tool failure',
+            data: { errMsg, errName: error instanceof Error ? (error as Error).name : 'unknown' },
+            timestamp: Date.now(),
+            hypothesisId: 'C'
+          })
+        }).catch(() => { /* ingest may be unavailable */ });
+        // #endregion
         errors.push({
           code: 'TOOL_EXECUTION_FAILED',
-          message: error instanceof Error ? error.message : 'unknown tool failure',
+          message: errMsg,
           recoverable: true
         });
 
