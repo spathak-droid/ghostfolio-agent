@@ -111,8 +111,12 @@ export class InfoService {
       this.subscriptionService.getSubscriptionOffer({ key: 'default' })
     ]);
 
-    const agentWidgetScriptUrl =
-      this.configurationService.get('AGENT_WIDGET_SCRIPT_URL') || undefined;
+    const raw = this.configurationService.get('AGENT_WIDGET_SCRIPT_URL') || '';
+    const agentWidgetScriptUrl = raw
+      ? raw.startsWith('http://') || raw.startsWith('https://')
+        ? raw
+        : `https://${raw.replace(/^\/+/, '')}`
+      : undefined;
 
     if (isUserSignupEnabled) {
       globalPermissions.push(permissions.createUserAccount);
