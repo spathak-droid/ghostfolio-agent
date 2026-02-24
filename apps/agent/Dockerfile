@@ -7,8 +7,9 @@ WORKDIR /app
 
 # Install deps (include devDependencies for ts-node and esbuild).
 # Use npm install so build succeeds when package-lock.json is out of sync with package.json.
+# Skip postinstall (prisma generate) — agent does not use Prisma; schema lives at repo root and isn't copied here.
 COPY package.json package-lock.json ./
-RUN npm install
+RUN npm install --ignore-scripts
 
 # Agent source and widget build
 COPY apps/agent apps/agent
