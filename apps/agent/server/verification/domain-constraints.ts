@@ -1,3 +1,13 @@
+/**
+ * Domain constraints and verification flags for agent answers.
+ *
+ * PORTFOLIO VS CASH (CRITICAL):
+ * - USD is CASH, not a holding. Never include USD in holdings or allocation.
+ * - Portfolio/holdings/allocation/performance: exclude USD; show cash separately as "Cash (USD)" if available.
+ * - Balance/cash questions: include USD cash balance in the answer.
+ * - If tool results include USD as a holding, treat as data issue: remove from holdings/allocation and add flag USD_SHOULD_BE_CASH_NOT_HOLDING.
+ * (USD exclusion and flag are applied in portfolio-analysis tool and tool-result-synthesizer.)
+ */
 export function applyDomainConstraints(
   answer: string,
   existingFlags: string[],

@@ -22,10 +22,8 @@ describe('portfolioAnalysisTool', () => {
     });
 
     expect(result.summary).toBe('Portfolio analysis from Ghostfolio data');
-    expect(result.allocation).toEqual([
-      { percentage: 80, symbol: 'USD' },
-      { percentage: 20, symbol: 'BTCUSD' }
-    ]);
+    expect(result.allocation).toEqual([{ percentage: 20, symbol: 'BTCUSD' }]);
+    expect(result.usd_removed_from_holdings).toBe(true);
     expect(result.performance).toEqual({
       netPerformance: 1234.56,
       netPerformancePercentage: 0.101,

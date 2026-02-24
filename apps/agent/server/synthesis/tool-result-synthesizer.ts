@@ -84,6 +84,10 @@ export function synthesizeToolResults({
     }
 
     if (call.toolName === 'portfolio_analysis') {
+      const usdRemoved = rawPayload.usd_removed_from_holdings === true;
+      if (usdRemoved) {
+        flags.push('USD_SHOULD_BE_CASH_NOT_HOLDING');
+      }
       const topAllocation = extractTopAllocation(payload);
       if (topAllocation.length > 0) {
         keyFindings.push(`Top allocation: ${topAllocation.join(', ')}.`);
@@ -96,6 +100,34 @@ export function synthesizeToolResults({
       keyFindings.push(...balanceFindings);
 
       nextSteps.push('Review position sizing against your target allocation and rebalance if needed.');
+    }
+
+    if (call.toolName === 'market_data') {
+      const symbols = payload.symbols;
+      if (Array.isArray(symbols) && symbols.length > 0) {
+        const entries = symbols
+          .slice(0, 5)
+          .map((item) => {
+            if (!isObject(item)) return undefined;
+            const sym = stringOrUndefined(item.symbol) ?? 'unknown';
+            const err = stringOrUndefined(item.error);
+            if (err) return `${sym}: ${err}`;
+            const price = numberOrUndefined(item.currentPrice);
+            const currency = stringOrUndefined(item.currency) ?? '';
+            const pct = numberOrUndefined(item.changePercent1m);
+            if (price !== undefined) {
+              return pct !== undefined
+                ? `${sym}: ${currency} ${price} (${pct >= 0 ? '+' : ''}${pct}% vs 1m ago)`
+                : `${sym}: ${currency} ${price}`;
+            }
+            return undefined;
+          })
+          .filter((s): s is string => Boolean(s));
+        if (entries.length > 0) {
+          keyFindings.push(`Market data: ${entries.join('; ')}.`);
+        }
+      }
+      nextSteps.push('Confirm price moves with your watchlist thresholds before trading.');
     }
 
     if (call.toolName === 'market_data_lookup') {
@@ -212,6 +244,12 @@ export function synthesizeToolResults({
     `Actionable next steps: ${steps.join(' ')}`
   ];
 
+  if (keyFindings.some((f) => f.includes('Holdings value') || f.includes('Cash (USD)'))) {
+    sections.push(
+      'Portfolio vs cash (critical): Report holdings/investments separately from cash. Do not include cash in "portfolio" when describing allocation or holdings. State holdings value and Cash (USD) separately; e.g. "Your holdings are worth X. Cash (USD): Y. Total value: Z."'
+    );
+  }
+
   if (transactionListLines.length > 0) {
     sections.push(
       'Transaction list (date | symbol | type | quantity | unitPrice — include in your answer only rows that match the user\'s requested time period):',
@@ -274,12 +312,21 @@ function extractBalanceAndCashFindings(payload: Record<string, unknown>): string
   const summary = payload.summary;
   if (isObject(summary)) {
     const cash = numberOrUndefined(summary.cash);
-    if (cash !== undefined && Number.isFinite(cash)) {
-      findings.push(`Cash (available balance in base currency): ${roundToTwo(cash)}.`);
-    }
     const totalValue = numberOrUndefined(summary.totalValueInBaseCurrency);
+    if (cash !== undefined && Number.isFinite(cash)) {
+      findings.push(`Cash (USD): ${roundToTwo(cash)}.`);
+    }
     if (totalValue !== undefined && Number.isFinite(totalValue)) {
-      findings.push(`Total portfolio value (base currency): ${roundToTwo(totalValue)}.`);
+      const holdingsOnly =
+        cash !== undefined && Number.isFinite(cash)
+          ? totalValue - cash
+          : totalValue;
+      findings.push(`Holdings value (investments only, excluding cash): ${roundToTwo(holdingsOnly)}.`);
+      findings.push(`Total value (holdings + cash): ${roundToTwo(totalValue)}.`);
+    } else if (cash === undefined || !Number.isFinite(cash)) {
+      if (totalValue !== undefined && Number.isFinite(totalValue)) {
+        findings.push(`Total portfolio value (base currency): ${roundToTwo(totalValue)}.`);
+      }
     }
   }
   const accounts = payload.accounts;
@@ -345,6 +392,9 @@ function extractAllocationFromArray(allocation: unknown) {
       }
 
       const symbol = stringOrUndefined(item.symbol) ?? 'unknown';
+      if (isCashSymbol(symbol)) {
+        return undefined;
+      }
       const percentage = numberOrUndefined(item.percentage);
       return percentage === undefined ? symbol : `${symbol} ${percentage}%`;
     })
@@ -360,6 +410,9 @@ function extractAllocationFromHoldings(holdings: unknown) {
     .filter(isObject)
     .map((holding) => {
       const symbol = stringOrUndefined(holding.symbol) ?? 'unknown';
+      if (isCashSymbol(symbol)) {
+        return undefined;
+      }
       const allocationShare = numberOrUndefined(holding.allocationInPercentage);
       const percentage =
         allocationShare === undefined ? undefined : roundToTwo(allocationShare * 100);
@@ -410,4 +463,9 @@ function resolvePerformanceSource(payload: Record<string, unknown>) {
 
 function roundToTwo(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+/** USD is CASH, not a holding. Exclude from allocation/holdings display. */
+function isCashSymbol(symbol: string): boolean {
+  return symbol.toUpperCase() === 'USD';
 }

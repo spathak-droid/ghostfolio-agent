@@ -118,6 +118,43 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     idempotent: true
   },
   {
+    name: 'market_data',
+    description:
+      'Use when the user asks for current price, price change, or "difference from today to last month" for specific symbols (e.g. bitcoin, AAPL, Tesla). ' +
+      'Use for historical price requests (e.g. "how much was BTC in February 2025?" or "price in 2024") when the date is in the past relative to today. ' +
+      'Accepts symbols[] (names or tickers) and metrics[] (price, change_1m, change_percent_1m). ' +
+      'Resolves names via symbol lookup; returns current price and optional 1-month change. ' +
+      'Good for: "What is the price of bitcoin?", "How much was BTC price 2025 february?", "Current price of AAPL".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        ...COMMON_INPUT.properties,
+        symbols: { type: 'array', description: 'Symbol names or tickers, e.g. ["bitcoin"], ["AAPL"]' },
+        metrics: {
+          type: 'array',
+          description: 'Requested metrics: price, change_1m, change_percent_1m'
+        }
+      },
+      required: ['message']
+    },
+    output_schema: {
+      type: 'object',
+      description: 'Per-symbol current price and optional 1-month change metrics',
+      properties: {
+        symbols: {
+          type: 'array',
+          description: 'Array of { symbol, dataSource, currentPrice, currency, change1m?, changePercent1m?, error? }'
+        },
+        summary: { type: 'string', description: 'Short summary' },
+        answer: { type: 'string', description: 'Natural-language answer for the user' },
+        data_as_of: { type: 'string', description: 'ISO timestamp' },
+        sources: { type: 'array', description: 'Source identifiers' }
+      }
+    },
+    error_model: TOOL_ERROR,
+    idempotent: true
+  },
+  {
     name: 'market_data_lookup',
     description:
       'Use when the user asks about market data, prices, or quotes (e.g. "What is the price of X?", "Market data for AAPL"). ' +
@@ -222,6 +259,7 @@ export type RegisteredToolName = (typeof TOOL_DEFINITIONS)[number]['name'];
 /** Tool names the LLM can select (get_transactions is internal). */
 export const SELECTABLE_TOOL_NAMES: readonly AgentToolName[] = [
   'portfolio_analysis',
+  'market_data',
   'market_data_lookup',
   'transaction_categorize',
   'transaction_timeline'

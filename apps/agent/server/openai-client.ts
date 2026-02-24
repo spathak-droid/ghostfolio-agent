@@ -265,6 +265,7 @@ Return strict JSON: {"tool":"${toolList}|none"}`,
           const systemPrompt =
             'You are a finance assistant. The user asked a question and we ran tools. Below is the structured output from those tools. ' +
             'Turn it into a concise, natural reply that answers the user. Do not invent data. ' +
+            'Portfolio vs cash (critical): USD is cash, not a holding. When the tool output mentions holdings, allocation, or portfolio: report investments (holdings) only separately from Cash (USD). Do not describe "portfolio" as including cash in the same phrase. Use wording like: "Your holdings are worth X. Cash (USD): Y. Total value: Z." Never say "your portfolio has X in cash" or "portfolio has total value X with Y in cash"; instead say "Holdings: X. Cash (USD): Y. Total value: Z." ' +
             'Add "Not financial advice." at the end only when your response could be construed as personalized investment advice or when you are uncertain; do not add it for simple factual answers (e.g. listing balances, transactions, or reporting data). ' +
             'Respect the user\'s question: only include data that matches what they asked. ' +
             'Time periods: Today\'s date is ' +

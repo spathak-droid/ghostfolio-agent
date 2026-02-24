@@ -6,6 +6,7 @@ import {
   AgentChatResponse,
   AgentConversationMessage,
   AgentTraceContext,
+  AgentTraceStep,
   AgentToolName,
   AgentTools
 } from './types';
@@ -47,6 +48,7 @@ export function createAgent({
 
       const errors: AgentChatResponse['errors'] = [];
       const toolCalls: AgentChatResponse['toolCalls'] = [];
+      const trace: AgentTraceStep[] = [];
 
       const routeDecision = await decideRoute({
         conversation,
@@ -61,6 +63,13 @@ export function createAgent({
         intent,
         selectedTools,
         toolCount: selectedTools.length
+      });
+
+      trace.push({
+        type: 'llm',
+        name: 'route',
+        input: { messagePreview: message.slice(0, 200), conversationLength: conversation.length },
+        output: { intent, selectedTools }
       });
 
       // #region agent log
@@ -110,6 +119,12 @@ export function createAgent({
           intent
         });
 
+        trace.push({
+          type: 'llm',
+          name: 'answer',
+          input: { messagePreview: message.slice(0, 200) },
+          output: { answerPreview: baseAnswer.slice(0, 500) }
+        });
         const response: AgentChatResponse = {
           answer: baseAnswer,
           conversation: [
@@ -121,6 +136,7 @@ export function createAgent({
           ],
           errors,
           toolCalls,
+          trace,
           verification: {
             confidence: scoreConfidence({
               hasErrors: false,
@@ -146,6 +162,7 @@ export function createAgent({
               token,
               toolCalls,
               tools,
+              trace,
               traceContext
             });
             continue;
@@ -164,6 +181,12 @@ export function createAgent({
               result,
               success: true,
               toolName: tool
+            });
+            trace.push({
+              type: 'tool',
+              name: tool,
+              input: { messagePreview: message.slice(0, 200) },
+              output: result
             });
             console.log('[agent.chat] TOOL_RESULT', {
               tool,
@@ -193,6 +216,12 @@ export function createAgent({
               success: false,
               toolName: tool
             });
+            trace.push({
+              type: 'tool',
+              name: tool,
+              input: { messagePreview: message.slice(0, 200) },
+              output: { reason: 'tool_failure', error: errMsg }
+            });
           }
         }
 
@@ -206,6 +235,7 @@ export function createAgent({
               llm,
               message,
               toolCalls,
+              trace,
               traceContext,
               verificationFlags: ['tool_failure']
             });
@@ -229,6 +259,7 @@ export function createAgent({
             ],
             errors,
             toolCalls,
+            trace,
             verification: {
               confidence: scoreConfidence({ hasErrors: true, invalid: true }),
               flags: ['tool_failure'],
@@ -249,6 +280,7 @@ export function createAgent({
             llm,
             message,
             toolCalls,
+            trace,
             traceContext,
             verificationFlags: ['tool_empty_result']
           });
@@ -281,6 +313,13 @@ export function createAgent({
           answerPreview: synthesized.answer.slice(0, 400) + (synthesized.answer.length > 400 ? '...' : ''),
           flags: synthesized.flags,
           toolCallCount: toolCalls.length
+        });
+
+        trace.push({
+          type: 'llm',
+          name: 'synthesize',
+          input: { messagePreview: message.slice(0, 200), toolCallCount: toolCalls.length },
+          output: { answerPreview: synthesized.answer.slice(0, 500), flags: synthesized.flags }
         });
 
         let baseAnswer = synthesized.answer;
@@ -375,6 +414,7 @@ export function createAgent({
           }
         )(finalizeInput);
         memory.set(conversationId, response.conversation);
+        (response as AgentChatResponse).trace = trace;
 
         console.log('[agent.chat] FINALIZE_OUTPUT', {
           answerLength: response.answer.length,
@@ -382,7 +422,7 @@ export function createAgent({
           verification: response.verification
         });
 
-        return response;
+        return response as AgentChatResponse;
       } catch (error) {
         const failureAnswer =
           'I could not complete the request because a tool failed. Please retry.';
@@ -410,6 +450,7 @@ export function createAgent({
           ],
           errors,
           toolCalls,
+          trace,
           verification: {
             confidence: scoreConfidence({ hasErrors: true, invalid: true }),
             flags: ['tool_failure'],
@@ -742,6 +783,7 @@ async function finalizeDirectResponse({
   llm,
   message,
   toolCalls,
+  trace,
   traceContext,
   verificationFlags
 }: {
@@ -752,10 +794,17 @@ async function finalizeDirectResponse({
   llm: AgentLlm;
   message: string;
   toolCalls: AgentChatResponse['toolCalls'];
+  trace: AgentTraceStep[];
   traceContext: AgentTraceContext;
   verificationFlags: string[];
 }): Promise<AgentChatResponse> {
   const baseAnswer = await llm.answerFinanceQuestion(message, conversation, traceContext);
+  trace.push({
+    type: 'llm',
+    name: 'answer',
+    input: { messagePreview: message.slice(0, 200) },
+    output: { answerPreview: baseAnswer.slice(0, 500) }
+  });
   const outputValidation = validateOutput(baseAnswer);
   const inputFlags = detectInputFlags(message);
   const constraints = applyDomainConstraints(
@@ -774,6 +823,7 @@ async function finalizeDirectResponse({
     ],
     errors,
     toolCalls,
+    trace,
     verification: {
       confidence: scoreConfidence({
         hasCriticalFlags,
@@ -907,6 +957,7 @@ async function runTransactionsDependentFlow({
   token,
   toolCalls,
   tools,
+  trace,
   traceContext
 }: {
   dependentTool: (typeof TRANSACTION_DEPENDENT_TOOL_NAMES)[number];
@@ -916,6 +967,7 @@ async function runTransactionsDependentFlow({
   token?: string;
   toolCalls: AgentChatResponse['toolCalls'];
   tools: AgentTools;
+  trace: AgentTraceStep[];
   traceContext: AgentTraceContext;
 }) {
   let transactions: Record<string, unknown>[] = [];
@@ -936,6 +988,12 @@ async function runTransactionsDependentFlow({
       success: true,
       toolName: 'get_transactions'
     });
+    trace.push({
+      type: 'tool',
+      name: 'get_transactions',
+      input: { messagePreview: message.slice(0, 200) },
+      output: transactionResult
+    });
     console.log('[agent.chat] TOOL_RESULT (transaction flow)', {
       tool: 'get_transactions',
       success: true,
@@ -955,6 +1013,12 @@ async function runTransactionsDependentFlow({
       result: { reason: 'tool_failure' },
       success: false,
       toolName: 'get_transactions'
+    });
+    trace.push({
+      type: 'tool',
+      name: 'get_transactions',
+      input: { messagePreview: message.slice(0, 200) },
+      output: { reason: 'tool_failure' }
     });
   }
 
@@ -990,6 +1054,12 @@ async function runTransactionsDependentFlow({
       success: true,
       toolName: dependentTool
     });
+    trace.push({
+      type: 'tool',
+      name: dependentTool,
+      input: { messagePreview: message.slice(0, 200), hadTransactions: transactions.length > 0 },
+      output: result
+    });
     console.log('[agent.chat] TOOL_RESULT (transaction flow)', {
       tool: dependentTool,
       success: true,
@@ -1009,6 +1079,12 @@ async function runTransactionsDependentFlow({
       result: { reason: 'tool_failure' },
       success: false,
       toolName: dependentTool
+    });
+    trace.push({
+      type: 'tool',
+      name: dependentTool,
+      input: { messagePreview: message.slice(0, 200) },
+      output: { reason: 'tool_failure' }
     });
   }
 }

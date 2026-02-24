@@ -27,10 +27,37 @@ describe('synthesizeToolResults', () => {
       ]
     });
 
-    expect(response.answer).toContain('Top allocation: USD 98.11%, BTCUSD 1.88%.');
+    expect(response.answer).toContain('Top allocation: BTCUSD 1.88%.');
     expect(response.answer).toContain('Net performance: -4961.43');
     expect(response.answer).toContain('Net performance %: -5.71%');
     expect(response.flags).not.toContain('missing_provenance');
+  });
+
+  it('adds USD_SHOULD_BE_CASH_NOT_HOLDING when portfolio_analysis had USD in holdings', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      toolCalls: [
+        {
+          toolName: 'portfolio_analysis',
+          success: true,
+          result: {
+            allocation: [{ percentage: 20, symbol: 'BTCUSD' }],
+            data_as_of: '2026-02-24T12:00:00.000Z',
+            sources: ['ghostfolio_api'],
+            summary: 'Portfolio analysis from Ghostfolio data',
+            usd_removed_from_holdings: true,
+            data: {
+              holdings: { USD: { symbol: 'USD', allocationInPercentage: 0.8 }, BTCUSD: { symbol: 'BTCUSD', allocationInPercentage: 0.2 } },
+              summary: { cash: 5000 },
+              sources: ['ghostfolio_api'],
+              data_as_of: '2026-02-24T12:00:00.000Z'
+            }
+          }
+        }
+      ]
+    });
+    expect(response.flags).toContain('USD_SHOULD_BE_CASH_NOT_HOLDING');
+    expect(response.answer).toContain('Cash (USD): 5000');
   });
 
   it('surfaces freshest data_as_of and missing_data in final answer', () => {

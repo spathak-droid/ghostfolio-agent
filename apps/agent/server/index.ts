@@ -10,6 +10,7 @@ import { normalizeAuthToken } from './auth-token';
 import { GhostfolioClient } from './ghostfolio-client';
 import { createOpenAiClientFromEnv } from './openai-client';
 import { getTransactionsTool } from './tools/get-transactions';
+import { marketDataTool } from './tools/market-data';
 import { marketDataLookupTool } from './tools/market-data-lookup';
 import { portfolioAnalysisTool } from './tools/portfolio-analysis';
 import { transactionCategorizeTool } from './tools/transaction-categorize';
@@ -57,6 +58,15 @@ const agent = createAgent({
     getTransactions: (a, b) => {
       const { impersonationId, message, token } = toolInput(a, b);
       return getTransactionsTool({
+        client: ghostfolioClient,
+        impersonationId,
+        message,
+        token
+      });
+    },
+    marketData: (a, b) => {
+      const { impersonationId, message, token } = toolInput(a, b);
+      return marketDataTool({
         client: ghostfolioClient,
         impersonationId,
         message,

@@ -11,6 +11,7 @@ describe('standalone agent orchestrator', () => {
       },
       tools: {
         getTransactions: jest.fn(),
+        marketData: jest.fn(),
         marketDataLookup: jest.fn().mockResolvedValue({
           prices: [{ symbol: 'TSLA', value: 211.43 }],
           summary: 'TSLA moved +2.1% on the day'
@@ -52,6 +53,7 @@ describe('standalone agent orchestrator', () => {
       },
       tools: {
         getTransactions: jest.fn(),
+        marketData: jest.fn(),
         marketDataLookup,
         portfolioAnalysis: jest.fn(),
         transactionCategorize: jest.fn(),
@@ -90,6 +92,7 @@ describe('standalone agent orchestrator', () => {
       },
       tools: {
         getTransactions: jest.fn(),
+        marketData: jest.fn(),
         marketDataLookup,
         portfolioAnalysis: jest.fn(),
         transactionCategorize: jest.fn(),
@@ -123,6 +126,7 @@ describe('standalone agent orchestrator', () => {
       },
       tools: {
         getTransactions: jest.fn(),
+        marketData: jest.fn(),
         marketDataLookup: jest.fn(),
         portfolioAnalysis: jest.fn(),
         transactionCategorize: jest.fn(),
@@ -155,6 +159,7 @@ describe('standalone agent orchestrator', () => {
       },
       tools: {
         getTransactions: jest.fn(),
+        marketData: jest.fn(),
         marketDataLookup,
         portfolioAnalysis: jest.fn(),
         transactionCategorize: jest.fn(),
@@ -188,6 +193,7 @@ describe('standalone agent orchestrator', () => {
       },
       tools: {
         getTransactions: jest.fn(),
+        marketData: jest.fn(),
         marketDataLookup: jest.fn(),
         portfolioAnalysis,
         transactionCategorize: jest.fn(),
@@ -216,6 +222,7 @@ describe('standalone agent orchestrator', () => {
       },
       tools: {
         getTransactions: jest.fn(),
+        marketData: jest.fn(),
         marketDataLookup: jest.fn(),
         portfolioAnalysis: jest.fn().mockResolvedValue({
           allocation: [{ percentage: 100, symbol: 'AAPL' }],
@@ -247,6 +254,7 @@ describe('standalone agent orchestrator', () => {
     const agent = createAgent({
       tools: {
         getTransactions: jest.fn(),
+        marketData: jest.fn(),
         marketDataLookup: jest.fn(),
         portfolioAnalysis: jest.fn().mockResolvedValue({
           allocation: [
@@ -286,6 +294,7 @@ describe('standalone agent orchestrator', () => {
     const agent = createAgent({
       tools: {
         getTransactions: jest.fn(),
+        marketData: jest.fn(),
         marketDataLookup: jest.fn(),
         portfolioAnalysis: jest.fn().mockResolvedValue({
           source: 'ghostfolio_api',
@@ -321,6 +330,7 @@ describe('standalone agent orchestrator', () => {
     const agent = createAgent({
       tools: {
         getTransactions: jest.fn(),
+        marketData: jest.fn(),
         marketDataLookup: jest.fn().mockRejectedValue(new Error('downstream error')),
         portfolioAnalysis: jest.fn(),
         transactionCategorize: jest.fn(),
@@ -355,6 +365,7 @@ describe('standalone agent orchestrator', () => {
       },
       tools: {
         getTransactions: jest.fn(),
+        marketData: jest.fn(),
         marketDataLookup: jest.fn().mockRejectedValue(new Error('downstream error')),
         portfolioAnalysis: jest.fn(),
         transactionCategorize: jest.fn(),
@@ -390,6 +401,7 @@ describe('standalone agent orchestrator', () => {
       },
       tools: {
         getTransactions: jest.fn(),
+        marketData: jest.fn(),
         marketDataLookup: jest.fn().mockResolvedValue({ summary: '' }),
         portfolioAnalysis: jest.fn(),
         transactionCategorize: jest.fn(),
@@ -411,6 +423,7 @@ describe('standalone agent orchestrator', () => {
     const agent = createAgent({
       tools: {
         getTransactions: jest.fn(),
+        marketData: jest.fn(),
         marketDataLookup: jest.fn().mockResolvedValue({
           prices: [{ symbol: 'AAPL', value: 192.12 }],
           sources: ['ghostfolio_api'],
@@ -443,6 +456,7 @@ describe('standalone agent orchestrator', () => {
     const agent = createAgent({
       tools: {
         getTransactions: jest.fn(),
+        marketData: jest.fn(),
         marketDataLookup: jest.fn().mockResolvedValue({
           prices: [{ symbol: 'NVDA', value: 820.55 }],
           sources: ['ghostfolio_api'],
@@ -485,6 +499,7 @@ describe('standalone agent orchestrator', () => {
     const agent = createAgent({
       tools: {
         getTransactions: jest.fn(),
+        marketData: jest.fn(),
         marketDataLookup: jest.fn().mockResolvedValue({
           prices: [{ symbol: 'AAPL', value: 192.12 }],
           summary: 'AAPL last trade 192.12 USD'
@@ -511,6 +526,7 @@ describe('standalone agent orchestrator', () => {
     const agent = createAgent({
       tools: {
         getTransactions: jest.fn(),
+        marketData: jest.fn(),
         marketDataLookup: jest.fn().mockResolvedValue({
           prices: [{ symbol: 'NVDA', value: 820.55 }],
           sources: ['ghostfolio_api'],
@@ -545,6 +561,7 @@ describe('standalone agent orchestrator', () => {
     const agent = createAgent({
       tools: {
         getTransactions: jest.fn(),
+        marketData: jest.fn(),
         marketDataLookup: jest.fn(),
         portfolioAnalysis: jest.fn(),
         transactionCategorize: jest.fn(),
@@ -566,6 +583,7 @@ describe('standalone agent orchestrator', () => {
     const agent = createAgent({
       tools: {
         getTransactions: jest.fn(),
+        marketData: jest.fn(),
         marketDataLookup: jest.fn().mockRejectedValue(new Error('Ghostfolio API request failed: 401')),
         portfolioAnalysis: jest.fn().mockRejectedValue(new Error('Ghostfolio API request failed: 403')),
         transactionCategorize: jest.fn(),

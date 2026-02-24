@@ -33,10 +33,18 @@ export interface AgentVerification {
   isValid: boolean;
 }
 
+export interface AgentTraceStep {
+  type: 'llm' | 'tool';
+  name: string;
+  input?: Record<string, unknown>;
+  output?: unknown;
+}
+
 export interface AgentChatResponse {
   answer: string;
   conversation: AgentConversationMessage[];
   errors: AgentError[];
   toolCalls: AgentToolCall[];
+  trace?: AgentTraceStep[];
   verification: AgentVerification;
 }

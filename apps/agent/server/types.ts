@@ -18,6 +18,7 @@ export interface AgentError {
 
 export type AgentToolName =
   | 'get_transactions'
+  | 'market_data'
   | 'market_data_lookup'
   | 'portfolio_analysis'
   | 'transaction_categorize'
@@ -35,11 +36,20 @@ export interface AgentVerification {
   isValid: boolean;
 }
 
+/** One step in the agent run (LLM or tool), for trace UI. */
+export interface AgentTraceStep {
+  type: 'llm' | 'tool';
+  name: string;
+  input?: Record<string, unknown>;
+  output?: unknown;
+}
+
 export interface AgentChatResponse {
   answer: string;
   conversation: AgentConversationMessage[];
   errors: AgentError[];
   toolCalls: AgentToolCall[];
+  trace?: AgentTraceStep[];
   verification: AgentVerification;
 }
 
@@ -53,6 +63,7 @@ export interface AgentToolInput {
 
 export interface AgentTools {
   getTransactions: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
+  marketData: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   marketDataLookup: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   portfolioAnalysis: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   transactionCategorize: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
@@ -71,6 +82,12 @@ export interface AgentReasoningDecision {
   mode: 'direct_reply' | 'tool_call';
   rationale?: string;
   tool?: AgentToolName | 'none';
+  /** Multiple tools when the user clearly asks for more than one kind of data. */
+  tools?: AgentToolName[];
+  /** If true, question implies retrieval (price, balance, transactions); prefer tool_call. */
+  requires_factual_data?: boolean;
+  /** If true, question asks for past/historical data (e.g. "last month", specific year). */
+  needs_history?: boolean;
 }
 
 export interface AgentLlm {

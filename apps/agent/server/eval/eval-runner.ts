@@ -26,6 +26,14 @@ export async function runEvalCases(cases: EvalCase[]): Promise<EvalSummary> {
           transactions: []
         };
       },
+      marketData: async () => {
+        return {
+          data_as_of: '2026-02-24T00:00:00Z',
+          sources: ['ghostfolio_api'],
+          summary: 'Market data (current price and optional 1-month change)',
+          symbols: []
+        };
+      },
       marketDataLookup: async () => {
         return {
           data_as_of: '2026-02-24T00:00:00Z',

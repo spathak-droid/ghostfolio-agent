@@ -18,7 +18,8 @@ export async function portfolioAnalysisTool({
   logPortfolioFetch(data);
   const generatedAt = new Date().toISOString();
 
-  const allocation = normalizeAllocation(data?.holdings);
+  const allocationResult = normalizeAllocation(data?.holdings);
+  const allocation = allocationResult.allocation;
   const performance = normalizePerformance(data?.summary);
   const dataAsOf = resolveDataAsOf({
     createdAt: data?.createdAt,
@@ -33,6 +34,7 @@ export async function portfolioAnalysisTool({
     source: 'ghostfolio_api',
     sources: ['ghostfolio_api'],
     summary: 'Portfolio analysis from Ghostfolio data',
+    usd_removed_from_holdings: allocationResult.usdRemovedFromHoldings,
     data
   };
 }
@@ -70,12 +72,25 @@ function logPortfolioFetch(data: unknown) {
   console.log('[agent-portfolio] fetched:', payload);
 }
 
-function normalizeAllocation(holdings: unknown) {
+/**
+ * USD is CASH, not a holding. Holdings/allocation must exclude USD;
+ * cash is shown separately from portfolio allocation.
+ */
+const CASH_SYMBOLS = new Set(['USD']);
+
+function isCashSymbol(symbol: string): boolean {
+  return CASH_SYMBOLS.has(symbol.toUpperCase());
+}
+
+function normalizeAllocation(holdings: unknown): {
+  allocation: { percentage: number; symbol: string }[];
+  usdRemovedFromHoldings: boolean;
+} {
   if (!isObject(holdings)) {
-    return [];
+    return { allocation: [], usdRemovedFromHoldings: false };
   }
 
-  return Object.values(holdings)
+  const rows = Object.values(holdings)
     .filter(isObject)
     .map((holding) => {
       const symbol = asString(holding.symbol) ?? 'unknown';
@@ -84,9 +99,15 @@ function normalizeAllocation(holdings: unknown) {
         percentage: roundToTwo(share * 100),
         symbol
       };
-    })
+    });
+
+  const usdRemovedFromHoldings = rows.some((r) => isCashSymbol(r.symbol));
+  const allocation = rows
+    .filter((r) => !isCashSymbol(r.symbol))
     .sort((a, b) => b.percentage - a.percentage)
     .slice(0, 10);
+
+  return { allocation, usdRemovedFromHoldings };
 }
 
 function normalizePerformance(summary: unknown) {

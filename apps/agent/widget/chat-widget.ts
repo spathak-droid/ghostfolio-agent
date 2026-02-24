@@ -27,10 +27,40 @@ function getImpersonationId(): string | null {
   }
 }
 
+interface AgentToolCall {
+  toolName: string;
+  success: boolean;
+  result: Record<string, unknown>;
+}
+
+interface AgentVerification {
+  confidence: number;
+  flags?: string[];
+  isValid: boolean;
+}
+
+interface AgentConversationMessage {
+  role: 'assistant' | 'user';
+  content: string;
+}
+
+interface AgentTraceStep {
+  type: 'llm' | 'tool';
+  name: string;
+  input?: Record<string, unknown>;
+  output?: unknown;
+}
+
 interface AgentChatResponse {
   answer: string;
+  conversation?: AgentConversationMessage[];
   errors?: { code: string; message: string; recoverable: boolean }[];
+  toolCalls?: AgentToolCall[];
+  trace?: AgentTraceStep[];
+  verification?: AgentVerification;
 }
+
+const messageDetailsStore = new WeakMap<HTMLElement, AgentChatResponse>();
 
 function resolveChatApiUrl(): string {
   const script = document.querySelector<HTMLScriptElement>(
@@ -245,6 +275,348 @@ export function mountChatWidget(container: HTMLElement) {
     li.classList.remove('agent-widget__message--loading', 'agent-widget__message--error');
   }
 
+  const STRING_TRUNCATE_LEN = 200;
+
+  function renderExpandableJson(value: unknown, depth = 0): HTMLElement {
+    const wrap = document.createElement('div');
+    wrap.className = 'agent-widget__json-node';
+
+    if (value === null) {
+      wrap.textContent = 'null';
+      wrap.classList.add('agent-widget__json-value');
+      return wrap;
+    }
+    if (typeof value === 'boolean') {
+      wrap.textContent = value ? 'true' : 'false';
+      wrap.classList.add('agent-widget__json-value');
+      return wrap;
+    }
+    if (typeof value === 'number') {
+      wrap.textContent = String(value);
+      wrap.classList.add('agent-widget__json-value');
+      return wrap;
+    }
+    if (typeof value === 'string') {
+      wrap.classList.add('agent-widget__json-value');
+      if (value.length <= STRING_TRUNCATE_LEN) {
+        wrap.textContent = JSON.stringify(value);
+      } else {
+        const short = document.createElement('span');
+        short.textContent = JSON.stringify(value.slice(0, STRING_TRUNCATE_LEN)) + ' …';
+        const full = document.createElement('span');
+        full.className = 'agent-widget__json-full';
+        full.textContent = JSON.stringify(value);
+        full.hidden = true;
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'agent-widget__json-toggle-inline';
+        toggle.textContent = ' Show more';
+        toggle.addEventListener('click', () => {
+          full.hidden = !full.hidden;
+          toggle.textContent = full.hidden ? ' Show more' : ' Show less';
+        });
+        wrap.appendChild(short);
+        wrap.appendChild(toggle);
+        wrap.appendChild(full);
+      }
+      return wrap;
+    }
+    if (Array.isArray(value)) {
+      const header = document.createElement('button');
+      header.type = 'button';
+      header.className = 'agent-widget__json-expand';
+      header.setAttribute('aria-expanded', 'false');
+      const label = document.createElement('span');
+      label.className = 'agent-widget__json-key';
+      label.textContent = `▶ array [${value.length}]`;
+      header.appendChild(label);
+      const children = document.createElement('div');
+      children.className = 'agent-widget__json-children';
+      children.hidden = true;
+      value.forEach((item, i) => {
+        const row = document.createElement('div');
+        row.className = 'agent-widget__json-entry';
+        const idx = document.createElement('span');
+        idx.className = 'agent-widget__json-key';
+        idx.textContent = `${i}: `;
+        row.appendChild(idx);
+        row.appendChild(renderExpandableJson(item, depth + 1));
+        children.appendChild(row);
+      });
+      header.addEventListener('click', () => {
+        const expanded = children.hidden;
+        children.hidden = !expanded;
+        header.setAttribute('aria-expanded', String(!expanded));
+        label.textContent = (expanded ? '▼' : '▶') + ` array [${value.length}]`;
+      });
+      wrap.appendChild(header);
+      wrap.appendChild(children);
+      return wrap;
+    }
+    if (typeof value === 'object' && value !== null) {
+      const obj = value as Record<string, unknown>;
+      const keys = Object.keys(obj);
+      const header = document.createElement('button');
+      header.type = 'button';
+      header.className = 'agent-widget__json-expand';
+      header.setAttribute('aria-expanded', 'false');
+      const label = document.createElement('span');
+      label.className = 'agent-widget__json-key';
+      label.textContent = `▶ object { ${keys.length} keys }`;
+      header.appendChild(label);
+      const children = document.createElement('div');
+      children.className = 'agent-widget__json-children';
+      children.hidden = true;
+      keys.forEach((key) => {
+        const row = document.createElement('div');
+        row.className = 'agent-widget__json-entry';
+        const keyEl = document.createElement('span');
+        keyEl.className = 'agent-widget__json-key';
+        keyEl.textContent = `${key}: `;
+        row.appendChild(keyEl);
+        row.appendChild(renderExpandableJson(obj[key], depth + 1));
+        children.appendChild(row);
+      });
+      header.addEventListener('click', () => {
+        const expanded = children.hidden;
+        children.hidden = !expanded;
+        header.setAttribute('aria-expanded', String(!expanded));
+        label.textContent = (expanded ? '▼' : '▶') + ` object { ${keys.length} keys }`;
+      });
+      wrap.appendChild(header);
+      wrap.appendChild(children);
+      return wrap;
+    }
+    wrap.textContent = String(value);
+    wrap.classList.add('agent-widget__json-value');
+    return wrap;
+  }
+
+  function appendDetailsToggle(li: HTMLElement, response: AgentChatResponse): void {
+    const trace = response.trace ?? [];
+    const toolCalls = response.toolCalls ?? [];
+    const errors = response.errors ?? [];
+    const verification = response.verification;
+    const hasDetails =
+      trace.length > 0 || toolCalls.length > 0 || errors.length > 0 || verification != null;
+
+    if (!hasDetails) {
+      return;
+    }
+
+    messageDetailsStore.set(li, response);
+
+    const traceBox = document.createElement('div');
+    traceBox.className = 'agent-widget__trace-box';
+
+    const toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'agent-widget__trace-btn';
+    toggleBtn.setAttribute('aria-label', 'Show trace');
+    toggleBtn.innerHTML = `
+      <span class="agent-widget__trace-icon" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+        </svg>
+      </span>
+      <span>Trace</span>
+    `;
+
+    toggleBtn.addEventListener('click', () => {
+      const responseToShow = messageDetailsStore.get(li);
+      if (!responseToShow) return;
+
+      const overlay = document.createElement('div');
+      overlay.className = 'agent-widget__details-overlay';
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.setAttribute('aria-labelledby', 'agent-widget-details-title');
+
+      const dialog = document.createElement('div');
+      dialog.className = 'agent-widget__details-dialog';
+
+      const header = document.createElement('div');
+      header.className = 'agent-widget__details-dialog-header';
+      const title = document.createElement('h3');
+      title.id = 'agent-widget-details-title';
+      title.className = 'agent-widget__details-dialog-title';
+      title.textContent = 'Trace';
+      header.appendChild(title);
+      const closeBtn = document.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.className = 'agent-widget__details-dialog-close';
+      closeBtn.setAttribute('aria-label', 'Close');
+      closeBtn.textContent = '×';
+      header.appendChild(closeBtn);
+      dialog.appendChild(header);
+
+      const body = document.createElement('div');
+      body.className = 'agent-widget__details-dialog-body';
+      body.appendChild(buildDetailsContent(responseToShow));
+      dialog.appendChild(body);
+
+      overlay.appendChild(dialog);
+
+      function closePopup() {
+        overlay.remove();
+        overlay.removeEventListener('click', onBackdropClick);
+        document.removeEventListener('keydown', onEscape);
+      }
+      function onBackdropClick(e: MouseEvent) {
+        if (e.target === overlay) closePopup();
+      }
+      function onEscape(e: KeyboardEvent) {
+        if (e.key === 'Escape') closePopup();
+      }
+
+      closeBtn.addEventListener('click', closePopup);
+      overlay.addEventListener('click', onBackdropClick);
+      document.addEventListener('keydown', onEscape);
+
+      document.body.appendChild(overlay);
+      closeBtn.focus();
+    });
+
+    traceBox.appendChild(toggleBtn);
+    li.appendChild(traceBox);
+  }
+
+  function buildDetailsContent(response: AgentChatResponse): DocumentFragment {
+    const frag = document.createDocumentFragment();
+    const trace = response.trace ?? [];
+    const toolCalls = response.toolCalls ?? [];
+    const errors = response.errors ?? [];
+    const verification = response.verification;
+
+    if (trace.length > 0) {
+      const section = document.createElement('div');
+      section.className = 'agent-widget__details-section';
+      const heading = document.createElement('div');
+      heading.className = 'agent-widget__details-heading';
+      heading.textContent = 'Trace';
+      section.appendChild(heading);
+      const list = document.createElement('div');
+      list.className = 'agent-widget__trace-list';
+      trace.forEach((step, index) => {
+        const item = document.createElement('div');
+        item.className = 'agent-widget__trace-step';
+        const header = document.createElement('div');
+        header.className = 'agent-widget__trace-step-header';
+        const indexEl = document.createElement('span');
+        indexEl.className = 'agent-widget__trace-step-index';
+        indexEl.textContent = `${index + 1}.`;
+        const typeBadge = document.createElement('span');
+        typeBadge.className =
+          step.type === 'llm'
+            ? 'agent-widget__trace-step-type agent-widget__trace-step-type--llm'
+            : 'agent-widget__trace-step-type agent-widget__trace-step-type--tool';
+        typeBadge.textContent = step.type === 'llm' ? 'LLM' : 'Tool';
+        const nameEl = document.createElement('span');
+        nameEl.className = 'agent-widget__trace-step-name';
+        nameEl.textContent = step.name;
+        header.appendChild(indexEl);
+        header.appendChild(typeBadge);
+        header.appendChild(nameEl);
+        item.appendChild(header);
+        if (step.input != null && Object.keys(step.input).length > 0) {
+          const inputLabel = document.createElement('div');
+          inputLabel.className = 'agent-widget__trace-step-label';
+          inputLabel.textContent = 'Input';
+          item.appendChild(inputLabel);
+          item.appendChild(renderExpandableJson(step.input));
+        }
+        if (step.output !== undefined) {
+          const outputLabel = document.createElement('div');
+          outputLabel.className = 'agent-widget__trace-step-label';
+          outputLabel.textContent = 'Output';
+          item.appendChild(outputLabel);
+          item.appendChild(renderExpandableJson(step.output));
+        }
+        list.appendChild(item);
+      });
+      section.appendChild(list);
+      frag.appendChild(section);
+    }
+
+    if (toolCalls.length > 0) {
+      const section = document.createElement('div');
+      section.className = 'agent-widget__details-section';
+      const heading = document.createElement('div');
+      heading.className = 'agent-widget__details-heading';
+      heading.textContent = 'Tool calls';
+      section.appendChild(heading);
+      toolCalls.forEach((call) => {
+        const block = document.createElement('div');
+        block.className = 'agent-widget__tool-call';
+        const meta = document.createElement('div');
+        meta.className = 'agent-widget__tool-meta';
+        const name = document.createElement('span');
+        name.className = 'agent-widget__tool-name';
+        name.textContent = call.toolName;
+        const badge = document.createElement('span');
+        badge.className = call.success
+          ? 'agent-widget__tool-badge agent-widget__tool-badge--success'
+          : 'agent-widget__tool-badge agent-widget__tool-badge--fail';
+        badge.textContent = call.success ? 'OK' : 'Fail';
+        meta.appendChild(name);
+        meta.appendChild(badge);
+        block.appendChild(meta);
+        const resultLabel = document.createElement('div');
+        resultLabel.className = 'agent-widget__tool-result-label';
+        resultLabel.textContent = 'Result';
+        block.appendChild(resultLabel);
+        block.appendChild(renderExpandableJson(call.result));
+        section.appendChild(block);
+      });
+      frag.appendChild(section);
+    }
+
+    if (errors.length > 0) {
+      const section = document.createElement('div');
+      section.className = 'agent-widget__details-section';
+      const heading = document.createElement('div');
+      heading.className = 'agent-widget__details-heading';
+      heading.textContent = 'Errors';
+      section.appendChild(heading);
+      const list = document.createElement('ul');
+      list.className = 'agent-widget__errors-list';
+      errors.forEach((err) => {
+        const item = document.createElement('li');
+        item.className = 'agent-widget__error-item';
+        item.textContent = `${err.code}: ${err.message}`;
+        list.appendChild(item);
+      });
+      section.appendChild(list);
+      frag.appendChild(section);
+    }
+
+    if (verification != null) {
+      const section = document.createElement('div');
+      section.className = 'agent-widget__details-section';
+      const heading = document.createElement('div');
+      heading.className = 'agent-widget__details-heading';
+      heading.textContent = 'Verification';
+      section.appendChild(heading);
+      const line = document.createElement('div');
+      line.className = 'agent-widget__verification-line';
+      const flags = verification.flags?.length ? verification.flags.join(', ') : '—';
+      line.textContent = `Confidence: ${verification.confidence}, Valid: ${verification.isValid ? 'yes' : 'no'}, Flags: ${flags}`;
+      section.appendChild(line);
+      frag.appendChild(section);
+    }
+
+    const rawSection = document.createElement('div');
+    rawSection.className = 'agent-widget__details-section';
+    const rawHeading = document.createElement('div');
+    rawHeading.className = 'agent-widget__details-heading';
+    rawHeading.textContent = 'Raw response';
+    rawSection.appendChild(rawHeading);
+    rawSection.appendChild(renderExpandableJson(response));
+    frag.appendChild(rawSection);
+
+    return frag;
+  }
+
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const value = input.value.trim();
@@ -299,6 +671,9 @@ export function mountChatWidget(container: HTMLElement) {
           ? (data as AgentChatResponse).answer
           : 'No response.';
       setMessageContent(loadingLi, answer);
+      if (res.ok) {
+        appendDetailsToggle(loadingLi, data as AgentChatResponse);
+      }
     } catch {
       setMessageContent(loadingLi, 'Unable to reach the agent. Please try again.');
       loadingLi.classList.add('agent-widget__message--error');
@@ -653,6 +1028,297 @@ function injectWidgetStyles() {
     .agent-widget__send:disabled {
       opacity: 0.65;
       cursor: not-allowed;
+    }
+    .agent-widget__trace-box {
+      margin-top: 8px;
+      padding: 6px 10px;
+      border: 1px solid rgba(11, 13, 23, 0.1);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.8);
+      align-self: flex-start;
+    }
+    .agent-widget__trace-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border: none;
+      border-radius: 8px;
+      font-size: 11px;
+      font-weight: 500;
+      color: #fff;
+      background: #22c55e;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .agent-widget__trace-btn:hover {
+      background: #16a34a;
+    }
+    .agent-widget__trace-btn:focus-visible {
+      outline: 2px solid #22c55e;
+      outline-offset: 2px;
+    }
+    .agent-widget__trace-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .agent-widget__trace-icon svg {
+      display: block;
+    }
+    .agent-widget__details-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 999999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      background: rgba(11, 13, 23, 0.4);
+      animation: agent-widget-fade-in 0.15s ease-out;
+    }
+    @keyframes agent-widget-fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    .agent-widget__details-dialog {
+      width: 100%;
+      max-width: 480px;
+      max-height: 85vh;
+      display: flex;
+      flex-direction: column;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 24px 48px rgba(11, 13, 23, 0.2);
+      overflow: hidden;
+      animation: agent-widget-dialog-in 0.2s ease-out;
+    }
+    @keyframes agent-widget-dialog-in {
+      from {
+        opacity: 0;
+        transform: scale(0.96) translateY(8px);
+      }
+      to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+      }
+    }
+    .agent-widget__details-dialog-header {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(11, 13, 23, 0.08);
+      background: #f8fafd;
+    }
+    .agent-widget__details-dialog-title {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 700;
+      color: #0b0d17;
+    }
+    .agent-widget__details-dialog-close {
+      border: none;
+      background: transparent;
+      color: #5c6470;
+      cursor: pointer;
+      font-size: 22px;
+      line-height: 1;
+      padding: 0;
+      width: 32px;
+      height: 32px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      transition: background 0.12s ease, color 0.12s ease;
+    }
+    .agent-widget__details-dialog-close:hover {
+      background: rgba(11, 13, 23, 0.06);
+      color: #0b0d17;
+    }
+    .agent-widget__details-dialog-body {
+      padding: 12px 16px;
+      overflow-y: auto;
+      max-height: 60vh;
+      font-size: 11px;
+    }
+    .agent-widget__details-section {
+      margin-bottom: 10px;
+    }
+    .agent-widget__details-section:last-child {
+      margin-bottom: 0;
+    }
+    .agent-widget__trace-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .agent-widget__trace-step {
+      padding: 8px 10px;
+      border: 1px solid rgba(11, 13, 23, 0.1);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.6);
+    }
+    .agent-widget__trace-step-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+      flex-wrap: wrap;
+    }
+    .agent-widget__trace-step-index {
+      font-size: 10px;
+      color: #5c6470;
+      font-weight: 600;
+    }
+    .agent-widget__trace-step-type {
+      font-size: 9px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .agent-widget__trace-step-type--llm {
+      background: rgba(59, 130, 246, 0.15);
+      color: #1d4ed8;
+    }
+    .agent-widget__trace-step-type--tool {
+      background: rgba(34, 197, 94, 0.15);
+      color: #15803d;
+    }
+    .agent-widget__trace-step-name {
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+      font-weight: 500;
+      color: #0b0d17;
+    }
+    .agent-widget__trace-step-label {
+      font-size: 10px;
+      color: #5c6470;
+      margin-top: 4px;
+      margin-bottom: 2px;
+    }
+    .agent-widget__details-heading {
+      font-weight: 600;
+      color: #0b0d17;
+      margin-bottom: 4px;
+    }
+    .agent-widget__tool-call {
+      margin-bottom: 8px;
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(11, 13, 23, 0.06);
+    }
+    .agent-widget__tool-call:last-child {
+      border-bottom: none;
+    }
+    .agent-widget__tool-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    .agent-widget__tool-name {
+      font-family: ui-monospace, monospace;
+      font-weight: 500;
+      color: #0b0d17;
+    }
+    .agent-widget__tool-badge {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 6px;
+      font-weight: 500;
+    }
+    .agent-widget__tool-badge--success {
+      background: rgba(34, 197, 94, 0.15);
+      color: #15803d;
+    }
+    .agent-widget__tool-badge--fail {
+      background: rgba(239, 68, 68, 0.15);
+      color: #b91c1c;
+    }
+    .agent-widget__tool-result-label {
+      font-size: 10px;
+      color: #5c6470;
+      margin-bottom: 2px;
+    }
+    .agent-widget__errors-list {
+      margin: 0;
+      padding-left: 16px;
+      color: #991b1b;
+    }
+    .agent-widget__error-item {
+      margin-bottom: 2px;
+    }
+    .agent-widget__verification-line {
+      font-size: 11px;
+      color: #5c6470;
+    }
+    .agent-widget__details-dialog-body [hidden] {
+      display: none !important;
+    }
+    .agent-widget__json-node {
+      font-family: ui-monospace, monospace;
+      font-size: 10px;
+      line-height: 1.25;
+      color: #1a1d24;
+      margin: 0;
+    }
+    .agent-widget__json-expand {
+      display: block;
+      width: 100%;
+      text-align: left;
+      padding: 0;
+      margin: 0;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: inherit;
+      line-height: inherit;
+    }
+    .agent-widget__json-expand:hover {
+      color: #1a5de8;
+    }
+    .agent-widget__json-key {
+      color: #5c6470;
+    }
+    .agent-widget__json-children {
+      padding-left: 12px;
+      border-left: 1px solid rgba(11, 13, 23, 0.1);
+      margin-top: 1px;
+    }
+    .agent-widget__json-entry {
+      display: flex;
+      align-items: baseline;
+      gap: 4px;
+      margin-bottom: 2px;
+      line-height: 1.25;
+    }
+    .agent-widget__json-entry:last-child {
+      margin-bottom: 0;
+    }
+    .agent-widget__json-entry > .agent-widget__json-node {
+      flex: 0 1 auto;
+      min-width: 0;
+    }
+    .agent-widget__json-value {
+      word-break: break-word;
+    }
+    .agent-widget__json-toggle-inline {
+      padding: 0;
+      margin-left: 4px;
+      border: none;
+      background: transparent;
+      font-size: 10px;
+      color: #1a5de8;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+    .agent-widget__json-full {
+      display: block;
+      margin-top: 4px;
     }
   `;
 

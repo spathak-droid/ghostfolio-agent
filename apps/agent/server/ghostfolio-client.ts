@@ -36,6 +36,42 @@ export class GhostfolioClient {
     return this.get('/api/v1/order?range=max&take=200', { impersonationId, token });
   }
 
+  public async getSymbolLookup({
+    query,
+    impersonationId,
+    token
+  }: {
+    query: string;
+    impersonationId?: string;
+    token?: string;
+  }) {
+    const path =
+      '/api/v1/symbol/lookup' +
+      (query.trim() ? `?${new URLSearchParams({ query: query.trim() }).toString()}` : '');
+    return this.get(path, { impersonationId, token });
+  }
+
+  public async getSymbolData({
+    dataSource,
+    symbol,
+    includeHistoricalData = 0,
+    impersonationId,
+    token
+  }: {
+    dataSource: string;
+    symbol: string;
+    includeHistoricalData?: number;
+    impersonationId?: string;
+    token?: string;
+  }) {
+    const path =
+      `/api/v1/symbol/${encodeURIComponent(dataSource)}/${encodeURIComponent(symbol)}` +
+      (includeHistoricalData > 0
+        ? `?${new URLSearchParams({ includeHistoricalData: String(includeHistoricalData) }).toString()}`
+        : '');
+    return this.get(path, { impersonationId, token });
+  }
+
   private async get(
     path: string,
     {
