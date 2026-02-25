@@ -7,6 +7,7 @@
 import type { CreateOrderParams, OrderType } from '../types';
 import type { GhostfolioClient } from '../ghostfolio-client';
 import type { CreateOrderDtoBody } from '../ghostfolio-client';
+import { isUsdTransactionCapExceeded, MAX_USD_TRANSACTION_AMOUNT } from './order-limits';
 import { resolveSymbol } from './symbol-resolver';
 
 const BUY_SELL_TYPES: readonly OrderType[] = ['BUY', 'SELL'];
@@ -93,6 +94,36 @@ function parseUserAccounts(user: unknown): { id: string; name: string }[] {
       return { id, name };
     })
     .filter((account): account is { id: string; name: string } => Boolean(account));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function parseAccountCashBalance(
+  portfolioSummary: unknown,
+  accountId: string
+): { balance: number; currency?: string } | undefined {
+  if (!isRecord(portfolioSummary)) return undefined;
+  const accounts = portfolioSummary.accounts;
+  if (!isRecord(accounts)) return undefined;
+  const account = accounts[accountId];
+  if (!isRecord(account)) return undefined;
+
+  const balance = finiteNumber(account.balance);
+  if (balance === undefined) return undefined;
+
+  const currency = safeString(account.currency);
+  return { balance, currency };
+}
+
+function currenciesComparable(orderCurrency: string, accountCurrency?: string): boolean {
+  if (!accountCurrency) return true;
+  return orderCurrency.toUpperCase() === accountCurrency.toUpperCase();
 }
 
 /** Try to get market price and currency for a (dataSource, symbol). Returns undefined on failure or no price. */
@@ -311,6 +342,45 @@ export async function createOrderTool({
   const fee = safeNumber(params.fee) ?? 0;
   const qty = needsQuantity ? quantity! : (safeNumber(params.quantity) ?? 0);
   const price = unitPriceToUse ?? 0;
+  const estimatedCost = qty * price + fee;
+
+  if (isUsdTransactionCapExceeded({ amount: estimatedCost, currency })) {
+    return {
+      success: false,
+      answer:
+        `Transaction amount exceeds hard limit of USD ${MAX_USD_TRANSACTION_AMOUNT}. ` +
+        `Estimated cost is USD ${estimatedCost.toFixed(2)}. Reduce quantity or unit price.`,
+      summary: 'Transaction amount exceeds hard limit',
+      data_as_of: dataAsOf,
+      sources
+    };
+  }
+
+  if (type === 'BUY' && accountId) {
+    try {
+      const portfolioSummary = await client.getPortfolioSummary({ impersonationId, token });
+      const accountBalance = parseAccountCashBalance(portfolioSummary, accountId);
+
+      if (
+        accountBalance &&
+        currenciesComparable(currency, accountBalance.currency) &&
+        estimatedCost > accountBalance.balance
+      ) {
+        return {
+          success: false,
+          answer:
+            `Estimated cost ${currency} ${estimatedCost.toFixed(2)} exceeds available cash ` +
+            `${currency} ${accountBalance.balance.toFixed(2)} in account ${accountId}. ` +
+            'Reduce quantity, lower unit price, or fund the account first.',
+          summary: 'Insufficient account balance for BUY order',
+          data_as_of: dataAsOf,
+          sources
+        };
+      }
+    } catch {
+      // If balance fetch fails, defer enforcement to Ghostfolio API.
+    }
+  }
 
   const dto: CreateOrderDtoBody = {
     type,

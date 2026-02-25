@@ -6,6 +6,7 @@
 import type { UpdateOrderParams } from '../types';
 import type { GhostfolioClient } from '../ghostfolio-client';
 import type { UpdateOrderDtoBody } from '../ghostfolio-client';
+import { isUsdTransactionCapExceeded, MAX_USD_TRANSACTION_AMOUNT } from './order-limits';
 
 export interface UpdateOrderToolInput {
   client: GhostfolioClient;
@@ -87,6 +88,19 @@ export async function updateOrderTool({
       success: false,
       answer: 'Could not determine quantity, unit price, or fee for this order.',
       summary: 'Incomplete order data',
+      data_as_of: dataAsOf,
+      sources
+    };
+  }
+
+  const estimatedCost = quantity * unitPrice + fee;
+  if (isUsdTransactionCapExceeded({ amount: estimatedCost, currency })) {
+    return {
+      success: false,
+      answer:
+        `Transaction amount exceeds hard limit of USD ${MAX_USD_TRANSACTION_AMOUNT}. ` +
+        `Estimated cost is USD ${estimatedCost.toFixed(2)}. Reduce quantity or unit price.`,
+      summary: 'Transaction amount exceeds hard limit',
       data_as_of: dataAsOf,
       sources
     };

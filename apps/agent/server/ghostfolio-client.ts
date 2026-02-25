@@ -356,7 +356,9 @@ export class GhostfolioClient {
       if (response.status === 204) {
         return {} as T;
       }
-      throw new Error(`Ghostfolio API returned empty JSON body for ${method} ${path}`);
+      const hint =
+        ' Set GHOSTFOLIO_BASE_URL to your Ghostfolio app URL (where you open the dashboard), not the agent URL.';
+      throw new Error(`Ghostfolio API returned empty JSON body for ${method} ${path}.${hint}`);
     }
 
     try {

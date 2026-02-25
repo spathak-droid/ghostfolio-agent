@@ -134,4 +134,90 @@ describe('createOrderTool', () => {
       })
     );
   });
+
+  it('blocks BUY order when estimated cost exceeds selected account cash balance', async () => {
+    const client = {
+      createOrder: jest.fn().mockResolvedValue({ id: 'order-2' }),
+      getPortfolioSummary: jest.fn().mockResolvedValue({
+        accounts: {
+          'acc-main': {
+            balance: 1000,
+            currency: 'USD',
+            name: 'Main Account'
+          }
+        }
+      }),
+      getSymbolData: jest.fn().mockResolvedValue({
+        currency: 'USD',
+        dataSource: 'YAHOO',
+        marketPrice: 300,
+        symbol: 'AAPL'
+      }),
+      getSymbolLookup: jest.fn().mockResolvedValue({
+        items: [{ dataSource: 'YAHOO', symbol: 'AAPL' }]
+      }),
+      getUser: jest.fn().mockResolvedValue({
+        accounts: [{ id: 'acc-main', name: 'Main Account' }],
+        settings: { settings: { baseCurrency: 'USD' } }
+      })
+    };
+
+    const result = await createOrderTool({
+      client: client as never,
+      createOrderParams: {
+        quantity: 10,
+        symbol: 'AAPL',
+        type: 'BUY'
+      },
+      message: 'buy 10 AAPL'
+    });
+
+    expect(result.success).toBe(false);
+    expect(String(result.summary)).toContain('Insufficient account balance');
+    expect(String(result.answer)).toContain('Estimated cost');
+    expect(client.createOrder).not.toHaveBeenCalled();
+  });
+
+  it('blocks USD orders above the hard transaction cap', async () => {
+    const client = {
+      createOrder: jest.fn().mockResolvedValue({ id: 'order-3' }),
+      getPortfolioSummary: jest.fn().mockResolvedValue({
+        accounts: {
+          'acc-main': {
+            balance: 1000000,
+            currency: 'USD',
+            name: 'Main Account'
+          }
+        }
+      }),
+      getSymbolData: jest.fn().mockResolvedValue({
+        currency: 'USD',
+        dataSource: 'YAHOO',
+        marketPrice: 200,
+        symbol: 'AAPL'
+      }),
+      getSymbolLookup: jest.fn().mockResolvedValue({
+        items: [{ dataSource: 'YAHOO', symbol: 'AAPL' }]
+      }),
+      getUser: jest.fn().mockResolvedValue({
+        accounts: [{ id: 'acc-main', name: 'Main Account' }],
+        settings: { settings: { baseCurrency: 'USD' } }
+      })
+    };
+
+    const result = await createOrderTool({
+      client: client as never,
+      createOrderParams: {
+        quantity: 600,
+        symbol: 'AAPL',
+        type: 'BUY'
+      },
+      message: 'buy 600 AAPL'
+    });
+
+    expect(result.success).toBe(false);
+    expect(String(result.summary)).toContain('Transaction amount exceeds hard limit');
+    expect(String(result.answer)).toContain('USD 100000');
+    expect(client.createOrder).not.toHaveBeenCalled();
+  });
 });
