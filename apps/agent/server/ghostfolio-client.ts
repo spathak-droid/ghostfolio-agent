@@ -40,7 +40,22 @@ export interface UpdateOrderDtoBody {
 }
 
 export class GhostfolioClient {
-  public constructor(private readonly baseUrl: string) {}
+  private readonly baseUrl: string;
+
+  public constructor(baseUrl: string) {
+    this.baseUrl = baseUrl.trim().replace(/\/+$/, '') || 'http://localhost:3333';
+  }
+
+  /** Minimal valid shape when GET /portfolio/details returns 200 with empty body (e.g. no portfolio yet). */
+  private emptyPortfolioDetailsFallback(): Record<string, unknown> {
+    return {
+      hasError: false,
+      accounts: {},
+      holdings: {},
+      platforms: {},
+      createdAt: new Date().toISOString()
+    };
+  }
 
   public async getPortfolioSummary({
     impersonationId,
@@ -268,6 +283,12 @@ export class GhostfolioClient {
         });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
+        if (
+          path === '/api/v1/portfolio/details' &&
+          errorMessage.startsWith('Ghostfolio API returned empty JSON body')
+        ) {
+          return this.emptyPortfolioDetailsFallback();
+        }
         const canRetry =
           attempt < maxGetParseAttempts &&
           (errorMessage.startsWith('Ghostfolio API returned empty JSON body') ||

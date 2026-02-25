@@ -24,6 +24,11 @@ const app = express();
 // Railway and similar platforms set PORT; fall back to AGENT_PORT for local dev
 const port = Number(process.env.PORT ?? process.env.AGENT_PORT ?? '4444');
 const ghostfolioBaseUrl = process.env.GHOSTFOLIO_BASE_URL ?? 'http://localhost:3333';
+if (process.env.GHOSTFOLIO_BASE_URL === undefined || process.env.GHOSTFOLIO_BASE_URL === '') {
+  console.log('[agent] GHOSTFOLIO_BASE_URL not set, using default:', ghostfolioBaseUrl);
+} else {
+  console.log('[agent] GHOSTFOLIO_BASE_URL=', ghostfolioBaseUrl);
+}
 const widgetDistPath = resolveWidgetDistPath(
   process.cwd(),
   process.env.AGENT_WIDGET_DIST_PATH

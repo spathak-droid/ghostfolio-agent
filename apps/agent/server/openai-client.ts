@@ -87,11 +87,13 @@ export function createOpenAiClient({
             }).catch(() => undefined);
             // #endregion
             if (content) {
+              const normalizedContent = enforceGreetingCapabilityAnswer(message, content);
               console.log('[llm.answer_finance_question] OUTPUT', {
-                resultLength: content.length,
-                resultPreview: content.slice(0, 300) + (content.length > 300 ? '...' : '')
+                resultLength: normalizedContent.length,
+                resultPreview:
+                  normalizedContent.slice(0, 300) + (normalizedContent.length > 300 ? '...' : '')
               });
-              return content;
+              return normalizedContent;
             }
 
             const retryContent = await callOpenAi({
@@ -122,11 +124,14 @@ export function createOpenAiClient({
             }).catch(() => undefined);
             // #endregion
             if (retryContent) {
+              const normalizedRetryContent = enforceGreetingCapabilityAnswer(message, retryContent);
               console.log('[llm.answer_finance_question] OUTPUT (retry)', {
-                resultLength: retryContent.length,
-                resultPreview: retryContent.slice(0, 300) + (retryContent.length > 300 ? '...' : '')
+                resultLength: normalizedRetryContent.length,
+                resultPreview:
+                  normalizedRetryContent.slice(0, 300) +
+                  (normalizedRetryContent.length > 300 ? '...' : '')
               });
-              return retryContent;
+              return normalizedRetryContent;
             }
             // #region agent log
             fetch('http://127.0.0.1:7808/ingest/4da1e7d4-b39c-44d9-a939-8c4e2776c91d', {
@@ -224,12 +229,14 @@ Return strict JSON with exactly these fields:
         fn: async () => {
           console.log('[llm.select_tool] INPUT', { message, conversationLength: conversation.length });
           const { todayUtc, nowUtc } = getUtcContext();
-          const content = await callOpenAi({
-            apiKey,
-            requireJson: true,
-            messages: [
-              {
-                content: `Select the best tool for a finance user request.
+          let content: string | undefined;
+          try {
+            content = await callOpenAi({
+              apiKey,
+              requireJson: true,
+              messages: [
+                {
+                  content: `Select the best tool for a finance user request.
 Today (UTC date): ${todayUtc}
 Now (UTC): ${nowUtc}
 
@@ -238,16 +245,19 @@ For current price requests, prefer market_data. For historical/past-date price r
 Available tools (use exactly one name or none):
 ${toolsDescription}
 Return strict JSON: {"tool":"${toolList}|none"}`,
-                role: 'system'
-              },
-              ...conversation.slice(-6).map(({ content: pastContent, role }) => ({
-                content: pastContent,
-                role
-              })),
-              { content: message, role: 'user' }
-            ],
-            model
-          });
+                  role: 'system'
+                },
+                ...conversation.slice(-6).map(({ content: pastContent, role }) => ({
+                  content: pastContent,
+                  role
+                })),
+                { content: message, role: 'user' }
+              ],
+              model
+            });
+          } catch {
+            return { tool: 'none' };
+          }
           const selection = parseToolSelection(content);
           console.log('[llm.select_tool] OUTPUT', { rawContent: content?.slice(0, 150), tool: selection?.tool });
           return selection;
@@ -400,6 +410,23 @@ function fallbackDirectAnswer(message: string) {
   }
 
   return 'I can help with portfolio, market data, and transaction questions. Ask me about holdings, allocation, buy dates, or entry prices.';
+}
+
+function isGreetingMessage(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+  return ['hello', 'hi', 'hey', 'yo', 'sup', 'good morning', 'good afternoon', 'good evening'].includes(normalized);
+}
+
+function enforceGreetingCapabilityAnswer(message: string, answer: string): string {
+  if (!isGreetingMessage(message)) {
+    return answer;
+  }
+
+  if (answer.toLowerCase().includes('help')) {
+    return answer;
+  }
+
+  return fallbackDirectAnswer(message);
 }
 
 function buildRuntimeTraceConfig({

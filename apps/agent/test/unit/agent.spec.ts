@@ -1,8 +1,40 @@
 import { createAgent } from '../../server/agent';
 
+type CreateAgentOptions = Parameters<typeof createAgent>[0];
+type AgentTools = CreateAgentOptions['tools'];
+
+function buildDefaultTools(): AgentTools {
+  return {
+    createOrder: jest.fn(),
+    getTransactions: jest.fn(),
+    marketData: jest.fn(),
+    marketDataLookup: jest.fn(),
+    portfolioAnalysis: jest.fn(),
+    transactionCategorize: jest.fn(),
+    transactionTimeline: jest.fn(),
+    updateOrder: jest.fn()
+  };
+}
+
+function createTestAgent({
+  llm,
+  tools
+}: {
+  llm?: CreateAgentOptions['llm'];
+  tools?: Partial<AgentTools>;
+}): ReturnType<typeof createAgent> {
+  return createAgent({
+    llm,
+    tools: {
+      ...buildDefaultTools(),
+      ...(tools ?? {})
+    }
+  });
+}
+
 describe('standalone agent orchestrator', () => {
   it('uses LLM-selected tool when planner is enabled', async () => {
-    const agent = createAgent({
+    const agent = createTestAgent({
       llm: {
         answerFinanceQuestion: jest.fn(),
         selectTool: jest.fn().mockResolvedValue({
@@ -38,7 +70,7 @@ describe('standalone agent orchestrator', () => {
     const answerFinanceQuestion = jest
       .fn()
       .mockResolvedValue('A finance joke: diversification is not putting all your eggs in one ETF.');
-    const agent = createAgent({
+    const agent = createTestAgent({
       llm: {
         answerFinanceQuestion,
         reasonAboutQuery: jest.fn().mockResolvedValue({
@@ -77,7 +109,7 @@ describe('standalone agent orchestrator', () => {
       prices: [{ symbol: 'AAPL', value: 210.12 }],
       summary: 'AAPL price snapshot.'
     });
-    const agent = createAgent({
+    const agent = createTestAgent({
       llm: {
         answerFinanceQuestion: jest.fn(),
         reasonAboutQuery: jest.fn().mockResolvedValue({
@@ -115,7 +147,7 @@ describe('standalone agent orchestrator', () => {
   });
 
   it('answers directly with LLM when no tool is needed', async () => {
-    const agent = createAgent({
+    const agent = createTestAgent({
       llm: {
         answerFinanceQuestion: jest
           .fn()
@@ -150,7 +182,7 @@ describe('standalone agent orchestrator', () => {
       .fn()
       .mockResolvedValue('Hi! I can help with finance questions when you are ready.');
     const marketDataLookup = jest.fn();
-    const agent = createAgent({
+    const agent = createTestAgent({
       llm: {
         answerFinanceQuestion,
         selectTool: jest.fn().mockResolvedValue({
@@ -184,7 +216,7 @@ describe('standalone agent orchestrator', () => {
       .fn()
       .mockResolvedValue('I can chat generally or help with portfolio and transactions.');
     const portfolioAnalysis = jest.fn();
-    const agent = createAgent({
+    const agent = createTestAgent({
       llm: {
         answerFinanceQuestion,
         selectTool: jest.fn().mockResolvedValue({
@@ -213,7 +245,7 @@ describe('standalone agent orchestrator', () => {
   });
 
   it('falls back to inferred tools when LLM planner returns none for a tool-intent prompt', async () => {
-    const agent = createAgent({
+    const agent = createTestAgent({
       llm: {
         answerFinanceQuestion: jest.fn().mockResolvedValue('LLM fallback answer'),
         selectTool: jest.fn().mockResolvedValue({
@@ -251,7 +283,7 @@ describe('standalone agent orchestrator', () => {
   });
 
   it('routes portfolio query to portfolio-analysis tool and uses tool payload in structured response', async () => {
-    const agent = createAgent({
+    const agent = createTestAgent({
       tools: {
         getTransactions: jest.fn(),
         marketData: jest.fn(),
@@ -291,7 +323,7 @@ describe('standalone agent orchestrator', () => {
   });
 
   it('synthesizes nested tool payload fields from Ghostfolio tool wrapper', async () => {
-    const agent = createAgent({
+    const agent = createTestAgent({
       tools: {
         getTransactions: jest.fn(),
         marketData: jest.fn(),
@@ -327,7 +359,7 @@ describe('standalone agent orchestrator', () => {
   });
 
   it('returns graceful tool failure with recoverable error', async () => {
-    const agent = createAgent({
+    const agent = createTestAgent({
       tools: {
         getTransactions: jest.fn(),
         marketData: jest.fn(),
@@ -356,7 +388,7 @@ describe('standalone agent orchestrator', () => {
     const answerFinanceQuestion = jest
       .fn()
       .mockResolvedValue('I could not fetch live data, but I can still explain what this metric means.');
-    const agent = createAgent({
+    const agent = createTestAgent({
       llm: {
         answerFinanceQuestion,
         selectTool: jest.fn().mockResolvedValue({
@@ -392,7 +424,7 @@ describe('standalone agent orchestrator', () => {
     const answerFinanceQuestion = jest
       .fn()
       .mockResolvedValue('I did not receive tool data. Please retry or refresh your data source.');
-    const agent = createAgent({
+    const agent = createTestAgent({
       llm: {
         answerFinanceQuestion,
         selectTool: jest.fn().mockResolvedValue({
@@ -420,7 +452,7 @@ describe('standalone agent orchestrator', () => {
   });
 
   it('routes market query to market-data-lookup tool and returns structured response', async () => {
-    const agent = createAgent({
+    const agent = createTestAgent({
       tools: {
         getTransactions: jest.fn(),
         marketData: jest.fn(),
@@ -453,7 +485,7 @@ describe('standalone agent orchestrator', () => {
   });
 
   it('synthesizes multiple tools in one coherent response', async () => {
-    const agent = createAgent({
+    const agent = createTestAgent({
       tools: {
         getTransactions: jest.fn(),
         marketData: jest.fn(),
@@ -496,7 +528,7 @@ describe('standalone agent orchestrator', () => {
   });
 
   it('lowers confidence and flags response when tool provenance is missing', async () => {
-    const agent = createAgent({
+    const agent = createTestAgent({
       tools: {
         getTransactions: jest.fn(),
         marketData: jest.fn(),
@@ -523,7 +555,7 @@ describe('standalone agent orchestrator', () => {
   });
 
   it('returns partial multi-tool synthesis when one tool fails', async () => {
-    const agent = createAgent({
+    const agent = createTestAgent({
       tools: {
         getTransactions: jest.fn(),
         marketData: jest.fn(),
@@ -558,7 +590,7 @@ describe('standalone agent orchestrator', () => {
   });
 
   it('does not force transaction tool for general chat without matching tool intent', async () => {
-    const agent = createAgent({
+    const agent = createTestAgent({
       tools: {
         getTransactions: jest.fn(),
         marketData: jest.fn(),
@@ -580,7 +612,7 @@ describe('standalone agent orchestrator', () => {
   });
 
   it('returns clearer auth guidance when all selected tools fail with 401/403', async () => {
-    const agent = createAgent({
+    const agent = createTestAgent({
       tools: {
         getTransactions: jest.fn(),
         marketData: jest.fn(),
@@ -622,7 +654,7 @@ describe('standalone agent orchestrator', () => {
       summary: 'Transaction categorization completed'
     });
 
-    const agent = createAgent({
+    const agent = createTestAgent({
       tools: {
         getTransactions,
         marketDataLookup: jest.fn(),
@@ -681,7 +713,7 @@ describe('standalone agent orchestrator', () => {
       ]
     });
 
-    const agent = createAgent({
+    const agent = createTestAgent({
       tools: {
         getTransactions,
         marketDataLookup: jest.fn(),

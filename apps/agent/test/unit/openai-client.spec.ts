@@ -74,6 +74,31 @@ describe('openai client', () => {
     expect(result.toLowerCase()).toContain('portfolio');
   });
 
+  it('normalizes greeting answers to include help capability text', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: 'Hello there!'
+            }
+          }
+        ]
+      }),
+      ok: true
+    }) as unknown as typeof fetch;
+
+    const client = createOpenAiClient({
+      apiKey: 'test-key',
+      model: 'gpt-4o-mini'
+    });
+
+    const result = await client.answerFinanceQuestion('hello', []);
+
+    expect(result.toLowerCase()).toContain('help');
+    expect(result.toLowerCase()).toContain('portfolio');
+  });
+
   it('returns finance joke fallback when model returns empty', async () => {
     global.fetch = jest.fn().mockResolvedValue({
       json: async () => ({
