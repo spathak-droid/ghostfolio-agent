@@ -4,6 +4,7 @@ import { Statistics } from './statistics.interface';
 import { SubscriptionOffer } from './subscription-offer.interface';
 
 export interface InfoItem {
+  adminAccessToken?: string;
   baseCurrency: string;
   benchmarks: Partial<SymbolProfile>[];
   countriesOfSubscribers?: string[];
@@ -11,6 +12,7 @@ export interface InfoItem {
   demoAuthToken: string;
   fearAndGreedDataSource?: string;
   globalPermissions: string[];
+  hasAdminLogin?: boolean;
   isDataGatheringEnabled?: string;
   isReadOnlyMode?: boolean;
   statistics: Statistics;

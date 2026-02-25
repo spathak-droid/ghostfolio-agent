@@ -126,6 +126,26 @@ export class OrderService {
     const updateAccountBalance = data.updateAccountBalance ?? false;
     const userId = data.userId;
 
+    // #region agent log
+    fetch('http://127.0.0.1:7808/ingest/4da1e7d4-b39c-44d9-a939-8c4e2776c91d', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '49d310' },
+      body: JSON.stringify({
+        sessionId: '49d310',
+        location: 'order.service.ts:createOrder',
+        message: 'createOrder balance update decision',
+        data: {
+          updateAccountBalance,
+          accountId,
+          willUpdateBalance: updateAccountBalance === true && !!accountId,
+          type: data.type
+        },
+        timestamp: Date.now(),
+        hypothesisId: 'A_C_E'
+      })
+    }).catch(() => { /* no-op */ });
+    // #endregion
+
     if (
       ['FEE', 'INTEREST', 'LIABILITY'].includes(data.type) ||
       (data.SymbolProfile.connectOrCreate.create.dataSource === 'MANUAL' &&
@@ -213,7 +233,7 @@ export class OrderService {
       include: { SymbolProfile: true }
     });
 
-    if (updateAccountBalance === true) {
+    if (updateAccountBalance === true && accountId) {
       let amount = new Big(data.unitPrice)
         .mul(data.quantity)
         .plus(data.fee)
@@ -230,6 +250,21 @@ export class OrderService {
         currency: data.SymbolProfile.connectOrCreate.create.currency,
         date: data.date as Date
       });
+
+      // #region agent log
+      fetch('http://127.0.0.1:7808/ingest/4da1e7d4-b39c-44d9-a939-8c4e2776c91d', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '49d310' },
+        body: JSON.stringify({
+          sessionId: '49d310',
+          location: 'order.service.ts:createOrder:afterUpdateBalance',
+          message: 'Account balance updated',
+          data: { accountId, amount, currency: data.SymbolProfile.connectOrCreate.create.currency },
+          timestamp: Date.now(),
+          hypothesisId: 'E'
+        })
+      }).catch(() => { /* no-op */ });
+      // #endregion
     }
 
     this.eventEmitter.emit(

@@ -24,6 +24,12 @@
         "eslintConfig": "apps/agent/eslint.config.cjs",
         "lintFilePatterns": ["apps/agent/server/**/*.ts", "apps/agent/widget/**/*.ts"]
       }
+    },
+    "eval": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "DOTENV_CONFIG_PATH=.env ts-node apps/agent/server/eval/run-default-evals.ts"
+      }
     }
   },
   "tags": []

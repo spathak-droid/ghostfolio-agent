@@ -746,6 +746,10 @@ export class DataService {
     });
   }
 
+  public loginAsAdmin() {
+    return this.http.post<OAuthResponse>('/api/v1/auth/admin-login', {});
+  }
+
   public postAccess(aAccess: CreateAccessDto) {
     return this.http.post<OrderModel>('/api/v1/access', aAccess);
   }

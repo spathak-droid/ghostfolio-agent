@@ -114,8 +114,12 @@ export function synthesizeToolResults({
             if (err) return `${sym}: ${err}`;
             const price = numberOrUndefined(item.currentPrice);
             const currency = stringOrUndefined(item.currency) ?? '';
+            const pct1w = numberOrUndefined(item.changePercent1w);
             const pct = numberOrUndefined(item.changePercent1m);
             if (price !== undefined) {
+              if (pct1w !== undefined) {
+                return `${sym}: ${currency} ${price} (${pct1w >= 0 ? '+' : ''}${pct1w}% vs 1w ago)`;
+              }
               return pct !== undefined
                 ? `${sym}: ${currency} ${price} (${pct >= 0 ? '+' : ''}${pct}% vs 1m ago)`
                 : `${sym}: ${currency} ${price}`;
@@ -128,6 +132,39 @@ export function synthesizeToolResults({
         }
       }
       nextSteps.push('Confirm price moves with your watchlist thresholds before trading.');
+    }
+
+    if (call.toolName === 'market_overview') {
+      const overview = payload.overview;
+      if (isObject(overview)) {
+        const stocks = isObject(overview.stocks) ? overview.stocks : undefined;
+        const crypto = isObject(overview.cryptocurrencies)
+          ? overview.cryptocurrencies
+          : undefined;
+        const stocksLabel = stringOrUndefined(stocks?.label);
+        const stocksValue = numberOrUndefined(stocks?.value);
+        const cryptoLabel = stringOrUndefined(crypto?.label);
+        const cryptoValue = numberOrUndefined(crypto?.value);
+        const parts: string[] = [];
+        if (stocksLabel || stocksValue !== undefined) {
+          parts.push(
+            `Stocks sentiment: ${stocksLabel ?? 'unknown'}${
+              stocksValue !== undefined ? ` (${stocksValue})` : ''
+            }`
+          );
+        }
+        if (cryptoLabel || cryptoValue !== undefined) {
+          parts.push(
+            `Crypto sentiment: ${cryptoLabel ?? 'unknown'}${
+              cryptoValue !== undefined ? ` (${cryptoValue})` : ''
+            }`
+          );
+        }
+        if (parts.length > 0) {
+          keyFindings.push(`Market overview: ${parts.join('; ')}.`);
+        }
+      }
+      nextSteps.push('Use sentiment as context only; confirm trend with price and breadth data.');
     }
 
     if (call.toolName === 'market_data_lookup') {
@@ -172,6 +209,30 @@ export function synthesizeToolResults({
 
         if (entries.length > 0) {
           keyFindings.push(`Transaction categories: ${entries.join(', ')}.`);
+        }
+      }
+
+      const patterns = isObject(payload.patterns) ? payload.patterns : undefined;
+      if (patterns) {
+        const patternParts: string[] = [];
+        const buySellRatio = numberOrUndefined(patterns.buySellRatio);
+        const activityTrend = numberOrUndefined(patterns.activityTrend30dVsPrev30dPercent);
+        const topSymbol = isObject(patterns.topSymbolByCount) ? patterns.topSymbolByCount : undefined;
+        const topSymbolName = stringOrUndefined(topSymbol?.symbol);
+        const topSymbolShare = numberOrUndefined(topSymbol?.sharePercent);
+        if (buySellRatio !== undefined) {
+          patternParts.push(`buy/sell ratio ${buySellRatio}`);
+        }
+        if (activityTrend !== undefined) {
+          patternParts.push(`30d activity trend ${activityTrend}%`);
+        }
+        if (topSymbolName) {
+          patternParts.push(
+            `top symbol ${topSymbolName}${topSymbolShare !== undefined ? ` (${topSymbolShare}%)` : ''}`
+          );
+        }
+        if (patternParts.length > 0) {
+          keyFindings.push(`Transaction patterns: ${patternParts.join(', ')}.`);
         }
       }
 
@@ -435,6 +496,13 @@ function extractPerformanceFindings(payload: Record<string, unknown>) {
   const netPerformance = numberOrUndefined(performanceSource.netPerformance);
   if (netPerformance !== undefined) {
     findings.push(`Net performance: ${roundToTwo(netPerformance)}.`);
+    if (netPerformance > 0) {
+      findings.push('Portfolio status: in profit.');
+    } else if (netPerformance < 0) {
+      findings.push('Portfolio status: in loss.');
+    } else {
+      findings.push('Portfolio status: break-even.');
+    }
   }
 
   const netPerformancePercentage = numberOrUndefined(

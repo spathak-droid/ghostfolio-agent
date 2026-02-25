@@ -18,6 +18,7 @@ import {
 } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
+import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { IonIcon } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import { eyeOffOutline, eyeOutline } from 'ionicons/icons';
@@ -34,6 +35,7 @@ import { LoginWithAccessTokenDialogParams } from './interfaces/interfaces';
     MatDialogModule,
     MatFormFieldModule,
     MatInputModule,
+    MatSlideToggleModule,
     ReactiveFormsModule
   ],
   selector: 'gf-login-with-access-token-dialog',
@@ -41,11 +43,14 @@ import { LoginWithAccessTokenDialogParams } from './interfaces/interfaces';
   templateUrl: './login-with-access-token-dialog.html'
 })
 export class GfLoginWithAccessTokenDialogComponent {
-  public accessTokenFormControl = new FormControl(
-    this.data.accessToken,
-    Validators.required
-  );
+  public accessTokenFormControl = new FormControl(this.data.accessToken, {
+    nonNullable: true,
+    validators: [Validators.required]
+  });
   public isAccessTokenHidden = true;
+  public isLoginAsAdminEnabled = false;
+
+  private manualAccessToken = this.data.accessToken;
 
   public constructor(
     @Inject(MAT_DIALOG_DATA) public data: LoginWithAccessTokenDialogParams,
@@ -64,6 +69,30 @@ export class GfLoginWithAccessTokenDialogComponent {
 
   public onClose() {
     this.dialogRef.close();
+  }
+
+  public onToggleAdminLogin(isEnabled: boolean) {
+    this.isLoginAsAdminEnabled = isEnabled;
+
+    if (isEnabled) {
+      this.manualAccessToken = this.accessTokenFormControl.value;
+      this.isAccessTokenHidden = true;
+      this.accessTokenFormControl.setValue(this.data.adminAccessToken ?? '');
+    } else {
+      this.accessTokenFormControl.setValue(this.manualAccessToken);
+    }
+
+    this.accessTokenFormControl.markAsDirty();
+  }
+
+  public onClipboardAction(event: ClipboardEvent) {
+    if (this.isLoginAsAdminEnabled) {
+      event.preventDefault();
+    }
+  }
+
+  public get showAccessTokenRevealControl() {
+    return !this.isLoginAsAdminEnabled;
   }
 
   public onLoginWithAccessToken() {

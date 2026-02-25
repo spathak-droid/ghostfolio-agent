@@ -38,6 +38,34 @@ function safeNumber(v: unknown): number | undefined {
   return undefined;
 }
 
+function safeString(v: unknown): string | undefined {
+  return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+}
+
+function parseUserBaseCurrency(user: unknown): string | undefined {
+  if (typeof user !== 'object' || user === null) return undefined;
+  const settingsWrapper = (user as { settings?: unknown }).settings;
+  if (typeof settingsWrapper !== 'object' || settingsWrapper === null) return undefined;
+  const settings = (settingsWrapper as { settings?: unknown }).settings;
+  if (typeof settings !== 'object' || settings === null) return undefined;
+  return safeString((settings as { baseCurrency?: unknown }).baseCurrency);
+}
+
+function parseUserAccounts(user: unknown): { id: string; name: string }[] {
+  if (typeof user !== 'object' || user === null) return [];
+  const accounts = (user as { accounts?: unknown }).accounts;
+  if (!Array.isArray(accounts)) return [];
+  return accounts
+    .map((account) => {
+      if (typeof account !== 'object' || account === null) return undefined;
+      const id = safeString((account as { id?: unknown }).id);
+      if (!id) return undefined;
+      const name = safeString((account as { name?: unknown }).name) ?? 'Account';
+      return { id, name };
+    })
+    .filter((account): account is { id: string; name: string } => Boolean(account));
+}
+
 /** Try to get market price and currency for a (dataSource, symbol). Returns undefined on failure or no price. */
 async function fetchPriceForSymbol(
   client: GhostfolioClient,
@@ -192,16 +220,19 @@ export async function createOrderTool({
     };
   }
 
-  let currency = typeof params.currency === 'string' && params.currency.trim() ? params.currency.trim() : undefined;
-  if (!currency) {
+  let currency = safeString(params.currency);
+  let accountId = safeString(params.accountId);
+  let user: unknown;
+
+  if (!currency || !accountId) {
     try {
-      const user = await client.getUser({ impersonationId, token });
-      const settings = (user as { settings?: { settings?: { baseCurrency?: string } } })?.settings?.settings;
-      currency = typeof settings?.baseCurrency === 'string' ? settings.baseCurrency : undefined;
+      user = await client.getUser({ impersonationId, token });
     } catch {
       // ignore
     }
   }
+
+  if (!currency) currency = parseUserBaseCurrency(user);
   if (!currency) {
     return {
       success: true,
@@ -212,6 +243,27 @@ export async function createOrderTool({
       data_as_of: dataAsOf,
       sources
     };
+  }
+
+  if (!accountId) {
+    const accounts = parseUserAccounts(user);
+    if (accounts.length === 1) {
+      accountId = accounts[0].id;
+    } else {
+      const accountList =
+        accounts.length > 0
+          ? ` Available accounts: ${accounts.map((account) => `${account.name} (id: ${account.id})`).join(', ')}.`
+          : '';
+      return {
+        success: true,
+        needsClarification: true,
+        missingFields: ['accountId'],
+        answer: `Please choose an account for this order (required when updating cash balance). Reply with the account id.${accountList}`,
+        summary: 'Account id required to update cash balance.',
+        data_as_of: dataAsOf,
+        sources
+      };
+    }
   }
 
   const date = typeof params.date === 'string' && params.date.trim() ? params.date.trim() : todayIso();
@@ -230,7 +282,7 @@ export async function createOrderTool({
     updateAccountBalance: true,
     dataSource
   };
-  if (params.accountId?.trim()) dto.accountId = params.accountId.trim();
+  if (accountId) dto.accountId = accountId;
   if (params.comment !== undefined) dto.comment = params.comment?.trim() ?? undefined;
 
   try {

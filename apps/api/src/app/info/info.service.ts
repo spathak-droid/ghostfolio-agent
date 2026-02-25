@@ -111,22 +111,30 @@ export class InfoService {
       this.subscriptionService.getSubscriptionOffer({ key: 'default' })
     ]);
 
-    const raw = this.configurationService.get('AGENT_WIDGET_SCRIPT_URL') || '';
+    const raw = (this.configurationService.get('AGENT_WIDGET_SCRIPT_URL') || '').trim();
     const agentWidgetScriptUrl = raw
       ? raw.startsWith('http://') || raw.startsWith('https://')
         ? raw
-        : `https://${raw.replace(/^\/+/, '')}`
+        : raw.startsWith('/')
+          ? raw
+          : `https://${raw.replace(/^\/+/, '')}`
       : undefined;
 
     if (isUserSignupEnabled) {
       globalPermissions.push(permissions.createUserAccount);
     }
 
+    const adminId = (this.configurationService.get('ADMIN_ID') || '').trim();
+    const hasAdminLogin = adminId.length > 0;
+    const adminAccessToken = hasAdminLogin ? adminId : undefined;
+
     return {
       ...info,
+      adminAccessToken,
       benchmarks,
       demoAuthToken,
       globalPermissions,
+      hasAdminLogin,
       isReadOnlyMode,
       statistics,
       subscriptionOffer,

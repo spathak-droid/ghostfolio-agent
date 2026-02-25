@@ -91,4 +91,55 @@ describe('transactionTimelineTool', () => {
       }
     ]);
   });
+
+  it('applies explicit structured filters when provided', async () => {
+    const result = await transactionTimelineTool({
+      dateFrom: '2026-01-01',
+      dateTo: '2026-12-31',
+      message: 'show transactions',
+      symbol: 'TSLA',
+      transactions: [
+        {
+          SymbolProfile: { symbol: 'TSLA' },
+          date: '2026-03-01T06:00:00.000Z',
+          quantity: 1,
+          type: 'SELL',
+          unitPrice: 400
+        },
+        {
+          SymbolProfile: { symbol: 'TSLA' },
+          date: '2025-12-20T06:00:00.000Z',
+          quantity: 1,
+          type: 'SELL',
+          unitPrice: 390
+        },
+        {
+          SymbolProfile: { symbol: 'AAPL' },
+          date: '2026-03-05T06:00:00.000Z',
+          quantity: 1,
+          type: 'SELL',
+          unitPrice: 200
+        }
+      ],
+      type: 'SELL'
+    });
+
+    expect(result.filters).toEqual(
+      expect.objectContaining({
+        dateFrom: '2026-01-01',
+        dateTo: '2026-12-31',
+        symbol: 'TSLA',
+        type: 'SELL'
+      })
+    );
+    expect(result.timeline).toEqual([
+      {
+        date: '2026-03-01',
+        quantity: 1,
+        symbol: 'TSLA',
+        type: 'SELL',
+        unitPrice: 400
+      }
+    ]);
+  });
 });

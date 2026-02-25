@@ -63,13 +63,21 @@ export class GhostfolioClient {
   }
 
   public async getTransactions({
+    range = 'max',
+    take = 200,
     impersonationId,
     token
   }: {
+    range?: string;
+    take?: number;
     impersonationId?: string;
     token?: string;
   }) {
-    return this.get('/api/v1/order?range=max&take=200', { impersonationId, token });
+    const params = new URLSearchParams({
+      range: range.trim() || 'max',
+      take: String(Math.max(1, Math.min(1000, Math.trunc(take))))
+    });
+    return this.get(`/api/v1/order?${params.toString()}`, { impersonationId, token });
   }
 
   public async getSymbolLookup({
@@ -151,10 +159,13 @@ export class GhostfolioClient {
   public async updateOrder(
     orderId: string,
     dto: UpdateOrderDtoBody,
-    { token }: { token?: string }
+    { impersonationId, token }: { impersonationId?: string; token?: string }
   ) {
     const body = { ...dto, id: orderId, updateAccountBalance: true };
-    return this.put(`/api/v1/order/${encodeURIComponent(orderId)}`, body, { token });
+    return this.put(`/api/v1/order/${encodeURIComponent(orderId)}`, body, {
+      impersonationId,
+      token
+    });
   }
 
   private buildHeaders({
@@ -173,6 +184,32 @@ export class GhostfolioClient {
       headers['Impersonation-Id'] = impersonationId;
     }
     return headers;
+  }
+
+  private logGhostfolioFailure(
+    method: string,
+    path: string,
+    status: number,
+    bodyText?: string
+  ): void {
+    const payload = {
+      method,
+      path,
+      status,
+      baseUrl: this.baseUrl,
+      timestamp: Date.now(),
+      ...(bodyText !== undefined && { responseBody: bodyText.slice(0, 500) })
+    };
+    // eslint-disable-next-line no-console
+    console.log('[ghostfolio-api-failure]', JSON.stringify(payload));
+    try {
+      appendFileSync(
+        join(process.cwd(), '.cursor', 'debug-af2e79.log'),
+        JSON.stringify({ location: 'ghostfolio-client.ts', message: 'Ghostfolio API failure', ...payload }) + '\n'
+      );
+    } catch {
+      // ignore
+    }
   }
 
   private async get(
@@ -212,7 +249,13 @@ export class GhostfolioClient {
     const response = await fetch(`${this.baseUrl}${path}`, { headers });
 
     if (!response.ok) {
-      throw new Error(`Ghostfolio API request failed: ${response.status}`);
+      const bodyText = await response.text();
+      this.logGhostfolioFailure('GET', path, response.status, bodyText);
+      const hint =
+        response.status === 401
+          ? ' (check: you are signed in; agent GHOSTFOLIO_BASE_URL matches this app URL)'
+          : '';
+      throw new Error(`Ghostfolio API request failed: ${response.status}${hint}`);
     }
 
     return response.json();
@@ -237,7 +280,12 @@ export class GhostfolioClient {
     });
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`Ghostfolio API request failed: ${response.status} ${text}`);
+      this.logGhostfolioFailure('POST', path, response.status, text);
+      const hint =
+        response.status === 401
+          ? ' (check: you are signed in; agent GHOSTFOLIO_BASE_URL matches this app URL)'
+          : '';
+      throw new Error(`Ghostfolio API request failed: ${response.status}${hint} ${text}`);
     }
     return response.json() as Promise<T>;
   }
@@ -245,9 +293,9 @@ export class GhostfolioClient {
   private async put<T = unknown>(
     path: string,
     body: unknown,
-    { token }: { token?: string }
+    { impersonationId, token }: { impersonationId?: string; token?: string }
   ): Promise<T> {
-    const headers = this.buildHeaders({ token });
+    const headers = this.buildHeaders({ impersonationId, token });
     const response = await fetch(`${this.baseUrl}${path}`, {
       body: JSON.stringify(body),
       headers,
@@ -255,7 +303,12 @@ export class GhostfolioClient {
     });
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`Ghostfolio API request failed: ${response.status} ${text}`);
+      this.logGhostfolioFailure('PUT', path, response.status, text);
+      const hint =
+        response.status === 401
+          ? ' (check: you are signed in; agent GHOSTFOLIO_BASE_URL matches this app URL)'
+          : '';
+      throw new Error(`Ghostfolio API request failed: ${response.status}${hint} ${text}`);
     }
     return response.json() as Promise<T>;
   }

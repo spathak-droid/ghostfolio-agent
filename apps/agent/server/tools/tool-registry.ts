@@ -72,6 +72,14 @@ const TRANSACTION_INPUT: ToolInputSchema = {
   type: 'object',
   properties: {
     ...COMMON_INPUT.properties,
+    dateFrom: { type: 'string', description: 'Optional inclusive start date filter (YYYY-MM-DD)' },
+    dateTo: { type: 'string', description: 'Optional inclusive end date filter (YYYY-MM-DD)' },
+    symbol: { type: 'string', description: 'Optional symbol filter (e.g. TSLA, BTCUSD)' },
+    type: {
+      type: 'string',
+      description: 'Optional transaction type filter (BUY, SELL, DIVIDEND, FEE, INTEREST, LIABILITY)'
+    },
+    wantsLatest: { type: 'boolean', description: 'Optional: return only the most recent transaction' },
     transactions: {
       type: 'array',
       description: 'Pre-fetched transactions from get_transactions (activities from GET /order)'
@@ -120,11 +128,11 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   {
     name: 'market_data',
     description:
-      'Use when the user asks for current price, price change, or "difference from today to last month" for specific symbols (e.g. bitcoin, AAPL, Tesla). ' +
-      'Use for historical price requests (e.g. "how much was BTC in February 2025?" or "price in 2024") when the date is in the past relative to today. ' +
-      'Accepts symbols[] (names or tickers) and metrics[] (price, change_1m, change_percent_1m). ' +
-      'Resolves names via symbol lookup; returns current price and optional 1-month change. ' +
-      'Good for: "What is the price of bitcoin?", "How much was BTC price 2025 february?", "Current price of AAPL".',
+      'Use when the user asks for current price/quote of specific symbols (e.g. bitcoin, AAPL, Tesla). ' +
+      'This tool is current-only and does not provide historical comparisons. ' +
+      'Accepts symbols[] (names or tickers) and metrics[]; currently supports metric "price" only. Unsupported metrics are ignored and reported. ' +
+      'Resolves names via symbol lookup and returns current price. ' +
+      'Good for: "What is the price of bitcoin?", "Current price of AAPL", "quote for TSLA".',
     input_schema: {
       type: 'object',
       properties: {
@@ -132,18 +140,19 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
         symbols: { type: 'array', description: 'Symbol names or tickers, e.g. ["bitcoin"], ["AAPL"]' },
         metrics: {
           type: 'array',
-          description: 'Requested metrics: price, change_1m, change_percent_1m'
+          description:
+            'Requested metrics. Supported in current-only mode: price'
         }
       },
       required: ['message']
     },
     output_schema: {
       type: 'object',
-      description: 'Per-symbol current price and optional 1-month change metrics',
+      description: 'Per-symbol current price (current-only mode)',
       properties: {
         symbols: {
           type: 'array',
-          description: 'Array of { symbol, dataSource, currentPrice, currency, change1m?, changePercent1m?, error? }'
+          description: 'Array of { symbol, dataSource, currentPrice, currency, error? }'
         },
         summary: { type: 'string', description: 'Short summary' },
         answer: { type: 'string', description: 'Natural-language answer for the user' },
@@ -157,17 +166,42 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   {
     name: 'market_data_lookup',
     description:
-      'Use when the user asks about market data, prices, or quotes (e.g. "What is the price of X?", "Market data for AAPL"). ' +
-      'Calls GET /market-data/markets and returns market data from Ghostfolio. ' +
-      'Good for: price lookups, quote requests, or general market data questions when portfolio-specific data is not required.',
+      'Calls GET /api/v1/market-data/markets. Returns only Fear & Greed Index (CRYPTOCURRENCIES and STOCKS) from Ghostfolio—no symbol parameter, no per-symbol prices. ' +
+      'Use for: "How is the market sentiment?", "Fear and greed index". Do NOT use for "price of X" or "quote for AAPL"—use market_data instead.',
     input_schema: COMMON_INPUT,
     output_schema: {
       type: 'object',
-      description: 'Market data response from GET /market-data/markets',
+      description: 'Response: fearAndGreedIndex { CRYPTOCURRENCIES, STOCKS } with marketPrice, historicalData',
       properties: {
-        data: { type: 'object', description: 'Raw market data payload' },
+        data: { type: 'object', description: 'Raw payload: fearAndGreedIndex.CRYPTOCURRENCIES and .STOCKS' },
         summary: { type: 'string', description: 'Short summary of the lookup' },
         source: { type: 'string', description: 'Source identifier' }
+      }
+    },
+    error_model: TOOL_ERROR,
+    idempotent: true
+  },
+  {
+    name: 'market_overview',
+    description:
+      'Use when the user asks for broad market condition, sentiment, or "which markets are doing good/bad right now". ' +
+      'Calls GET /api/v1/market-data/markets and summarizes fear & greed levels for STOCKS and CRYPTOCURRENCIES. ' +
+      'Good for: "market overview", "how are markets doing?", "is market sentiment fear or greed?"',
+    input_schema: COMMON_INPUT,
+    output_schema: {
+      type: 'object',
+      description: 'Market overview based on fearAndGreedIndex from Ghostfolio market endpoint',
+      properties: {
+        answer: { type: 'string', description: 'Natural-language market overview' },
+        data_as_of: { type: 'string', description: 'ISO timestamp' },
+        overview: {
+          type: 'object',
+          description:
+            'Normalized sentiment for stocks and cryptocurrencies: { stocks: { value, label }, cryptocurrencies: { value, label } }'
+        },
+        summary: { type: 'string', description: 'Short summary' },
+        sources: { type: 'array', description: 'Source identifiers' },
+        data: { type: 'object', description: 'Raw GET /market-data/markets payload' }
       }
     },
     error_model: TOOL_ERROR,
@@ -180,7 +214,15 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
       'Returns a list of transactions: each has date, type (BUY, SELL, DIVIDEND, etc.), symbol, quantity, unitPrice, value, SymbolProfile. ' +
       'Do not select this tool alone for the user; it is used internally before transaction_categorize or transaction_timeline. ' +
       'Select transaction_categorize or transaction_timeline when the user asks about transaction history, categorization, or "when did I buy/sell".',
-    input_schema: COMMON_INPUT,
+    input_schema: {
+      type: 'object',
+      properties: {
+        ...COMMON_INPUT.properties,
+        range: { type: 'string', description: 'Optional Ghostfolio range parameter (default: max)' },
+        take: { type: 'number', description: 'Optional max activities to fetch (default: 200)' }
+      },
+      required: ['message']
+    },
     output_schema: {
       type: 'object',
       description: 'ActivitiesResponse: activities array (transactions) + count; see Transactions in ghostfolio-api-response-schemas.md',
@@ -203,7 +245,8 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     description:
       'Use when the user wants to categorize transactions, see a breakdown by type (buy, sell, dividend, etc.), or summarize "what transactions do I have?". ' +
       'Requires transactions: run get_transactions first (orchestrator does this automatically). ' +
-      'Returns categories with counts and totals, plus a short answer. ' +
+      'Understands optional filters from message for symbol, type, and date range (e.g. year, last year, this month, last N days). ' +
+      'Returns categories with counts/totals and pattern metrics (buy/sell ratio, 30d activity trend, average trade size, concentration, fee drag), plus a short answer. ' +
       'Good for: "Categorize my transactions", "Break down my transactions by type", "Summarize my activity".',
     input_schema: TRANSACTION_INPUT,
     output_schema: {
@@ -213,6 +256,23 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
         categories: {
           type: 'array',
           description: 'Array of { category, count, totalValue } (e.g. BUY, SELL, DIVIDEND)'
+        },
+        patterns: {
+          type: 'object',
+          description:
+            'Pattern metrics: buySellRatio, activityTrend30dVsPrev30dPercent, averageTradeSize, topSymbolByCount, feeDragPercent'
+        },
+        computed: {
+          type: 'array',
+          description: 'Derived metric formulas and results for transparency'
+        },
+        missing_data: {
+          type: 'array',
+          description: 'Pattern metrics that could not be computed and why'
+        },
+        filters: {
+          type: 'object',
+          description: 'Applied symbol/type/date filters and matchedCount'
         },
         summary: { type: 'string', description: 'Short summary of categorization' },
         data_as_of: { type: 'string', description: 'ISO timestamp' },
@@ -228,6 +288,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     description:
       'Use when the user asks when they bought or sold something, at what price, or for the last/latest transaction. ' +
       'Requires transactions: run get_transactions first (orchestrator does this automatically). ' +
+      'Supports optional filters by symbol, type, and date range. ' +
       'Returns a timeline of matching transactions (date, symbol, type, quantity, unitPrice). ' +
       'Good for: "When did I buy AAPL?", "When did I sell X?", "At what price did I buy?", "Last transaction", "Latest transaction".',
     input_schema: TRANSACTION_INPUT,
@@ -343,6 +404,7 @@ export const SELECTABLE_TOOL_NAMES: readonly AgentToolName[] = [
   'portfolio_analysis',
   'market_data',
   'market_data_lookup',
+  'market_overview',
   'transaction_categorize',
   'transaction_timeline',
   'create_order',

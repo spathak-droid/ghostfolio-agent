@@ -93,4 +93,81 @@ describe('synthesizeToolResults', () => {
       'Missing data: No matching transactions for requested filters'
     );
   });
+
+  it('explains whether portfolio is in profit or loss from net performance', () => {
+    const inProfit = synthesizeToolResults({
+      existingFlags: [],
+      toolCalls: [
+        {
+          toolName: 'portfolio_analysis',
+          success: true,
+          result: {
+            data_as_of: '2026-02-24T06:10:00.000Z',
+            performance: {
+              netPerformance: 1200.45,
+              netPerformancePercentage: 0.12
+            },
+            sources: ['ghostfolio_api'],
+            summary: 'Portfolio analysis from Ghostfolio data'
+          }
+        }
+      ]
+    });
+
+    const inLoss = synthesizeToolResults({
+      existingFlags: [],
+      toolCalls: [
+        {
+          toolName: 'portfolio_analysis',
+          success: true,
+          result: {
+            data_as_of: '2026-02-24T06:10:00.000Z',
+            performance: {
+              netPerformance: -450.11,
+              netPerformancePercentage: -0.045
+            },
+            sources: ['ghostfolio_api'],
+            summary: 'Portfolio analysis from Ghostfolio data'
+          }
+        }
+      ]
+    });
+
+    expect(inProfit.answer).toContain('Portfolio status: in profit');
+    expect(inLoss.answer).toContain('Portfolio status: in loss');
+  });
+
+  it('includes transaction pattern findings when categorization returns patterns', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      toolCalls: [
+        {
+          toolName: 'transaction_categorize',
+          success: true,
+          result: {
+            categories: [
+              { category: 'BUY', count: 2, totalValue: 300 },
+              { category: 'SELL', count: 1, totalValue: 150 }
+            ],
+            data_as_of: '2026-04-01T00:00:00.000Z',
+            patterns: {
+              buySellRatio: 2,
+              activityTrend30dVsPrev30dPercent: 100,
+              topSymbolByCount: {
+                symbol: 'TSLA',
+                sharePercent: 50
+              }
+            },
+            sources: ['agent_internal'],
+            summary: 'Transaction categorization completed for 4 transactions'
+          }
+        }
+      ]
+    });
+
+    expect(response.answer).toContain('Transaction categories: BUY (2), SELL (1).');
+    expect(response.answer).toContain(
+      'Transaction patterns: buy/sell ratio 2, 30d activity trend 100%, top symbol TSLA (50%).'
+    );
+  });
 });

@@ -532,6 +532,37 @@ export class GfCreateOrUpdateActivityDialogComponent implements OnDestroy {
           'updateAccountBalance'
         ).value;
 
+        if (
+          activity.updateAccountBalance === true &&
+          !activity.accountId &&
+          this.data.accounts.length === 1
+        ) {
+          activity.accountId = this.data.accounts[0].id;
+        }
+
+        // #region agent log
+        const uabControl = this.activityForm.get('updateAccountBalance');
+        fetch('http://127.0.0.1:7808/ingest/4da1e7d4-b39c-44d9-a939-8c4e2776c91d', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '49d310' },
+          body: JSON.stringify({
+            sessionId: '49d310',
+            location: 'create-or-update-activity-dialog.component.ts:onSubmit',
+            message: 'Create order form submit (updateAccountBalance, accountId)',
+            data: {
+              updateAccountBalance: activity.updateAccountBalance,
+              accountId: activity.accountId,
+              type: activity.type,
+              date: activity.date,
+              updateAccountBalanceEnabled: uabControl.enabled,
+              updateAccountBalanceDisabled: uabControl.disabled
+            },
+            timestamp: Date.now(),
+            hypothesisId: 'A_B'
+          })
+        }).catch(() => { /* no-op */ });
+        // #endregion
+
         await validateObjectForForm({
           classDto: CreateOrderDto,
           form: this.activityForm,

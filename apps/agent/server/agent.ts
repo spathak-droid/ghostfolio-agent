@@ -32,9 +32,20 @@ export function createAgent({
   const tracedChat = traceable(
     async ({
       conversationId,
+      createOrderParams: requestCreateOrderParams,
+      dateFrom,
+      dateTo,
       impersonationId,
+      metrics,
       message,
-      token
+      range,
+      symbol,
+      symbols,
+      take,
+      token,
+      type,
+      updateOrderParams: requestUpdateOrderParams,
+      wantsLatest
     }: AgentChatRequest): Promise<AgentChatResponse> => {
       const conversation = [...(memory.get(conversationId) ?? [])];
       conversation.push({ content: message, role: 'user' });
@@ -155,21 +166,29 @@ export function createAgent({
         for (const tool of selectedTools) {
           if (isTransactionDependentTool(tool)) {
             await runTransactionsDependentFlow({
+              dateFrom,
+              dateTo,
               dependentTool: tool,
               errors,
               impersonationId,
               message,
+              range,
+              symbol,
+              take,
               token,
               toolCalls,
               tools,
               trace,
-              traceContext
+              traceContext,
+              type,
+              wantsLatest
             });
             continue;
           }
 
           try {
-            let orderParams: { createOrderParams?: import('./types').CreateOrderParams; updateOrderParams?: import('./types').UpdateOrderParams } | undefined;
+            let createOrderParams = requestCreateOrderParams;
+            let updateOrderParams = requestUpdateOrderParams;
             if (
               (tool === 'create_order' || tool === 'update_order') &&
               llm?.getToolParametersForOrder
@@ -181,19 +200,37 @@ export function createAgent({
                 traceContext
               );
               if (extracted) {
-                if (tool === 'create_order') orderParams = { createOrderParams: extracted as import('./types').CreateOrderParams };
-                else orderParams = { updateOrderParams: extracted as import('./types').UpdateOrderParams };
+                if (tool === 'create_order') {
+                  createOrderParams = {
+                    ...(extracted as import('./types').CreateOrderParams),
+                    ...(requestCreateOrderParams ?? {})
+                  };
+                } else {
+                  updateOrderParams = {
+                    ...(extracted as import('./types').UpdateOrderParams),
+                    ...(requestUpdateOrderParams ?? {})
+                  };
+                }
               }
             }
             const result = await executeTool({
+              dateFrom,
+              dateTo,
               impersonationId,
+              metrics,
               message,
+              range,
+              symbol,
+              symbols,
+              take,
               token,
               tool,
               tools,
               traceContext,
-              createOrderParams: orderParams?.createOrderParams,
-              updateOrderParams: orderParams?.updateOrderParams
+              type,
+              wantsLatest,
+              createOrderParams,
+              updateOrderParams
             });
             toolCalls.push({
               result,
@@ -537,21 +574,39 @@ function getClarificationAnswerFromToolCalls(
 }
 
 async function executeTool({
+  dateFrom,
+  dateTo,
   impersonationId,
+  metrics,
   message,
+  range,
+  symbol,
+  symbols,
+  take,
   traceContext,
   token,
   tool,
   tools,
+  type,
+  wantsLatest,
   createOrderParams,
   updateOrderParams
 }: {
+  dateFrom?: string;
+  dateTo?: string;
   impersonationId?: string;
+  metrics?: string[];
   message: string;
+  range?: string;
+  symbol?: string;
+  symbols?: string[];
+  take?: number;
   traceContext: AgentTraceContext;
   token?: string;
   tool: AgentToolName;
   tools: AgentTools;
+  type?: string;
+  wantsLatest?: boolean;
   createOrderParams?: import('./types').CreateOrderParams;
   updateOrderParams?: import('./types').UpdateOrderParams;
 }) {
@@ -577,10 +632,23 @@ async function executeTool({
     return traceable(tools.marketData, {
       name: `tool.market_data.turn_${traceContext.turnId}`,
       run_type: 'tool'
-    })(runtimeTrace, { impersonationId, message, token });
+    })(runtimeTrace, { impersonationId, message, metrics, symbols, token });
   }
 
   if (tool === 'market_data_lookup') {
+    return traceable(tools.marketDataLookup, {
+      name: `tool.market_data_lookup.turn_${traceContext.turnId}`,
+      run_type: 'tool'
+    })(runtimeTrace, { impersonationId, message, token });
+  }
+
+  if (tool === 'market_overview') {
+    if (tools.marketOverview) {
+      return traceable(tools.marketOverview, {
+        name: `tool.market_overview.turn_${traceContext.turnId}`,
+        run_type: 'tool'
+      })(runtimeTrace, { impersonationId, message, token });
+    }
     return traceable(tools.marketDataLookup, {
       name: `tool.market_data_lookup.turn_${traceContext.turnId}`,
       run_type: 'tool'
@@ -591,14 +659,14 @@ async function executeTool({
     return traceable(tools.getTransactions, {
       name: `tool.get_transactions.turn_${traceContext.turnId}`,
       run_type: 'tool'
-    })(runtimeTrace, { impersonationId, message, token });
+    })(runtimeTrace, { impersonationId, message, range, take, token });
   }
 
   if (tool === 'transaction_timeline') {
     return traceable(tools.transactionTimeline, {
       name: `tool.transaction_timeline.turn_${traceContext.turnId}`,
       run_type: 'tool'
-    })(runtimeTrace, { impersonationId, message, token });
+    })(runtimeTrace, { dateFrom, dateTo, impersonationId, message, symbol, token, type, wantsLatest });
   }
 
   if (tool === 'create_order') {
@@ -618,7 +686,7 @@ async function executeTool({
   return traceable(tools.transactionCategorize, {
     name: `tool.transaction_categorize.turn_${traceContext.turnId}`,
     run_type: 'tool'
-  })(runtimeTrace, { impersonationId, message, token });
+  })(runtimeTrace, { dateFrom, dateTo, impersonationId, message, symbol, token, type });
 }
 
 /** Keyword hints per selectable tool; used when LLM is unavailable. Registry is source of truth for tool names. */
@@ -641,10 +709,20 @@ const SELECTABLE_KEYWORD_HINTS: Readonly<Record<string, string[]>> = {
     'how much difference',
     'how much was',
     'price in',
+    'last week',
     'last month',
     'price from today'
   ],
-  market_data_lookup: ['market data', 'market overview', 'market summary'],
+  market_data_lookup: ['market data', 'fear and greed index'],
+  market_overview: [
+    'market overview',
+    'market summary',
+    'how are markets doing',
+    'markets right now',
+    'doing good',
+    'doing bad',
+    'market sentiment'
+  ],
   transaction_categorize: ['transaction', 'categorize', 'category'],
   transaction_timeline: [
     'when did i buy',
@@ -725,11 +803,37 @@ async function selectTools({
 function messageMatchesRetrievalPatterns(message: string): boolean {
   const normalized = message.toLowerCase();
   if (/\b(20\d{2})\b/.test(message)) return true;
-  if (/\b(last month|last year|ytd|today|yesterday)\b/.test(normalized)) return true;
+  if (/\b(last week|last month|last year|ytd|today|yesterday)\b/.test(normalized)) return true;
   if (/\b(price|quote|cost|return|performance)\b/.test(normalized)) return true;
   if (/\b[A-Z]{1,5}\b/.test(message)) return true;
   if (/\b(btc|bitcoin|eth|ethereum)\b/.test(normalized)) return true;
   return false;
+}
+
+function isExplicitOrderExecutionIntent(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+
+  const advisoryPatterns = [
+    /\bshould i\s+(buy|sell)\b/,
+    /\b(do you think|would you)\b.*\b(buy|sell)\b/,
+    /\bis it (a )?good (idea )?to\s+(buy|sell)\b/,
+    /\bbuy or sell\b/,
+    /\bcan i\s+(buy|sell)\b/
+  ];
+  if (advisoryPatterns.some((pattern) => pattern.test(normalized))) {
+    return false;
+  }
+
+  if (/^(buy|sell)\b/.test(normalized)) {
+    return !normalized.includes('?');
+  }
+
+  return [
+    /\b(i want to|i'd like to|please)\s+(buy|sell)\b/,
+    /\b(add|record)\s+(a\s+)?(buy|sell)\b/,
+    /\b(place|execute|submit|create|update)\s+(an?\s+)?order\b/,
+    /\b(buy|sell)\s+\d+(\.\d+)?\s+[a-z0-9.-]+\b/
+  ].some((pattern) => pattern.test(normalized));
 }
 
 async function decideRoute({
@@ -769,7 +873,7 @@ async function decideRoute({
       const hasOrderTool = inferredTools.some(
         (t) => t === 'create_order' || t === 'update_order'
       );
-      if (hasOrderTool) {
+      if (hasOrderTool && isExplicitOrderExecutionIntent(message)) {
         return { intent: decision.intent, tools: inferredTools };
       }
       return {
@@ -1038,36 +1142,57 @@ function createTraceContext({
 }
 
 async function runTransactionsDependentFlow({
+  dateFrom,
+  dateTo,
   dependentTool,
   errors,
   impersonationId,
   message,
+  range,
+  symbol,
+  take,
   token,
   toolCalls,
   tools,
   trace,
-  traceContext
+  traceContext,
+  type,
+  wantsLatest
 }: {
+  dateFrom?: string;
+  dateTo?: string;
   dependentTool: (typeof TRANSACTION_DEPENDENT_TOOL_NAMES)[number];
   errors: AgentChatResponse['errors'];
   impersonationId?: string;
   message: string;
+  range?: string;
+  symbol?: string;
+  take?: number;
   token?: string;
   toolCalls: AgentChatResponse['toolCalls'];
   tools: AgentTools;
   trace: AgentTraceStep[];
   traceContext: AgentTraceContext;
+  type?: string;
+  wantsLatest?: boolean;
 }) {
   let transactions: Record<string, unknown>[] = [];
 
   try {
     const transactionResult = await executeTool({
+      dateFrom,
+      dateTo,
       impersonationId,
       message,
+      range,
+      symbol,
+      take,
       token,
       tool: 'get_transactions',
       tools,
-      traceContext
+      traceContext,
+      type,
+      wantsLatest
     });
 
     transactions = extractTransactions(transactionResult);
@@ -1134,7 +1259,7 @@ async function runTransactionsDependentFlow({
           traceContext
         })
       },
-      { impersonationId, message, token, transactions }
+      { dateFrom, dateTo, impersonationId, message, symbol, token, transactions, type, wantsLatest }
     );
 
     toolCalls.push({

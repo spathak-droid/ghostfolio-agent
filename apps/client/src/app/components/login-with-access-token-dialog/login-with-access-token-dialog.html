@@ -3,26 +3,44 @@
 <div class="py-3" mat-dialog-content>
   <div class="align-items-center d-flex flex-column">
     <form class="w-100">
-      @if (data.hasPermissionToUseAuthToken) {
+      @if (data.hasPermissionToUseAuthToken || data.hasAdminLogin) {
         <mat-form-field appearance="outline" class="without-hint w-100">
           <mat-label i18n>Security Token</mat-label>
           <input
             matInput
             [formControl]="accessTokenFormControl"
             [type]="isAccessTokenHidden ? 'password' : 'text'"
+            [readonly]="isLoginAsAdminEnabled"
             (keydown.enter)="onLoginWithAccessToken(); $event.preventDefault()"
+            (copy)="onClipboardAction($event)"
+            (cut)="onClipboardAction($event)"
+            (paste)="onClipboardAction($event)"
           />
-          <button
-            mat-button
-            matSuffix
-            type="button"
-            (click)="isAccessTokenHidden = !isAccessTokenHidden"
-          >
-            <ion-icon
-              [name]="isAccessTokenHidden ? 'eye-outline' : 'eye-off-outline'"
-            />
-          </button>
+          @if (showAccessTokenRevealControl) {
+            <button
+              mat-button
+              matSuffix
+              type="button"
+              (click)="isAccessTokenHidden = !isAccessTokenHidden"
+            >
+              <ion-icon
+                [name]="isAccessTokenHidden ? 'eye-outline' : 'eye-off-outline'"
+              />
+            </button>
+          }
         </mat-form-field>
+      }
+
+      @if (data.hasAdminLogin) {
+        <div class="d-flex flex-column mb-2 mt-2">
+          <mat-slide-toggle
+            color="primary"
+            [checked]="isLoginAsAdminEnabled"
+            (change)="onToggleAdminLogin($event.checked)"
+          >
+            <ng-container i18n>Login as admin</ng-container>
+          </mat-slide-toggle>
+        </div>
       }
 
       @if (
@@ -67,7 +85,7 @@
     >
   </div>
   <div>
-    @if (data.hasPermissionToUseAuthToken) {
+    @if (data.hasPermissionToUseAuthToken || data.hasAdminLogin) {
       <button
         color="primary"
         mat-flat-button

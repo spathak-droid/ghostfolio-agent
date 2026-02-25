@@ -14,8 +14,10 @@ export async function marketDataLookupTool({
   const data = await client.getMarketData({ impersonationId, token });
 
   return {
+    data_as_of: new Date().toISOString(),
     message,
     source: 'ghostfolio_api',
+    sources: ['ghostfolio_api'],
     summary: 'Market data lookup from Ghostfolio API',
     data
   };

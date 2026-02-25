@@ -71,6 +71,27 @@ export class AuthController {
     }
   }
 
+  @Post('admin-login')
+  public async adminLogin(): Promise<OAuthResponse> {
+    const adminId = this.configurationService.get('ADMIN_ID')?.trim();
+    if (!adminId) {
+      throw new HttpException(
+        getReasonPhrase(StatusCodes.FORBIDDEN),
+        StatusCodes.FORBIDDEN
+      );
+    }
+    try {
+      const authToken =
+        await this.authService.validateAnonymousLogin(adminId);
+      return { authToken };
+    } catch {
+      throw new HttpException(
+        getReasonPhrase(StatusCodes.FORBIDDEN),
+        StatusCodes.FORBIDDEN
+      );
+    }
+  }
+
   @Get('google')
   @UseGuards(AuthGuard('google'))
   public googleLogin() {

@@ -25,12 +25,20 @@ const SYMBOL_ALIASES: Readonly<Record<string, ResolvedSymbol>> = {
   solana: { dataSource: 'YAHOO', symbol: 'SOL-USD' },
   sol: { dataSource: 'YAHOO', symbol: 'SOL-USD' },
   tesla: { dataSource: 'YAHOO', symbol: 'TSLA' },
+  telsa: { dataSource: 'YAHOO', symbol: 'TSLA' },
   tsla: { dataSource: 'YAHOO', symbol: 'TSLA' },
   apple: { dataSource: 'YAHOO', symbol: 'AAPL' },
   aapl: { dataSource: 'YAHOO', symbol: 'AAPL' },
   nvidia: { dataSource: 'YAHOO', symbol: 'NVDA' },
   nvda: { dataSource: 'YAHOO', symbol: 'NVDA' }
 };
+
+const TRAILING_ASSET_TERMS = /(stock|stocks|share|shares|coin|coins)$/;
+
+function normalizeAliasKey(input: string): string {
+  const collapsed = input.trim().toLowerCase().replace(/[\s._/]+/g, '');
+  return collapsed.replace(TRAILING_ASSET_TERMS, '');
+}
 
 /**
  * Resolves a name or ticker to (dataSource, symbol).
@@ -45,7 +53,7 @@ export async function resolveSymbol(
     return null;
   }
 
-  const aliasKey = normalized.toLowerCase().replace(/\s+/g, '');
+  const aliasKey = normalizeAliasKey(normalized);
   const alias = SYMBOL_ALIASES[aliasKey];
   if (alias) {
     return alias;

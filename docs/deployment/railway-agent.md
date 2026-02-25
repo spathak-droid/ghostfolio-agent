@@ -83,3 +83,11 @@ The API uses `AGENT_SERVICE_URL` to proxy `/api/v1/agent/chat` to the agent, and
 - **Widget**: `https://<agent-domain>/widget/index.js` → JavaScript
 - **API info**: `https://<api-domain>/api/v1/info` → `agentWidgetScriptUrl` should be `https://<agent-domain>/widget/index.js`
 - In the Ghostfolio UI, open the agent panel and send a message; it should go through the API to the agent and return a response.
+
+## Troubleshooting: 401 (Ghostfolio API request failed)
+
+If the agent returns **TOOL_EXECUTION_FAILED: Ghostfolio API request failed: 401**:
+
+1. **Be signed in** – Use the same browser session where you are logged into Ghostfolio. The widget sends your auth token from storage (`auth-token`); if you are not logged in or the token is missing, the agent cannot call the API on your behalf.
+2. **Match `GHOSTFOLIO_BASE_URL`** – On the **agent** service, `GHOSTFOLIO_BASE_URL` must be the **exact** public URL of the Ghostfolio app you are using (e.g. `https://confident-acceptance-production.up.railway.app`). No trailing slash. If the agent points at a different URL or `localhost`, the token issued for your app will not be valid there.
+3. **Redeploy after env change** – After changing `GHOSTFOLIO_BASE_URL` on the agent, redeploy the agent service.

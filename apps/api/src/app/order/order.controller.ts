@@ -227,6 +227,38 @@ export class OrderController {
 
     delete data.dataSource;
 
+    if (data.updateAccountBalance === true && !data.accountId) {
+      throw new HttpException(
+        {
+          error: getReasonPhrase(StatusCodes.BAD_REQUEST),
+          message: [
+            'Account is required when updating cash balance. Please select an account.'
+          ]
+        },
+        StatusCodes.BAD_REQUEST
+      );
+    }
+
+    // #region agent log
+    fetch('http://127.0.0.1:7808/ingest/4da1e7d4-b39c-44d9-a939-8c4e2776c91d', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '49d310' },
+      body: JSON.stringify({
+        sessionId: '49d310',
+        location: 'order.controller.ts:createOrder',
+        message: 'createOrder request body (updateAccountBalance, accountId)',
+        data: {
+          updateAccountBalance: data.updateAccountBalance,
+          accountId: data.accountId,
+          type: data.type,
+          date: data.date
+        },
+        timestamp: Date.now(),
+        hypothesisId: 'A_B_C'
+      })
+    }).catch(() => { /* no-op */ });
+    // #endregion
+
     const order = await this.orderService.createOrder({
       ...data,
       date: parseISO(data.date),

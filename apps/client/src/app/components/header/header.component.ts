@@ -291,6 +291,8 @@ export class GfHeaderComponent implements OnChanges {
       autoFocus: false,
       data: {
         accessToken: '',
+        adminAccessToken: this.info?.adminAccessToken ?? '',
+        hasAdminLogin: this.info?.hasAdminLogin === true,
         hasPermissionToUseAuthGoogle: this.hasPermissionForAuthGoogle,
         hasPermissionToUseAuthOidc: this.hasPermissionForAuthOidc,
         hasPermissionToUseAuthToken: this.hasPermissionForAuthToken,
@@ -303,23 +305,25 @@ export class GfHeaderComponent implements OnChanges {
       .afterClosed()
       .pipe(takeUntil(this.unsubscribeSubject))
       .subscribe((data) => {
-        if (data?.accessToken) {
-          this.dataService
-            .loginAnonymous(data?.accessToken)
-            .pipe(
-              catchError(() => {
-                this.notificationService.alert({
-                  title: $localize`Oops! Incorrect Security Token.`
-                });
-
-                return EMPTY;
-              }),
-              takeUntil(this.unsubscribeSubject)
-            )
-            .subscribe(({ authToken }) => {
-              this.setToken(authToken);
-            });
+        const token = data?.accessToken ?? '';
+        if (!token) {
+          return;
         }
+        this.dataService
+          .loginAnonymous(token)
+          .pipe(
+            catchError(() => {
+              this.notificationService.alert({
+                title: $localize`Oops! Incorrect Security Token.`
+              });
+
+              return EMPTY;
+            }),
+            takeUntil(this.unsubscribeSubject)
+          )
+          .subscribe(({ authToken }) => {
+            this.setToken(authToken);
+          });
       });
   }
 
@@ -331,7 +335,15 @@ export class GfHeaderComponent implements OnChanges {
 
     this.userService
       .get()
-      .pipe(takeUntil(this.unsubscribeSubject))
+      .pipe(
+        takeUntil(this.unsubscribeSubject),
+        catchError(() => {
+          this.notificationService.alert({
+            title: $localize`Session could not be established. Check that the token is valid and the app is using the correct API.`
+          });
+          return EMPTY;
+        })
+      )
       .subscribe((user) => {
         const userLanguage = user?.settings?.language;
 

@@ -180,14 +180,14 @@ export function createOpenAiClient({
 Today (UTC date): ${todayUtc}
 Now (UTC): ${nowUtc}
 
-Date rule: Treat year/month mentions as historical unless explicitly future. Parse any date the user mentions relative to Today (UTC). If parsed date < today → historical → use mode: tool_call (e.g. market_data for price). If parsed date > today → future/out of scope → direct_reply with a short explanation. "Last month" = 1 month lookback from today (UTC); anchor = nearest available daily close.
+Date rule: Treat year/month mentions as historical unless explicitly future. Parse any date the user mentions relative to Today (UTC). If parsed date < today → historical request → direct_reply that current-only market data is available. If parsed date > today → future/out of scope → direct_reply with a short explanation.
 
-When to use tool_call: User asks for data we can fetch (prices current or historical, portfolio, balance, transactions, holdings, performance). For any past date use tool_call. When in doubt, prefer tool_call so we try to fetch data.
+When to use tool_call: User asks for data we can fetch (current prices, portfolio, balance, transactions, holdings, performance). When in doubt for current data, prefer tool_call so we try to fetch data.
 When to use tool_call for orders: User says they want to buy, sell, add an activity, or record a trade (e.g. "buy me a Tesla stock", "I want to buy Apple", "record a sell") — use mode: tool_call and tool: create_order even if quantity or other details are missing; the create_order tool will ask for them.
 When to use direct_reply: Greetings, definitions ("what is X?"), or clearly out-of-scope future requests only.
 
 If the question implies retrieval of data (price, balance, transactions, performance), set requires_factual_data to true and use mode: tool_call even when unsure.
-If the question asks for past/historical data (e.g. "last month", specific year), set needs_history to true.
+If the question asks for past/historical data (e.g. "last month", specific year), set needs_history to true and prefer direct_reply with limitation.
 
 Available tools (use exactly these names or none):
 ${toolsDescription}
@@ -233,7 +233,7 @@ Return strict JSON with exactly these fields:
 Today (UTC date): ${todayUtc}
 Now (UTC): ${nowUtc}
 
-For price requests (current or historical, e.g. "how much was X in 2025"), prefer market_data. Use none only when no tool fits.
+For current price requests, prefer market_data. For historical/past-date price requests, use none and answer with a short current-only limitation.
 
 Available tools (use exactly one name or none):
 ${toolsDescription}

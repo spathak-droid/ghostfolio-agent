@@ -2,7 +2,18 @@ export interface AgentChatRequest {
   conversationId: string;
   impersonationId?: string;
   message: string;
+  dateFrom?: string;
+  dateTo?: string;
+  metrics?: string[];
+  range?: string;
+  symbol?: string;
+  symbols?: string[];
+  take?: number;
   token?: string;
+  type?: string;
+  wantsLatest?: boolean;
+  createOrderParams?: CreateOrderParams;
+  updateOrderParams?: UpdateOrderParams;
 }
 
 export interface AgentConversationMessage {
@@ -20,6 +31,7 @@ export type AgentToolName =
   | 'get_transactions'
   | 'market_data'
   | 'market_data_lookup'
+  | 'market_overview'
   | 'portfolio_analysis'
   | 'transaction_categorize'
   | 'transaction_timeline'
@@ -92,8 +104,17 @@ export interface AgentChatResponse {
 export interface AgentToolInput {
   impersonationId?: string;
   message: string;
+  dateFrom?: string;
+  dateTo?: string;
+  metrics?: string[];
+  range?: string;
+  symbol?: string;
+  symbols?: string[];
+  take?: number;
   token?: string;
   transactions?: Record<string, unknown>[];
+  type?: string;
+  wantsLatest?: boolean;
   createOrderParams?: CreateOrderParams;
   updateOrderParams?: UpdateOrderParams;
 }
@@ -102,6 +123,7 @@ export interface AgentTools {
   getTransactions: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   marketData: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   marketDataLookup: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
+  marketOverview?: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   portfolioAnalysis: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   transactionCategorize: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   transactionTimeline: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;

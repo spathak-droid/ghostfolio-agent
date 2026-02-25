@@ -7,14 +7,18 @@ export async function getTransactionsTool({
   client,
   impersonationId,
   message,
+  range,
+  take,
   token
 }: {
   client: GhostfolioClient;
   impersonationId?: string;
   message: string;
+  range?: string;
+  take?: number;
   token?: string;
 }) {
-  const data = await client.getTransactions({ impersonationId, token });
+  const data = await client.getTransactions({ impersonationId, range, take, token });
   const transactions =
     isObject(data) && Array.isArray(data.activities)
       ? (data.activities as Record<string, unknown>[])

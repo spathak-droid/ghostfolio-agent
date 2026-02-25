@@ -3,24 +3,48 @@ import {
   normalizeTransactions
 } from './transaction-data';
 
+interface TimelineFilters {
+  dateFrom?: string;
+  dateTo?: string;
+  symbol?: string;
+  type?: 'BUY' | 'SELL';
+  wantsLatest: boolean;
+}
+
 export async function transactionTimelineTool({
+  dateFrom,
+  dateTo,
   message,
-  transactions
+  symbol,
+  transactions,
+  type,
+  wantsLatest
 }: {
+  dateFrom?: string;
+  dateTo?: string;
   impersonationId?: string;
   message: string;
+  symbol?: string;
   token?: string;
   transactions?: Record<string, unknown>[];
+  type?: string;
+  wantsLatest?: boolean;
 }) {
   const normalized = normalizeTransactions(transactions ?? []);
   const indexes = buildTransactionIndexes(normalized);
-  const filters = parseFilters(message, indexes);
-  const filtered = filterTransactions({ filters, indexes }).slice(0, 50);
-  const timeline = filtered.map(({ date, quantity, symbol, type, unitPrice }) => ({
-    date,
-    quantity,
+  const filters = parseFilters(message, indexes, {
+    dateFrom,
+    dateTo,
     symbol,
     type,
+    wantsLatest
+  });
+  const filtered = filterTransactions({ filters, indexes }).slice(0, 50);
+  const timeline = filtered.map(({ date, quantity, symbol: resolvedSymbol, type: resolvedType, unitPrice }) => ({
+    date,
+    quantity,
+    symbol: resolvedSymbol,
+    type: resolvedType,
     unitPrice
   }));
 
@@ -32,8 +56,8 @@ export async function transactionTimelineTool({
       hasFxRates: false,
       hasMarketPrices: false
     },
-    computed: timeline.map(({ date, symbol, type, unitPrice }) => ({
-      formula: `match(symbol=${symbol}, type=${type}) -> unitPrice on ${date}`,
+    computed: timeline.map(({ date, symbol: resolvedSymbol, type: resolvedType, unitPrice }) => ({
+      formula: `match(symbol=${resolvedSymbol}, type=${resolvedType}) -> unitPrice on ${date}`,
       metric: 'matched_trade_price',
       result: unitPrice
     })),
@@ -48,19 +72,56 @@ export async function transactionTimelineTool({
 
 function parseFilters(
   message: string,
-  indexes: ReturnType<typeof buildTransactionIndexes>
-) {
+  indexes: ReturnType<typeof buildTransactionIndexes>,
+  explicit?: {
+    dateFrom?: string;
+    dateTo?: string;
+    symbol?: string;
+    type?: string;
+    wantsLatest?: boolean;
+  }
+): TimelineFilters {
   const normalized = message.toLowerCase();
-  let type: 'BUY' | 'SELL' | undefined;
+  const type = parseTypeFilter(normalized, explicit?.type);
   const wantsLatest =
+    explicit?.wantsLatest === true ||
     normalized.includes('last transaction') ||
     normalized.includes('latest transaction') ||
     normalized.includes('most recent transaction');
+  const symbol = parseSymbolFilter(message, indexes, explicit?.symbol);
+  const { dateFrom, dateTo } = parseDateRangeFilter(message, {
+    dateFrom: explicit?.dateFrom,
+    dateTo: explicit?.dateTo
+  });
 
-  if (normalized.includes('buy') || normalized.includes('bought')) {
-    type = 'BUY';
-  } else if (normalized.includes('sell') || normalized.includes('sold')) {
-    type = 'SELL';
+  return { dateFrom, dateTo, symbol, type, wantsLatest };
+}
+
+function parseTypeFilter(
+  normalizedMessage: string,
+  explicitType?: string
+): TimelineFilters['type'] {
+  const normalizedExplicit = explicitType?.trim().toUpperCase();
+  if (normalizedExplicit === 'BUY' || normalizedExplicit === 'SELL') {
+    return normalizedExplicit;
+  }
+  if (normalizedMessage.includes('buy') || normalizedMessage.includes('bought')) {
+    return 'BUY';
+  }
+  if (normalizedMessage.includes('sell') || normalizedMessage.includes('sold')) {
+    return 'SELL';
+  }
+  return undefined;
+}
+
+function parseSymbolFilter(
+  message: string,
+  indexes: ReturnType<typeof buildTransactionIndexes>,
+  explicitSymbol?: string
+) {
+  const explicitCandidate = explicitSymbol?.trim();
+  if (explicitCandidate) {
+    return resolveSymbolCandidate(normalizeSymbolToken(explicitCandidate), indexes);
   }
 
   const symbolMatch = message.match(/\b[A-Za-z0-9]{2,20}\b/g) ?? [];
@@ -68,16 +129,48 @@ function parseFilters(
     .map((item) => normalizeSymbolToken(item))
     .find((item) => !STOP_WORDS.has(item));
 
-  const symbol = resolveSymbolCandidate(symbolCandidate, indexes);
+  return resolveSymbolCandidate(symbolCandidate, indexes);
+}
 
-  return { symbol, type, wantsLatest };
+function parseDateRangeFilter(
+  message: string,
+  explicit?: { dateFrom?: string; dateTo?: string }
+): { dateFrom?: string; dateTo?: string } {
+  const hasExplicitDateFrom = typeof explicit?.dateFrom === 'string' && Boolean(explicit.dateFrom.trim());
+  const hasExplicitDateTo = typeof explicit?.dateTo === 'string' && Boolean(explicit.dateTo.trim());
+  if (hasExplicitDateFrom || hasExplicitDateTo) {
+    return {
+      ...(hasExplicitDateFrom ? { dateFrom: explicit?.dateFrom?.trim() } : {}),
+      ...(hasExplicitDateTo ? { dateTo: explicit?.dateTo?.trim() } : {})
+    };
+  }
+
+  const normalized = message.toLowerCase();
+  const today = getTodayUtcDate();
+  if (normalized.includes('last year')) {
+    const year = today.getUTCFullYear() - 1;
+    return { dateFrom: `${year}-01-01`, dateTo: `${year}-12-31` };
+  }
+  if (normalized.includes('this year')) {
+    const year = today.getUTCFullYear();
+    return { dateFrom: `${year}-01-01`, dateTo: formatUtcDate(today) };
+  }
+
+  const yearMatchRegex = /\b(20\d{2})\b/;
+  const yearMatch = yearMatchRegex.exec(normalized);
+  if (yearMatch) {
+    const year = yearMatch[1];
+    return { dateFrom: `${year}-01-01`, dateTo: `${year}-12-31` };
+  }
+
+  return {};
 }
 
 function filterTransactions({
   filters,
   indexes
 }: {
-  filters: ReturnType<typeof parseFilters>;
+  filters: TimelineFilters;
   indexes: ReturnType<typeof buildTransactionIndexes>;
 }) {
   if (filters.wantsLatest) {
@@ -92,6 +185,8 @@ function filterTransactions({
 
   return base
     .filter((entry) => !filters.type || entry.type === filters.type)
+    .filter((entry) => !filters.dateFrom || entry.date >= filters.dateFrom)
+    .filter((entry) => !filters.dateTo || entry.date <= filters.dateTo)
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 }
 
@@ -113,11 +208,7 @@ function resolveSymbolCandidate(
   }
 
   for (const [symbol, entries] of indexes.bySymbol.entries()) {
-    if (
-      entries.some((entry) =>
-        entry.symbolName?.toUpperCase().includes(candidate)
-      )
-    ) {
+    if (entries.some((entry) => entry.symbolName?.toUpperCase().includes(candidate))) {
       return symbol;
     }
   }
@@ -145,16 +236,27 @@ const STOP_WORDS = new Set([
 ]);
 
 const SYMBOL_ALIASES: Record<string, string> = {
+  APPLE: 'AAPL',
   BITCOIN: 'BTCUSD',
   BTC: 'BTCUSD',
+  NVIDIA: 'NVDA',
   TESLA: 'TSLA'
 };
+
+function getTodayUtcDate() {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
+function formatUtcDate(value: Date) {
+  return value.toISOString().slice(0, 10);
+}
 
 function buildAnswer({
   filters,
   timeline
 }: {
-  filters: { symbol?: string; type?: 'BUY' | 'SELL'; wantsLatest: boolean };
+  filters: TimelineFilters;
   timeline: {
     date: string;
     quantity: number;
@@ -177,3 +279,4 @@ function buildAnswer({
   const first = timeline[0];
   return `${first.symbol} ${first.type} on ${first.date} at ${first.unitPrice}.`;
 }
+

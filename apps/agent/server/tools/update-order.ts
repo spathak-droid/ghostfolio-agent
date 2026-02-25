@@ -109,7 +109,7 @@ export async function updateOrderTool({
   if (Array.isArray(params.tags)) dto.tags = params.tags.filter((t) => typeof t === 'string');
 
   try {
-    await client.updateOrder(orderId, dto, { token });
+    await client.updateOrder(orderId, dto, { impersonationId, token });
     return {
       success: true,
       answer: `Updated order ${orderId} (${type} ${symbol}).`,

@@ -9,9 +9,9 @@ export const AGENT_WIDGET_ROOT_ID = 'agent-widget-root';
  * Outputs: Appends the widget loader script once and delegates rendering to the agent bundle.
  * Failure modes: missing document, missing container element, or repeated mounts (should be no-op when already mounted).
  */
-type AgentWidgetMetadata = {
+interface AgentWidgetMetadata {
   agentWidgetScriptUrl?: string;
-};
+}
 
 @Injectable({
   providedIn: 'root'
