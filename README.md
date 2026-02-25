@@ -174,6 +174,62 @@ Ghostfolio is available for various home server systems, including [CasaOS](http
 
 For detailed information on the environment setup and development process, please refer to [DEVELOPMENT.md](./DEVELOPMENT.md).
 
+## 🧪 Agent Evals & CI Gate
+
+![Agent Evals](https://img.shields.io/badge/Agent%20Evals-Required%20Before%20Deploy-16a34a?style=for-the-badge)
+![CI Gate](https://img.shields.io/badge/CI-Must%20Pass-e11d48?style=for-the-badge)
+
+Use this section to verify tool-calling behavior and agent quality before merges and deployment.
+
+### Eval source files
+
+- `apps/agent/server/eval/default-eval-cases.ts`
+- `apps/agent/server/eval/eval-runner.ts`
+- `apps/agent/server/eval/run-default-evals.ts`
+
+### Run evals locally (recommended, deterministic)
+
+```bash
+npm ci
+npx ts-node apps/agent/server/eval/run-default-evals.ts
+```
+
+This mode runs with fixture tooling/LLM (no live OpenAI or live Ghostfolio required):
+
+- `EVAL_USE_REAL_LLM=false`
+- `EVAL_USE_LIVE_TOOLS=false`
+
+### Run evals with real LLM and/or live tools (optional)
+
+```bash
+# Real LLM only
+EVAL_USE_REAL_LLM=true OPENAI_API_KEY=<your_key> npx ts-node apps/agent/server/eval/run-default-evals.ts
+
+# Live tools with admin login token flow
+EVAL_USE_LIVE_TOOLS=true EVAL_USE_ADMIN_LOGIN=true GHOSTFOLIO_BASE_URL=http://localhost:3333 npx ts-node apps/agent/server/eval/run-default-evals.ts
+```
+
+### What to look for in output
+
+- ✅ `gate_passed=true`
+- ✅ High per-dimension pass rates in `correctness`, `tool_selection`, `tool_execution`, `safety`, and `edge_cases`
+- ❌ Any failing case returns a non-zero exit code
+
+### GitHub Actions policy (must pass before deployment)
+
+CI runs this exact command before build/deploy stages:
+
+```bash
+npx ts-node apps/agent/server/eval/run-default-evals.ts
+```
+
+Workflows enforcing this:
+
+- `.github/workflows/agent.yml`
+- `.github/workflows/build-code.yml`
+
+If evals fail, CI fails. Treat that as a deployment blocker until the failing cases are fixed.
+
 ## Public API
 
 ### Authorization: Bearer Token
