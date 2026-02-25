@@ -195,12 +195,17 @@ async function getSymbolDataWithFallback(
       symbol?: string;
       dataSource?: string;
     };
+    const marketPrice =
+      typeof item.marketPrice === 'number' && Number.isFinite(item.marketPrice)
+        ? item.marketPrice
+        : undefined;
+
+    if (marketPrice === undefined) {
+      throw new Error(`Missing market price for ${dataSource} ${symbol}`);
+    }
 
     return {
-      marketPrice:
-        typeof item.marketPrice === 'number' && Number.isFinite(item.marketPrice)
-          ? item.marketPrice
-          : 0,
+      marketPrice,
       currency: typeof item.currency === 'string' ? item.currency : 'USD',
       symbol: item.symbol ?? symbol,
       dataSource: item.dataSource ?? dataSource

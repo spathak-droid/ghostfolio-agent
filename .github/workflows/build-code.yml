@@ -38,5 +38,11 @@ jobs:
       - name: Execute tests
         run: npm test
 
+      - name: Run agent evals
+        run: npx ts-node apps/agent/server/eval/run-default-evals.ts
+        env:
+          EVAL_USE_REAL_LLM: 'false'
+          EVAL_USE_LIVE_TOOLS: 'false'
+
       - name: Build application
         run: npm run build:production

@@ -47,3 +47,8 @@ Default gate checks:
 - Optional per-dimension minimum pass rates
 
 Use stricter thresholds in CI for production rollout.
+
+## CI
+
+- **Build code** (`.github/workflows/build-code.yml`): runs on every PR; includes a "Run agent evals" step after tests (fixture LLM/tools, no secrets).
+- **Agent** (`.github/workflows/agent.yml`): runs on PRs when `apps/agent/**` or `libs/**` change, and on push to `main`/`dev`. Runs agent lint, agent unit tests, and agent evals. No OpenAI or live Ghostfolio required; evals use fixture LLM and eval tools.

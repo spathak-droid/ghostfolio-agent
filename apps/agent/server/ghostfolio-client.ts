@@ -221,7 +221,7 @@ export class GhostfolioClient {
       impersonationId?: string;
       token?: string;
     }
-  ) {
+  ): Promise<Record<string, unknown>> {
     const headers = this.buildHeaders({ impersonationId, token });
     const hasToken = Boolean(normalizeAuthToken(token));
 
@@ -246,19 +246,40 @@ export class GhostfolioClient {
     console.log('[agent-auth] GhostfolioClient.get:', { hasToken, path, baseUrl: this.baseUrl });
     // #endregion
 
-    const response = await fetch(`${this.baseUrl}${path}`, { headers });
+    const maxGetParseAttempts = 2;
 
-    if (!response.ok) {
-      const bodyText = await response.text();
-      this.logGhostfolioFailure('GET', path, response.status, bodyText);
-      const hint =
-        response.status === 401
-          ? ' (check: you are signed in; agent GHOSTFOLIO_BASE_URL matches this app URL)'
-          : '';
-      throw new Error(`Ghostfolio API request failed: ${response.status}${hint}`);
+    for (let attempt = 1; attempt <= maxGetParseAttempts; attempt += 1) {
+      const response = await fetch(`${this.baseUrl}${path}`, { headers });
+
+      if (!response.ok) {
+        const bodyText = await response.text();
+        this.logGhostfolioFailure('GET', path, response.status, bodyText);
+        const hint =
+          response.status === 401
+            ? ' (check: you are signed in; agent GHOSTFOLIO_BASE_URL matches this app URL)'
+            : '';
+        throw new Error(`Ghostfolio API request failed: ${response.status}${hint}`);
+      }
+
+      try {
+        return await this.parseJsonBody<Record<string, unknown>>(response, {
+          method: 'GET',
+          path
+        });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const canRetry =
+          attempt < maxGetParseAttempts &&
+          (errorMessage.startsWith('Ghostfolio API returned empty JSON body') ||
+            errorMessage.startsWith('Ghostfolio API returned invalid JSON'));
+
+        if (!canRetry) {
+          throw error;
+        }
+      }
     }
 
-    return response.json();
+    throw new Error(`Ghostfolio API request failed: exhausted parse retries for GET ${path}`);
   }
 
   private async post<T = unknown>(
@@ -287,7 +308,10 @@ export class GhostfolioClient {
           : '';
       throw new Error(`Ghostfolio API request failed: ${response.status}${hint} ${text}`);
     }
-    return response.json() as Promise<T>;
+    return this.parseJsonBody<T>(response, {
+      method: 'POST',
+      path
+    });
   }
 
   private async put<T = unknown>(
@@ -310,6 +334,35 @@ export class GhostfolioClient {
           : '';
       throw new Error(`Ghostfolio API request failed: ${response.status}${hint} ${text}`);
     }
-    return response.json() as Promise<T>;
+    return this.parseJsonBody<T>(response, {
+      method: 'PUT',
+      path
+    });
+  }
+
+  private async parseJsonBody<T>(
+    response: Response,
+    {
+      method,
+      path
+    }: {
+      method: 'GET' | 'POST' | 'PUT';
+      path: string;
+    }
+  ): Promise<T> {
+    const bodyText = await response.text();
+
+    if (!bodyText.trim()) {
+      if (response.status === 204) {
+        return {} as T;
+      }
+      throw new Error(`Ghostfolio API returned empty JSON body for ${method} ${path}`);
+    }
+
+    try {
+      return JSON.parse(bodyText) as T;
+    } catch {
+      throw new Error(`Ghostfolio API returned invalid JSON for ${method} ${path}`);
+    }
   }
 }

@@ -154,7 +154,6 @@ export function mountChatWidget(container: HTMLElement) {
 
   const suggestions = [
     'Analyze my portfolio',
-    'Show market data for a symbol',
     'Help categorize my transactions',
     'Summarize my portfolio allocation'
   ] as const;

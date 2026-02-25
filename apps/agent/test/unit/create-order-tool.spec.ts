@@ -84,4 +84,54 @@ describe('createOrderTool', () => {
     expect(result.success).toBe(true);
     expect(result.orderId).toBe('order-1');
   });
+
+  it('prefers canonical BTC price source before noisy lookup candidates', async () => {
+    const client = {
+      createOrder: jest.fn(),
+      getSymbolData: jest
+        .fn()
+        .mockRejectedValueOnce(new Error('not found'))
+        .mockResolvedValueOnce({
+          currency: 'USD',
+          dataSource: 'COINGECKO',
+          marketPrice: 65000,
+          symbol: 'bitcoin'
+        }),
+      getSymbolLookup: jest.fn().mockResolvedValue({
+        items: [{ dataSource: 'COINGECKO', symbol: '1rus-btc25' }]
+      }),
+      getUser: jest.fn()
+    };
+
+    const result = await createOrderTool({
+      client: client as never,
+      createOrderParams: {
+        symbol: 'BTC',
+        type: 'BUY'
+      },
+      message: 'buy btc'
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        needsClarification: true,
+        success: true
+      })
+    );
+    expect(String(result.answer)).toContain('65000');
+    expect(client.getSymbolData).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        dataSource: 'YAHOO',
+        symbol: 'BTC-USD'
+      })
+    );
+    expect(client.getSymbolData).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        dataSource: 'COINGECKO',
+        symbol: 'bitcoin'
+      })
+    );
+  });
 });

@@ -33,11 +33,10 @@ const SYMBOL_ALIASES: Readonly<Record<string, ResolvedSymbol>> = {
   nvda: { dataSource: 'YAHOO', symbol: 'NVDA' }
 };
 
-const TRAILING_ASSET_TERMS = /(stock|stocks|share|shares|coin|coins)$/;
-
 function normalizeAliasKey(input: string): string {
-  const collapsed = input.trim().toLowerCase().replace(/[\s._/]+/g, '');
-  return collapsed.replace(TRAILING_ASSET_TERMS, '');
+  const normalized = input.trim().toLowerCase().replace(/[._/]+/g, '');
+  const stripped = normalized.replace(/\b(?:stock|stocks|share|shares|coin|coins)\b$/, '').trim();
+  return stripped.replace(/\s+/g, '');
 }
 
 /**

@@ -96,4 +96,34 @@ describe('marketDataTool', () => {
       })
     );
   });
+
+  it('does not report USD 0 when provider returns missing market price', async () => {
+    const client = {
+      getSymbolLookup: jest.fn().mockResolvedValue({ items: [] }),
+      getSymbolData: jest
+        .fn()
+        .mockResolvedValueOnce({
+          currency: 'USD',
+          dataSource: 'YAHOO',
+          symbol: 'BTC-USD'
+        })
+        .mockResolvedValueOnce({
+          currency: 'USD',
+          dataSource: 'COINGECKO',
+          symbol: 'bitcoin'
+        })
+    };
+
+    const result = await marketDataTool({
+      client: client as never,
+      message: 'what is BTC price',
+      symbols: ['BTC']
+    });
+
+    expect(result.answer).not.toContain('USD 0');
+    expect(result.answer).toContain('Missing market price');
+
+    const symbols = result.symbols as Array<Record<string, unknown>>;
+    expect(symbols[0]?.error).toContain('Missing market price');
+  });
 });

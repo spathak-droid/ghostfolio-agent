@@ -17,8 +17,24 @@ const FALLBACK_DATA_SOURCES = ['COINGECKO', 'YAHOO'];
 /** COINGECKO uses lowercase ids for crypto; map common tickers to CoinGecko id when primary symbol fails. */
 const COINGECKO_SYMBOL_IDS: Readonly<Record<string, string>> = {
   'BTC-USD': 'bitcoin',
+  BTCUSD: 'bitcoin',
   'ETH-USD': 'ethereum',
+  ETHUSD: 'ethereum',
   'SOL-USD': 'solana'
+};
+const CANONICAL_CRYPTO_BY_INPUT: Readonly<Record<string, string>> = {
+  bitcoin: 'bitcoin',
+  btc: 'bitcoin',
+  'btc-usd': 'bitcoin',
+  btcusd: 'bitcoin',
+  ethereum: 'ethereum',
+  eth: 'ethereum',
+  'eth-usd': 'ethereum',
+  ethusd: 'ethereum',
+  solana: 'solana',
+  sol: 'solana',
+  'sol-usd': 'solana',
+  solusd: 'solana'
 };
 
 export interface CreateOrderToolInput {
@@ -40,6 +56,19 @@ function safeNumber(v: unknown): number | undefined {
 
 function safeString(v: unknown): string | undefined {
   return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+}
+
+function normalizeSymbolInput(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, '');
+}
+
+function resolveCanonicalCoinGeckoSymbol(params: {
+  symbolInput: string;
+  primarySymbol: string;
+}): string | undefined {
+  const byInput = CANONICAL_CRYPTO_BY_INPUT[normalizeSymbolInput(params.symbolInput)];
+  if (byInput) return byInput;
+  return COINGECKO_SYMBOL_IDS[params.primarySymbol];
 }
 
 function parseUserBaseCurrency(user: unknown): string | undefined {
@@ -96,14 +125,18 @@ async function fetchUnitPriceWithFallback(
   client: GhostfolioClient,
   primary: { dataSource: string; symbol: string },
   lookupItems: { dataSource: string; symbol: string }[],
+  symbolInput: string,
   opts: { impersonationId?: string; token?: string }
 ): Promise<{ price: number; currency: string } | undefined> {
   let result = await fetchPriceForSymbol(client, primary.dataSource, primary.symbol, opts);
   if (result) return result;
 
-  for (const item of lookupItems) {
-    if (item.dataSource === primary.dataSource && item.symbol === primary.symbol) continue;
-    result = await fetchPriceForSymbol(client, item.dataSource, item.symbol, opts);
+  const canonicalCoinGeckoSymbol = resolveCanonicalCoinGeckoSymbol({
+    primarySymbol: primary.symbol,
+    symbolInput
+  });
+  if (canonicalCoinGeckoSymbol) {
+    result = await fetchPriceForSymbol(client, 'COINGECKO', canonicalCoinGeckoSymbol, opts);
     if (result) return result;
   }
 
@@ -114,6 +147,12 @@ async function fetchUnitPriceWithFallback(
         ? COINGECKO_SYMBOL_IDS[primary.symbol]
         : primary.symbol;
     result = await fetchPriceForSymbol(client, fallbackSource, symbolToTry, opts);
+    if (result) return result;
+  }
+
+  for (const item of lookupItems) {
+    if (item.dataSource === primary.dataSource && item.symbol === primary.symbol) continue;
+    result = await fetchPriceForSymbol(client, item.dataSource, item.symbol, opts);
     if (result) return result;
   }
 
@@ -182,6 +221,7 @@ export async function createOrderTool({
       client,
       { dataSource, symbol },
       lookupItems,
+      symbolInput,
       { impersonationId, token }
     );
     const price = priceResult?.price ?? 0;
@@ -204,6 +244,7 @@ export async function createOrderTool({
       client,
       { dataSource, symbol },
       lookupItems,
+      symbolInput,
       { impersonationId, token }
     );
     unitPriceToUse = priceResult?.price;
