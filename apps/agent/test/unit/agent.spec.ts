@@ -5,14 +5,15 @@ type AgentTools = CreateAgentOptions['tools'];
 
 function buildDefaultTools(): AgentTools {
   return {
+    complianceCheck: jest.fn(),
     createOrder: jest.fn(),
+    getOrders: jest.fn(),
     getTransactions: jest.fn(),
     marketData: jest.fn(),
     marketDataLookup: jest.fn(),
     portfolioAnalysis: jest.fn(),
     transactionCategorize: jest.fn(),
-    transactionTimeline: jest.fn(),
-    updateOrder: jest.fn()
+    transactionTimeline: jest.fn()
   };
 }
 
@@ -175,6 +176,38 @@ describe('standalone agent orchestrator', () => {
     expect(response.toolCalls).toEqual([]);
     expect(response.answer).toBe('Diversification spreads risk across assets.');
     expect(response.verification.isValid).toBe(true);
+  });
+
+  it('returns structured LLM error instead of throwing when direct answer generation fails', async () => {
+    const agent = createTestAgent({
+      llm: {
+        answerFinanceQuestion: jest.fn().mockRejectedValue(new Error('llm unavailable')),
+        selectTool: jest.fn().mockResolvedValue({
+          tool: 'none'
+        })
+      },
+      tools: {
+        getTransactions: jest.fn(),
+        marketData: jest.fn(),
+        marketDataLookup: jest.fn(),
+        portfolioAnalysis: jest.fn(),
+        transactionCategorize: jest.fn(),
+        transactionTimeline: jest.fn()
+      }
+    });
+
+    const response = await agent.chat({
+      conversationId: 'conv-llm-failure-direct-1',
+      message: 'What is diversification in investing?',
+      token: 'jwt-token'
+    });
+
+    expect(response.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'LLM_EXECUTION_FAILED', recoverable: true })
+      ])
+    );
+    expect(response.answer.toLowerCase()).toContain('could not generate');
   });
 
   it('prioritizes smalltalk/general intent before finance tools', async () => {
@@ -382,6 +415,76 @@ describe('standalone agent orchestrator', () => {
       ])
     );
     expect(response.answer).toContain('could not complete');
+  });
+
+  it('propagates non-retryable tool errors into errors[].recoverable=false', async () => {
+    const nonRetryableError = Object.assign(new Error('forbidden'), { retryable: false });
+    const agent = createTestAgent({
+      tools: {
+        getTransactions: jest.fn(),
+        marketData: jest.fn(),
+        marketDataLookup: jest.fn().mockRejectedValue(nonRetryableError),
+        portfolioAnalysis: jest.fn(),
+        transactionCategorize: jest.fn(),
+        transactionTimeline: jest.fn()
+      }
+    });
+
+    const response = await agent.chat({
+      conversationId: 'conv-tool-non-retryable-1',
+      message: 'Get market data for AAPL',
+      token: 'jwt-token'
+    });
+
+    expect(response.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'TOOL_EXECUTION_FAILED',
+          recoverable: false
+        })
+      ])
+    );
+  });
+
+  it('treats tool-returned success=false payload as a failed tool call', async () => {
+    const agent = createTestAgent({
+      tools: {
+        getTransactions: jest.fn(),
+        marketData: jest.fn(),
+        marketDataLookup: jest.fn().mockResolvedValue({
+          success: false,
+          summary: 'Market data lookup failed: Ghostfolio API request failed: 500',
+          error: {
+            error_code: 'GHOSTFOLIO_HTTP_ERROR',
+            message: 'Ghostfolio API request failed: 500',
+            retryable: true
+          }
+        }),
+        portfolioAnalysis: jest.fn(),
+        transactionCategorize: jest.fn(),
+        transactionTimeline: jest.fn()
+      }
+    });
+
+    const response = await agent.chat({
+      conversationId: 'conv-tool-reported-failure-1',
+      message: 'Get market data for AAPL',
+      token: 'jwt-token'
+    });
+
+    expect(response.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'TOOL_EXECUTION_FAILED',
+          message: expect.stringContaining('Ghostfolio API request failed: 500')
+        })
+      ])
+    );
+    expect(response.toolCalls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ toolName: 'market_data_lookup', success: false })
+      ])
+    );
   });
 
   it('falls back to direct LLM answer when selected tools fail', async () => {

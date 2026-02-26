@@ -1,5 +1,6 @@
 import { GhostfolioClient } from '../ghostfolio-client';
 import { resolveSymbol } from './symbol-resolver';
+import { toToolErrorPayload, type ToolErrorPayload } from './tool-error';
 
 const MAX_SYMBOLS = 10;
 const SUPPORTED_METRICS = new Set(['price']);
@@ -62,7 +63,7 @@ export interface MarketDataSymbolResult {
   changePercent1w?: number;
   change1m?: number;
   changePercent1m?: number;
-  error?: string;
+  error?: ToolErrorPayload;
 }
 
 export interface MarketDataToolInput {
@@ -175,49 +176,75 @@ async function getSymbolDataWithFallback(
     impersonationId?: string;
     token?: string;
   }
-): Promise<{
-  marketPrice: number;
-  currency: string;
-  symbol: string;
-  dataSource: string;
-}> {
-  const trySource = async (dataSource: string, symbol: string) => {
-    const data = await client.getSymbolData({
-      dataSource,
-      symbol,
-      includeHistoricalData: 0,
-      impersonationId: opts.impersonationId,
-      token: opts.token
-    });
-    const item = data as {
-      marketPrice?: number;
-      currency?: string;
-      symbol?: string;
-      dataSource?: string;
-    };
-    const marketPrice =
-      typeof item.marketPrice === 'number' && Number.isFinite(item.marketPrice)
-        ? item.marketPrice
-        : undefined;
-
-    if (marketPrice === undefined) {
-      throw new Error(`Missing market price for ${dataSource} ${symbol}`);
+): Promise<
+  | {
+      ok: true;
+      data: {
+        marketPrice: number;
+        currency: string;
+        symbol: string;
+        dataSource: string;
+      };
     }
+  | {
+      ok: false;
+      error: ToolErrorPayload;
+    }
+> {
+  const trySource = async (dataSource: string, symbol: string) => {
+    try {
+      const data = await client.getSymbolData({
+        dataSource,
+        symbol,
+        includeHistoricalData: 0,
+        impersonationId: opts.impersonationId,
+        token: opts.token
+      });
+      const item = data as {
+        marketPrice?: number;
+        currency?: string;
+        symbol?: string;
+        dataSource?: string;
+      };
+      const marketPrice =
+        typeof item.marketPrice === 'number' && Number.isFinite(item.marketPrice)
+          ? item.marketPrice
+          : undefined;
 
-    return {
-      marketPrice,
-      currency: typeof item.currency === 'string' ? item.currency : 'USD',
-      symbol: item.symbol ?? symbol,
-      dataSource: item.dataSource ?? dataSource
-    };
+      if (marketPrice === undefined) {
+        return {
+          ok: false as const,
+          error: {
+            error_code: 'MARKET_PRICE_MISSING',
+            message: `Missing market price for ${dataSource} ${symbol}`,
+            retryable: false
+          }
+        };
+      }
+
+      return {
+        ok: true as const,
+        data: {
+          marketPrice,
+          currency: typeof item.currency === 'string' ? item.currency : 'USD',
+          symbol: item.symbol ?? symbol,
+          dataSource: item.dataSource ?? dataSource
+        }
+      };
+    } catch (error) {
+      return {
+        ok: false as const,
+        error: toToolErrorPayload(error)
+      };
+    }
   };
 
-  let lastError: Error | null = null;
-  try {
-    return await trySource(primary.dataSource, primary.symbol);
-  } catch (err) {
-    lastError = err instanceof Error ? err : new Error(String(err));
+  let lastError: ToolErrorPayload | undefined;
+  const primaryResult = await trySource(primary.dataSource, primary.symbol);
+  if (primaryResult.ok) {
+    return primaryResult;
   }
+  lastError = primaryResult.error;
 
   for (const fallbackSource of FALLBACK_DATA_SOURCES) {
     if (fallbackSource === primary.dataSource) {
@@ -229,14 +256,22 @@ async function getSymbolDataWithFallback(
         ? COINGECKO_SYMBOL_IDS[primary.symbol]
         : primary.symbol;
 
-    try {
-      return await trySource(fallbackSource, symbolToTry);
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
+    const fallbackResult = await trySource(fallbackSource, symbolToTry);
+    if (fallbackResult.ok) {
+      return fallbackResult;
     }
+    lastError = fallbackResult.error;
   }
 
-  throw lastError ?? new Error('Failed to fetch symbol data');
+  return {
+    ok: false,
+    error:
+      lastError ?? {
+        error_code: 'MARKET_DATA_FETCH_FAILED',
+        message: 'Failed to fetch symbol data',
+        retryable: true
+      }
+  };
 }
 
 function createLookup(
@@ -274,30 +309,35 @@ async function fetchCurrentResults(args: FetchCurrentResultsArgs): Promise<Marke
         dataSource: '',
         currentPrice: 0,
         currency: '',
-        error: `Could not resolve symbol: ${nameOrTicker}`
+        error: {
+          error_code: 'SYMBOL_RESOLUTION_FAILED',
+          message: `Could not resolve symbol: ${nameOrTicker}`,
+          retryable: false
+        }
       });
       continue;
     }
 
-    try {
-      const item = await getSymbolDataWithFallback(
-        client,
-        { dataSource: resolved.dataSource, symbol: resolved.symbol },
-        { impersonationId, token }
-      );
+    const item = await getSymbolDataWithFallback(
+      client,
+      { dataSource: resolved.dataSource, symbol: resolved.symbol },
+      { impersonationId, token }
+    );
+    if (item.ok === true) {
       results.push({
-        symbol: item.symbol,
-        dataSource: item.dataSource,
-        currentPrice: roundTwo(item.marketPrice),
-        currency: item.currency
+        symbol: item.data.symbol,
+        dataSource: item.data.dataSource,
+        currentPrice: roundTwo(item.data.marketPrice),
+        currency: item.data.currency
       });
-    } catch (err) {
+    } else {
+      const failedResult = item as { ok: false; error: ToolErrorPayload };
       results.push({
         symbol: resolved.symbol,
         dataSource: resolved.dataSource,
         currentPrice: 0,
         currency: '',
-        error: err instanceof Error ? err.message : 'Failed to fetch symbol data'
+        error: failedResult.error
       });
     }
   }
@@ -309,7 +349,7 @@ function buildAnswer(results: MarketDataSymbolResult[]) {
   return results
     .map((result) => {
       if (result.error) {
-        return `${result.symbol}: ${result.error}`;
+        return `${result.symbol}: ${result.error.message}`;
       }
       return `${result.symbol}: ${result.currency} ${result.currentPrice}`;
     })
@@ -349,43 +389,55 @@ export async function marketDataTool({
   symbols: inputSymbols,
   metrics: inputMetrics
 }: MarketDataToolInput): Promise<Record<string, unknown>> {
-  const symbols =
-    Array.isArray(inputSymbols) && inputSymbols.length > 0
-      ? inputSymbols.filter(Boolean)
-      : parseSymbolsFromMessage(message ?? '');
-  const { requestedMetrics, unsupportedMetrics } = normalizeMetrics(inputMetrics);
+  try {
+    const symbols =
+      Array.isArray(inputSymbols) && inputSymbols.length > 0
+        ? inputSymbols.filter(Boolean)
+        : parseSymbolsFromMessage(message ?? '');
+    const { requestedMetrics, unsupportedMetrics } = normalizeMetrics(inputMetrics);
 
-  if (symbols.length === 0) {
-    return buildNoSymbolsResponse();
+    if (symbols.length === 0) {
+      return buildNoSymbolsResponse();
+    }
+
+    const lookup = createLookup(client, impersonationId, token);
+    const results = await fetchCurrentResults({
+      client,
+      lookup,
+      symbols,
+      impersonationId,
+      token
+    });
+    const answer = buildAnswer(results);
+    const summary = buildSummary({
+      message,
+      requestedMetrics,
+      results,
+      unsupportedMetrics
+    });
+
+    const payload: Record<string, unknown> = {
+      answer,
+      data_as_of: new Date().toISOString(),
+      sources: ['ghostfolio_api'],
+      summary,
+      symbols: results
+    };
+
+    if (unsupportedMetrics.length > 0) {
+      payload.unsupported_metrics = unsupportedMetrics;
+    }
+
+    return payload;
+  } catch (error) {
+    const toolError = toToolErrorPayload(error);
+    return {
+      success: false,
+      answer: `Could not fetch market data: ${toolError.message}`,
+      summary: `Market data failed: ${toolError.message}`,
+      error: toolError,
+      data_as_of: new Date().toISOString(),
+      sources: ['ghostfolio_api']
+    };
   }
-
-  const lookup = createLookup(client, impersonationId, token);
-  const results = await fetchCurrentResults({
-    client,
-    lookup,
-    symbols,
-    impersonationId,
-    token
-  });
-  const answer = buildAnswer(results);
-  const summary = buildSummary({
-    message,
-    requestedMetrics,
-    results,
-    unsupportedMetrics
-  });
-
-  const payload: Record<string, unknown> = {
-    answer,
-    data_as_of: new Date().toISOString(),
-    sources: ['ghostfolio_api'],
-    summary,
-    symbols: results
-  };
-
-  if (unsupportedMetrics.length > 0) {
-    payload.unsupported_metrics = unsupportedMetrics;
-  }
-
-  return payload;
 }

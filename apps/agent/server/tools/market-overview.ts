@@ -1,4 +1,5 @@
 import { GhostfolioClient } from '../ghostfolio-client';
+import { toToolErrorPayload } from './tool-error';
 
 /**
  * Purpose: Return high-level market sentiment from Ghostfolio market endpoint.
@@ -38,36 +39,48 @@ export async function marketOverviewTool({
   message: string;
   token?: string;
 }) {
-  const data = (await client.getMarketData({
-    impersonationId,
-    token
-  })) as { fearAndGreedIndex?: FearGreedBlock };
-  const fearAndGreedIndex = data.fearAndGreedIndex ?? {};
-  const stocks = toNumber(fearAndGreedIndex.STOCKS?.marketPrice);
-  const crypto = toNumber(fearAndGreedIndex.CRYPTOCURRENCIES?.marketPrice);
-  const stocksLabel = stocks !== undefined ? labelSentiment(stocks) : 'unknown';
-  const cryptoLabel = crypto !== undefined ? labelSentiment(crypto) : 'unknown';
+  try {
+    const data = (await client.getMarketData({
+      impersonationId,
+      token
+    })) as { fearAndGreedIndex?: FearGreedBlock };
+    const fearAndGreedIndex = data.fearAndGreedIndex ?? {};
+    const stocks = toNumber(fearAndGreedIndex.STOCKS?.marketPrice);
+    const crypto = toNumber(fearAndGreedIndex.CRYPTOCURRENCIES?.marketPrice);
+    const stocksLabel = stocks !== undefined ? labelSentiment(stocks) : 'unknown';
+    const cryptoLabel = crypto !== undefined ? labelSentiment(crypto) : 'unknown';
 
-  return {
-    answer:
-      `Market sentiment snapshot: ` +
-      `stocks are ${stocksLabel}${stocks !== undefined ? ` (${stocks})` : ''}; ` +
-      `crypto is ${cryptoLabel}${crypto !== undefined ? ` (${crypto})` : ''}.`,
-    data,
-    data_as_of: new Date().toISOString(),
-    message,
-    overview: {
-      cryptocurrencies: {
-        label: cryptoLabel,
-        value: crypto
+    return {
+      answer:
+        `Market sentiment snapshot: ` +
+        `stocks are ${stocksLabel}${stocks !== undefined ? ` (${stocks})` : ''}; ` +
+        `crypto is ${cryptoLabel}${crypto !== undefined ? ` (${crypto})` : ''}.`,
+      data,
+      data_as_of: new Date().toISOString(),
+      message,
+      overview: {
+        cryptocurrencies: {
+          label: cryptoLabel,
+          value: crypto
+        },
+        stocks: {
+          label: stocksLabel,
+          value: stocks
+        }
       },
-      stocks: {
-        label: stocksLabel,
-        value: stocks
-      }
-    },
-    source: 'ghostfolio_api',
-    sources: ['ghostfolio_api'],
-    summary: 'Market overview from Ghostfolio fear & greed index'
-  };
+      source: 'ghostfolio_api',
+      sources: ['ghostfolio_api'],
+      summary: 'Market overview from Ghostfolio fear & greed index'
+    };
+  } catch (error) {
+    const toolError = toToolErrorPayload(error);
+    return {
+      success: false,
+      answer: `Could not fetch market overview: ${toolError.message}`,
+      summary: `Market overview failed: ${toolError.message}`,
+      error: toolError,
+      data_as_of: new Date().toISOString(),
+      sources: ['ghostfolio_api']
+    };
+  }
 }

@@ -211,3 +211,171 @@ Never crash the request pipeline.
 
 -   Implement rate limiting strategy.
 -   Prevent tool flooding and repeated adversarial abuse.
+
+## 8.4 Secure Token & API Routing Policy (Mandatory)
+
+### 8.4.1 Token ingress rules
+
+-   MUST prefer `Authorization: Bearer <token>` as the primary credential channel.
+-   MUST treat body `accessToken` as disabled by default.
+-   MUST gate any body token support behind an explicit env flag (default off).
+-   MUST reject mismatched header/body tokens when both are present.
+-   MUST normalize tokens once and reuse the normalized value.
+
+### 8.4.2 Token validation rules
+
+-   MUST validate token length upper bound.
+-   MUST reject control characters and non-printable bytes.
+-   MUST validate JWT shape (`header.payload.signature`) before forwarding.
+-   MUST fail closed with `400 VALIDATION_ERROR` on invalid tokens.
+
+### 8.4.3 Token forwarding rules
+
+-   MUST forward credentials only to the configured Ghostfolio base URL.
+-   MUST NOT derive forwarding target from request headers (`x-forwarded-*`, `origin`, `referer`) for auth-bearing calls.
+-   MUST forward only allowlisted headers required for API calls.
+-   MUST NOT forward arbitrary inbound headers to upstream APIs.
+
+### 8.4.4 Base URL / routing security rules
+
+-   MUST parse and validate configured base URL at startup or request boundary.
+-   MUST require HTTPS for non-local hosts unless an explicit insecure override is enabled.
+-   MUST support hostname allowlist for production deployments.
+-   MUST fail closed with `500 CONFIGURATION_ERROR` for unsafe routing config.
+
+### 8.4.5 Input schema strictness rules
+
+-   MUST reject unknown top-level request fields for critical endpoints (e.g., `/chat`).
+-   MUST reject unknown nested fields for tool payloads (e.g., `createOrderParams`, `updateOrderParams`).
+-   MUST enforce enum/domain constraints (`range`, `type`, metric allowlist, symbol patterns).
+-   MUST validate semantic date rules (real calendar date, `dateFrom <= dateTo`).
+-   MUST reject mixed-type arrays instead of silently dropping invalid entries.
+
+### 8.4.6 Logging and secrecy rules
+
+-   MUST never log raw tokens or secret-bearing headers.
+-   MUST log only safe auth metadata (e.g., `hasToken`, request id, status).
+-   MUST redact sensitive values in error payloads and structured logs.
+
+### 8.4.7 Reliability and retry rules
+
+-   MUST keep explicit request timeouts for all upstream calls.
+-   MUST retry only idempotent operations when retrying.
+-   MUST NOT retry mutating API calls without explicit idempotency guarantees.
+
+### 8.4.8 Required security tests
+
+-   MUST include unit tests for:
+    -   invalid token shape/charset/length rejection
+    -   body token disabled behavior
+    -   header/body token mismatch rejection
+    -   unsafe base URL rejection (invalid URL, insecure remote URL, non-allowlisted host)
+    -   unknown field rejection at top-level and nested payload schemas
+-   MUST include regression tests that prove no token is forwarded to user-controlled routing targets.
+
+## 8.5 Input Validation Baseline (Mandatory)
+
+### 8.5.1 Request boundary strictness
+
+-   `/chat` MUST reject unknown top-level fields.
+-   Nested payloads (`createOrderParams`, `updateOrderParams`) MUST reject unknown fields.
+-   Arrays MUST be homogeneous by schema type; mixed-type arrays MUST be rejected (not filtered).
+
+### 8.5.2 String and character constraints
+
+-   `message` and `conversationId` MUST reject control characters (ASCII < 32 or DEL 127).
+-   `conversationId` MUST be non-empty after trim and bounded by configured max length.
+-   `impersonation-id` header MUST be trimmed, length-bounded, and charset-constrained.
+-   `symbol`, `currency`, and `dataSource` MUST match explicit allowlisted patterns.
+
+### 8.5.3 Date constraints
+
+-   `dateFrom` and `dateTo` MUST be valid calendar dates (not format-only).
+-   `dateFrom <= dateTo` MUST be enforced.
+-   Order date fields MUST be validated as parseable ISO-like date strings.
+
+### 8.5.4 Numeric constraints
+
+-   Numeric fields MUST be finite numbers.
+-   Sign constraints:
+    -   `createOrderParams.quantity > 0`
+    -   `unitPrice >= 0`
+    -   `fee >= 0`
+-   Hard upper bounds MUST be enforced:
+    -   `quantity <= 1_000_000_000`
+    -   `unitPrice <= 1_000_000_000_000_000`
+    -   `fee <= 1_000_000_000_000_000`
+
+### 8.5.5 Length constraints
+
+-   `updateOrderParams.accountId` MUST have an explicit max length.
+-   `updateOrderParams.tags` MUST enforce:
+    -   max item count
+    -   non-empty trimmed strings
+    -   per-tag max length (e.g., 128)
+-   Free-form text fields (e.g., comments) MUST have explicit max length.
+
+### 8.5.6 Domain enums and allowlists
+
+-   `range` MUST be from an explicit allowlist.
+-   Transaction `type` MUST be from an explicit allowlist (`BUY`, `SELL`, `DIVIDEND`, `FEE`, `INTEREST`, `LIABILITY`).
+-   `metrics` MUST be from an explicit allowlist (current baseline: `price`).
+
+### 8.5.7 Error contract for validation failures
+
+-   Validation failures MUST return structured client errors (`400 VALIDATION_ERROR`) with field-scoped reasons.
+-   Configuration safety failures (unsafe upstream URL/routing config) MUST return structured server errors (`500 CONFIGURATION_ERROR`).
+-   Error responses MUST NOT include secrets or raw credentials.
+
+### 8.5.8 Token ingress policy (enforcement detail)
+
+-   Header Bearer token is the default and primary auth path.
+-   Body `accessToken` is disabled by default and can only be enabled explicitly by policy.
+-   If both header and body tokens are present, mismatch MUST be rejected.
+-   Tokens MUST pass shape + charset + length validation before any upstream forwarding.
+
+### 8.5.9 Required validation tests
+
+-   Every new/changed validated field MUST have tests for:
+    -   valid case
+    -   invalid type
+    -   boundary (min/max/length)
+    -   adversarial malformed input
+
+## 8.6 Agent Error Handling Policy (Mandatory)
+
+### 8.6.1 HTTP boundary behavior
+
+-   Expected runtime failures MUST return `200` with structured `errors[]` and/or failed `toolCalls[]`.
+-   Uncaught boundary failures MUST return `500 AGENT_CHAT_FAILED`.
+-   `500` responses MUST NOT include raw internal exception payloads.
+
+### 8.6.2 Two-channel error contract
+
+-   `errors[]` is the canonical client-facing orchestration status channel.
+-   `toolCalls[].result.error` is the tool-level diagnostics channel (`error_code`, `message`, `retryable`).
+-   Clients MUST treat `errors[]` as the primary failure signal and use `toolCalls` for per-tool attribution/details.
+
+### 8.6.3 Tool failure normalization
+
+-   Tools MUST return expected failures as `success: false` with structured `error`.
+-   Orchestrator MUST convert tool-reported failures into:
+    -   `errors[]` entries (`TOOL_EXECUTION_*`)
+    -   `toolCalls[].success = false`
+-   Throws are reserved for unexpected failures (bugs/infrastructure edge cases), not normal control flow.
+
+### 8.6.4 Recoverable semantics
+
+-   `errors[].recoverable` MUST reflect retryability, not default to `true` unconditionally.
+-   For tool-reported failures, map from `error.retryable`.
+-   For thrown errors, use `error.retryable` when present; otherwise default to `true`.
+-   Timeouts (`*_TIMEOUT`) are recoverable by default.
+
+### 8.6.5 Required policy documentation and tests
+
+-   Agent error policy MUST be documented under `docs/agent/error-handling-policy.md`.
+-   Unit tests MUST cover:
+    -   expected failure => `200` with structured `errors[]`
+    -   tool-reported `success:false` propagation into failed `toolCalls`
+    -   non-retryable tool failure => `recoverable: false`
+    -   uncaught failure => `500 AGENT_CHAT_FAILED` without raw internals

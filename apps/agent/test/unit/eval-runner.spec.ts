@@ -1,10 +1,19 @@
-import { DEFAULT_EVAL_CASES } from '../../server/eval/default-eval-cases';
+import {
+  ADVERSARIAL_EVAL_CASES,
+  DEFAULT_EVAL_CASES,
+  EDGE_CASE_EVAL_CASES,
+  HAPPY_PATH_EVAL_CASES,
+  MULTI_STEP_EVAL_CASES
+} from '../../server/eval/default-eval-cases';
 import { runEvalCases } from '../../server/eval/eval-runner';
+import { TOOL_DEFINITIONS } from '../../server/tools/tool-registry';
 import type { AgentTools } from '../../server/types';
 
 function createStubTools(overrides: Partial<AgentTools> = {}): AgentTools {
   return {
+    complianceCheck: jest.fn().mockResolvedValue({ answer: 'ok', data_as_of: '2026-02-24T00:00:00Z', sources: ['test'] }),
     createOrder: jest.fn().mockResolvedValue({ answer: 'ok', data_as_of: '2026-02-24T00:00:00Z', sources: ['test'] }),
+    getOrders: jest.fn().mockResolvedValue({ answer: 'ok', data_as_of: '2026-02-24T00:00:00Z', sources: ['test'] }),
     getTransactions: jest.fn().mockResolvedValue({ data: { activities: [] }, data_as_of: '2026-02-24T00:00:00Z', sources: ['test'], summary: 'ok', transactions: [] }),
     marketData: jest.fn().mockResolvedValue({ data_as_of: '2026-02-24T00:00:00Z', sources: ['test'], summary: 'ok', symbols: [] }),
     marketDataLookup: jest.fn().mockResolvedValue({ data_as_of: '2026-02-24T00:00:00Z', prices: [], sources: ['test'], summary: 'Market data lookup from Ghostfolio API' }),
@@ -12,19 +21,77 @@ function createStubTools(overrides: Partial<AgentTools> = {}): AgentTools {
     portfolioAnalysis: jest.fn().mockResolvedValue({ allocation: [], data_as_of: '2026-02-24T00:00:00Z', sources: ['test'], summary: 'ok' }),
     transactionCategorize: jest.fn().mockResolvedValue({ categories: [], data_as_of: '2026-02-24T00:00:00Z', sources: ['test'], summary: 'ok' }),
     transactionTimeline: jest.fn().mockResolvedValue({ data_as_of: '2026-02-24T00:00:00Z', sources: ['test'], summary: 'ok', timeline: [] }),
-    updateOrder: jest.fn().mockResolvedValue({ answer: 'ok', data_as_of: '2026-02-24T00:00:00Z', sources: ['test'] }),
     ...overrides
   };
 }
 
 describe('eval runner', () => {
+  it('keeps difficulty eval datasets split into dedicated files and merged into default list', () => {
+    expect(HAPPY_PATH_EVAL_CASES.length).toBeGreaterThan(0);
+    expect(EDGE_CASE_EVAL_CASES.length).toBeGreaterThan(0);
+    expect(ADVERSARIAL_EVAL_CASES.length).toBeGreaterThan(0);
+    expect(MULTI_STEP_EVAL_CASES.length).toBeGreaterThan(0);
+
+    expect(HAPPY_PATH_EVAL_CASES.every((testCase) => testCase.difficulty === 'happy')).toBe(true);
+    expect(EDGE_CASE_EVAL_CASES.every((testCase) => testCase.difficulty === 'edge')).toBe(true);
+    expect(ADVERSARIAL_EVAL_CASES.every((testCase) => testCase.difficulty === 'adversarial')).toBe(true);
+    expect(MULTI_STEP_EVAL_CASES.every((testCase) => testCase.difficulty === 'multi')).toBe(true);
+
+    const mergedCount =
+      HAPPY_PATH_EVAL_CASES.length +
+      EDGE_CASE_EVAL_CASES.length +
+      ADVERSARIAL_EVAL_CASES.length +
+      MULTI_STEP_EVAL_CASES.length;
+    expect(DEFAULT_EVAL_CASES.length).toBe(mergedCount);
+  });
+
+  it('stores category evals as JSON objects with query/tools/difficulty/contain rules', () => {
+    const allJsonCases = [
+      ...HAPPY_PATH_EVAL_CASES,
+      ...EDGE_CASE_EVAL_CASES,
+      ...ADVERSARIAL_EVAL_CASES,
+      ...MULTI_STEP_EVAL_CASES
+    ];
+
+    expect(allJsonCases.length).toBeGreaterThanOrEqual(50);
+    for (const testCase of allJsonCases) {
+      expect(typeof testCase.query).toBe('string');
+      expect(Array.isArray(testCase.expectedTools)).toBe(true);
+      expect(['happy', 'edge', 'adversarial', 'multi']).toContain(testCase.difficulty);
+      expect(Array.isArray(testCase.mustContain)).toBe(true);
+      expect(Array.isArray(testCase.mustNotContain)).toBe(true);
+    }
+  });
+
   it('requires eval case contract fields for every default case', () => {
     for (const testCase of DEFAULT_EVAL_CASES) {
-      expect(typeof (testCase as { inputQuery?: unknown }).inputQuery).toBe('string');
-      expect(Array.isArray((testCase as { expectedToolCalls?: unknown }).expectedToolCalls)).toBe(true);
-      expect(Array.isArray((testCase as { expectedOutput?: unknown }).expectedOutput)).toBe(true);
+      expect(typeof (testCase as { query?: unknown }).query).toBe('string');
+      expect(Array.isArray((testCase as { expectedTools?: unknown }).expectedTools)).toBe(true);
+      const expectedOutput = (testCase as { expectedOutput?: unknown }).expectedOutput;
+      expect(expectedOutput === undefined || Array.isArray(expectedOutput)).toBe(true);
       expect(Array.isArray((testCase as { passFailCriteria?: unknown }).passFailCriteria)).toBe(true);
       expect(((testCase as { passFailCriteria?: unknown[] }).passFailCriteria ?? []).length).toBeGreaterThan(0);
+    }
+  });
+
+  it('keeps default eval dataset aligned with tool registry and coverage requirements', () => {
+    const total = DEFAULT_EVAL_CASES.length;
+    expect(total).toBeGreaterThanOrEqual(50);
+
+    const categoryCounts = DEFAULT_EVAL_CASES.reduce<Record<string, number>>((acc, testCase) => {
+      const key = testCase.difficulty ?? 'uncategorized';
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {});
+
+    expect(categoryCounts.happy ?? 0).toBeGreaterThanOrEqual(20);
+    expect(categoryCounts.edge ?? 0).toBeGreaterThanOrEqual(10);
+    expect(categoryCounts.adversarial ?? 0).toBeGreaterThanOrEqual(10);
+    expect(categoryCounts.multi ?? 0).toBeGreaterThanOrEqual(10);
+
+    for (const tool of TOOL_DEFINITIONS.map((definition) => definition.name)) {
+      const matched = DEFAULT_EVAL_CASES.filter((testCase) => testCase.id.startsWith(`${tool}-`)).length;
+      expect(matched).toBeGreaterThanOrEqual(3);
     }
   });
 
@@ -33,8 +100,7 @@ describe('eval runner', () => {
       minOverallPassRate: 0.9,
       requiredDimensionPassRate: {
         correctness: 0.9,
-        tool_execution: 0.9,
-        tool_selection: 0.8
+        tool_execution: 0.9
       }
     });
 
@@ -58,9 +124,15 @@ describe('eval runner', () => {
     await expect(
       runEvalCases([
         {
+          difficulty: 'edge',
+          expectedOutput: ['invalid case'],
+          expectedTools: [],
           dimensions: ['edge_cases'],
-          expectation: {},
-          id: 'bad'
+          id: 'bad',
+          mustContain: [],
+          mustNotContain: [],
+          passFailCriteria: ['invalid shape test'],
+          query: ''
         } as never
       ])
     ).rejects.toThrow('missing required fields');
@@ -69,15 +141,16 @@ describe('eval runner', () => {
   it('treats latency as informational and not a failing measurement', async () => {
     const result = await runEvalCases([
       {
+        difficulty: 'edge',
         dimensions: ['latency'],
-        expectation: {
-          latencyMsMax: 0
-        },
+        expectedTools: [],
+        latencyMsMax: 0,
+        mustContain: [],
+        mustNotContain: [],
         expectedOutput: ['Hi. I can help with portfolio, transactions, and market-data questions.'],
-        expectedToolCalls: [],
         id: 'latency-informational',
-        inputQuery: 'hello',
-        passFailCriteria: ['show latency but do not score against threshold']
+        passFailCriteria: ['show latency but do not score against threshold'],
+        query: 'hello'
       }
     ]);
 
@@ -98,18 +171,18 @@ describe('eval runner', () => {
     const result = await runEvalCases(
       [
         {
+          difficulty: 'happy',
           dimensions: ['tool_execution', 'correctness'],
-          expectation: {
-            expectedToolCountAtLeast: 1,
-            expectedTools: ['market_data_lookup'],
-            requiredToolInputFields: { market_data_lookup: ['token'] },
-            requireSuccessfulToolCalls: true
-          },
+          expectedToolCountAtLeast: 1,
+          expectedTools: ['market_data_lookup'],
+          requiredToolInputFields: { market_data_lookup: ['token'] },
+          requireSuccessfulToolCalls: true,
+          mustContain: [],
+          mustNotContain: [],
           expectedOutput: ['Market data lookup from Ghostfolio API'],
-          expectedToolCalls: ['market_data_lookup'],
           id: 'token-forwarding',
-          inputQuery: 'Get market data for AAPL',
-          passFailCriteria: ['tool must receive token']
+          passFailCriteria: ['tool must receive token'],
+          query: 'Get market data for AAPL'
         }
       ],
       {
@@ -149,16 +222,16 @@ describe('eval runner', () => {
     const result = await runEvalCases(
       [
         {
+          difficulty: 'happy',
           dimensions: ['tool_execution', 'correctness'],
-          expectation: {
-            expectedTools: ['market_data_lookup'],
-            requireSuccessfulToolCalls: true
-          },
+          expectedTools: ['market_data_lookup'],
+          requireSuccessfulToolCalls: true,
+          mustContain: [],
+          mustNotContain: [],
           expectedOutput: ['Market data lookup from Ghostfolio API'],
-          expectedToolCalls: ['market_data_lookup'],
           id: 'correctness-from-tool-payload',
-          inputQuery: 'Get market data for AAPL',
-          passFailCriteria: ['must pass correctness from tool payload']
+          passFailCriteria: ['must pass correctness from tool payload'],
+          query: 'Get market data for AAPL'
         }
       ],
       { llm: llm as never, tools }
@@ -171,16 +244,16 @@ describe('eval runner', () => {
     const result = await runEvalCases(
       [
         {
+          difficulty: 'edge',
           dimensions: ['edge_cases'],
-          expectation: {
-            expectedRoute: 'llm_user',
-            expectedValidity: true
-          },
-          expectedOutput: ['this text should not be required for no-tool path'],
-          expectedToolCalls: [],
+          expectedRoute: 'llm_user',
+          expectedValidity: true,
+          expectedTools: [],
+          mustContain: [],
+          mustNotContain: [],
           id: 'no-tool-expected-output-skip',
-          inputQuery: 'hello',
-          passFailCriteria: ['direct path should be scored without strict expected output fragment']
+          passFailCriteria: ['direct path should be scored without strict expected output fragment'],
+          query: 'hello'
         }
       ]
     );

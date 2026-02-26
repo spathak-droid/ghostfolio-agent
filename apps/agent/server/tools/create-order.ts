@@ -8,7 +8,8 @@ import type { CreateOrderParams, OrderType } from '../types';
 import type { GhostfolioClient } from '../ghostfolio-client';
 import type { CreateOrderDtoBody } from '../ghostfolio-client';
 import { isUsdTransactionCapExceeded, MAX_USD_TRANSACTION_AMOUNT } from './order-limits';
-import { resolveSymbol } from './symbol-resolver';
+import { resolveSymbolWithCandidates } from './symbol-resolver';
+import { toToolErrorPayload } from './tool-error';
 
 const BUY_SELL_TYPES: readonly OrderType[] = ['BUY', 'SELL'];
 
@@ -46,8 +47,34 @@ export interface CreateOrderToolInput {
   createOrderParams?: CreateOrderParams;
 }
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z';
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function shiftDays(base: Date, deltaDays: number): string {
+  const shifted = new Date(base);
+  shifted.setUTCDate(shifted.getUTCDate() + deltaDays);
+  return shifted.toISOString();
+}
+
+function resolveDateInput(rawDate: unknown, message: string): string {
+  const now = new Date();
+  const messageNormalized = message.toLowerCase();
+  const dateText = typeof rawDate === 'string' ? rawDate.trim() : '';
+  const dateNormalized = dateText.toLowerCase();
+
+  if (messageNormalized.includes('today') || dateNormalized.includes('today')) return now.toISOString();
+  if (messageNormalized.includes('yesterday') || dateNormalized.includes('yesterday')) return shiftDays(now, -1);
+  if (messageNormalized.includes('tomorrow') || dateNormalized.includes('tomorrow')) return shiftDays(now, 1);
+
+  if (dateText) {
+    const parsed = new Date(dateText);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+  }
+
+  return nowIso();
 }
 
 function safeNumber(v: unknown): number | undefined {
@@ -96,6 +123,23 @@ function parseUserAccounts(user: unknown): { id: string; name: string }[] {
     .filter((account): account is { id: string; name: string } => Boolean(account));
 }
 
+function resolveAccountReferenceToId(params: {
+  accountReference?: string;
+  accounts: { id: string; name: string }[];
+}): string | undefined {
+  const ref = params.accountReference?.trim();
+  if (!ref) return undefined;
+
+  const directIdMatch = params.accounts.find((account) => account.id === ref);
+  if (directIdMatch) return directIdMatch.id;
+
+  const normalizedRef = ref.toLowerCase();
+  const directNameMatch = params.accounts.find((account) => account.name.toLowerCase() === normalizedRef);
+  if (directNameMatch) return directNameMatch.id;
+
+  return undefined;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -124,6 +168,39 @@ function parseAccountCashBalance(
 function currenciesComparable(orderCurrency: string, accountCurrency?: string): boolean {
   if (!accountCurrency) return true;
   return orderCurrency.toUpperCase() === accountCurrency.toUpperCase();
+}
+
+function parseHoldingQuantity(holding: unknown): number | undefined {
+  if (!isRecord(holding)) return undefined;
+  const candidates = ['quantity', 'quantityInShares', 'shares', 'units'] as const;
+  for (const key of candidates) {
+    const value = finiteNumber(holding[key]);
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
+function parseHoldingQuantityBySymbol(
+  portfolioSummary: unknown,
+  symbol: string
+): number | undefined {
+  if (!isRecord(portfolioSummary)) return undefined;
+  const holdings = portfolioSummary.holdings;
+  if (!isRecord(holdings)) return undefined;
+
+  const direct = holdings[symbol];
+  const directQty = parseHoldingQuantity(direct);
+  if (directQty !== undefined) return directQty;
+
+  const normalizedSymbol = symbol.replace(/[-._/]/g, '').toUpperCase();
+  for (const [key, value] of Object.entries(holdings)) {
+    const normalizedKey = key.replace(/[-._/]/g, '').toUpperCase();
+    if (normalizedKey !== normalizedSymbol) continue;
+    const qty = parseHoldingQuantity(value);
+    if (qty !== undefined) return qty;
+  }
+
+  return undefined;
 }
 
 /** Try to get market price and currency for a (dataSource, symbol). Returns undefined on failure or no price. */
@@ -193,6 +270,7 @@ async function fetchUnitPriceWithFallback(
 export async function createOrderTool({
   client,
   impersonationId,
+  message,
   token,
   createOrderParams: params
 }: CreateOrderToolInput): Promise<Record<string, unknown>> {
@@ -200,15 +278,29 @@ export async function createOrderTool({
   const sources = ['ghostfolio_api'];
 
   if (!params?.symbol?.trim() || !params?.type) {
+    const missingSymbol = !params?.symbol?.trim();
+    const missingType = !params?.type;
+    const missingFields = [missingSymbol ? 'symbol' : null, missingType ? 'type' : null].filter(
+      Boolean
+    ) as string[];
+    const answer =
+      missingSymbol && missingType
+        ? 'What would you like to buy or sell? Please specify the symbol (e.g. AAPL, Apple) and whether it is a buy or sell.'
+        : missingSymbol
+          ? 'Which symbol would you like to trade? (e.g. AAPL, TSLA, SOL-USD)'
+          : 'Is this a buy or a sell order?';
+    const summary =
+      missingSymbol && missingType
+        ? 'Missing symbol and type; please specify what to buy or sell.'
+        : missingSymbol
+          ? 'Missing symbol for order.'
+          : 'Missing order type (buy/sell).';
     return {
       success: true,
       needsClarification: true,
-      missingFields: [!params?.symbol?.trim() ? 'symbol' : null, !params?.type ? 'type' : null].filter(
-        Boolean
-      ) as string[],
-      answer:
-        'What would you like to buy or sell? Please specify the symbol (e.g. AAPL, Apple) and whether it is a buy or sell.',
-      summary: 'Missing symbol or type; please specify what to buy or sell.',
+      missingFields,
+      answer,
+      summary,
       data_as_of: dataAsOf,
       sources
     };
@@ -216,6 +308,7 @@ export async function createOrderTool({
 
   const symbolInput = params.symbol.trim();
   const type = params.type as OrderType;
+  const selectedDataSource = safeString(params.dataSource);
 
   const lookup = async (query: string) => {
     try {
@@ -227,8 +320,35 @@ export async function createOrderTool({
     }
   };
 
-  const resolved = await resolveSymbol(symbolInput, lookup);
-  if (!resolved) {
+  const symbolResolution = selectedDataSource
+    ? {
+        resolved: {
+          dataSource: selectedDataSource.toUpperCase(),
+          symbol: symbolInput
+        }
+      }
+    : await resolveSymbolWithCandidates(symbolInput, lookup);
+  if (!symbolResolution.resolved) {
+    if (Array.isArray(symbolResolution.candidates) && symbolResolution.candidates.length > 0) {
+      const topCandidates = symbolResolution.candidates.slice(0, 3).map((candidate) => ({
+        dataSource: candidate.dataSource,
+        label: candidate.name
+          ? `${candidate.name} (${candidate.symbol})`
+          : candidate.symbol,
+        symbol: candidate.symbol
+      }));
+      return {
+        success: true,
+        needsClarification: true,
+        missingFields: ['symbol'],
+        symbolOptions: topCandidates,
+        answer:
+          `I found multiple symbols for "${symbolInput}". Please choose one option below to continue your ${type.toLowerCase()} order.`,
+        summary: `Multiple symbol matches found for ${symbolInput}`,
+        data_as_of: dataAsOf,
+        sources
+      };
+    }
     return {
       success: true,
       needsClarification: true,
@@ -240,8 +360,8 @@ export async function createOrderTool({
     };
   }
 
-  const { dataSource, symbol } = resolved;
-  const lookupItems = await lookup(symbolInput);
+  const { dataSource, symbol } = symbolResolution.resolved;
+  const lookupItems = selectedDataSource ? [] : await lookup(symbolInput);
 
   const needsQuantity = BUY_SELL_TYPES.includes(type);
   const quantity = needsQuantity ? safeNumber(params.quantity) : undefined;
@@ -270,6 +390,7 @@ export async function createOrderTool({
   }
 
   let unitPriceToUse = unitPrice;
+  let marketCurrency: string | undefined;
   if (unitPriceToUse === undefined && (needsQuantity ? quantity! > 0 : true)) {
     const priceResult = await fetchUnitPriceWithFallback(
       client,
@@ -279,6 +400,7 @@ export async function createOrderTool({
       { impersonationId, token }
     );
     unitPriceToUse = priceResult?.price;
+    marketCurrency = safeString(priceResult?.currency);
   }
 
   if (needsQuantity && (unitPriceToUse === undefined || unitPriceToUse < 0)) {
@@ -292,13 +414,23 @@ export async function createOrderTool({
     };
   }
 
-  let currency = safeString(params.currency);
-  let accountId = safeString(params.accountId);
+  let currency = safeString(params.currency) ?? marketCurrency;
+  const accountReference = safeString(params.accountId);
+  let accountId = accountReference;
   let user: unknown;
+  let accounts: { id: string; name: string }[] = [];
 
-  if (!currency || !accountId) {
+  if (!currency || !accountReference) {
     try {
       user = await client.getUser({ impersonationId, token });
+      accounts = parseUserAccounts(user);
+    } catch {
+      // ignore
+    }
+  } else {
+    try {
+      user = await client.getUser({ impersonationId, token });
+      accounts = parseUserAccounts(user);
     } catch {
       // ignore
     }
@@ -317,39 +449,67 @@ export async function createOrderTool({
     };
   }
 
+  const resolvedAccountId = resolveAccountReferenceToId({
+    accountReference,
+    accounts
+  });
+  if (accountReference && resolvedAccountId) {
+    accountId = resolvedAccountId;
+  }
+
   if (!accountId) {
-    const accounts = parseUserAccounts(user);
     if (accounts.length === 1) {
       accountId = accounts[0].id;
     } else {
       const accountList =
         accounts.length > 0
-          ? ` Available accounts: ${accounts.map((account) => `${account.name} (id: ${account.id})`).join(', ')}.`
+          ? ` I found ${accounts.length} accounts: ${accounts.map((account) => account.name).join(', ')}. Which one do you want?`
           : '';
       return {
         success: true,
         needsClarification: true,
         missingFields: ['accountId'],
-        answer: `Please choose an account for this order (required when updating cash balance). Reply with the account id.${accountList}`,
-        summary: 'Account id required to update cash balance.',
+        answer: `Please choose an account for this order (required when updating cash balance).${accountList}`,
+        summary: 'Account required to update cash balance.',
         data_as_of: dataAsOf,
         sources
       };
     }
   }
 
-  const date = typeof params.date === 'string' && params.date.trim() ? params.date.trim() : todayIso();
+  const date = resolveDateInput(params.date, message);
   const fee = safeNumber(params.fee) ?? 0;
   const qty = needsQuantity ? quantity! : (safeNumber(params.quantity) ?? 0);
   const price = unitPriceToUse ?? 0;
   const estimatedCost = qty * price + fee;
 
-  if (isUsdTransactionCapExceeded({ amount: estimatedCost, currency })) {
+  let portfolioSummary: unknown;
+  try {
+    portfolioSummary = await client.getPortfolioSummary({ impersonationId, token });
+  } catch {
     return {
       success: false,
       answer:
+        type === 'SELL'
+          ? `Could not verify holdings for ${symbol} because Ghostfolio API failed.`
+          : 'Could not verify available cash for the selected account because Ghostfolio API failed.',
+      summary:
+        type === 'SELL'
+          ? 'Ghostfolio API failure while verifying holdings for SELL order'
+          : 'Ghostfolio API failure while verifying account cash balance for BUY order',
+      data_as_of: dataAsOf,
+      sources
+    };
+  }
+
+  if (isUsdTransactionCapExceeded({ amount: estimatedCost, currency })) {
+    return {
+      success: true,
+      needsClarification: true,
+      missingFields: ['quantity'],
+      answer:
         `Transaction amount exceeds hard limit of USD ${MAX_USD_TRANSACTION_AMOUNT}. ` +
-        `Estimated cost is USD ${estimatedCost.toFixed(2)}. Reduce quantity or unit price.`,
+        `Estimated cost is USD ${estimatedCost.toFixed(2)}. Please provide a lower quantity or unit price.`,
       summary: 'Transaction amount exceeds hard limit',
       data_as_of: dataAsOf,
       sources
@@ -357,28 +517,68 @@ export async function createOrderTool({
   }
 
   if (type === 'BUY' && accountId) {
-    try {
-      const portfolioSummary = await client.getPortfolioSummary({ impersonationId, token });
-      const accountBalance = parseAccountCashBalance(portfolioSummary, accountId);
+    const accountBalance = parseAccountCashBalance(portfolioSummary, accountId);
+    if (!accountBalance) {
+      return {
+        success: true,
+        needsClarification: true,
+        missingFields: ['accountId'],
+        answer:
+          'I could not verify available cash for the selected account. ' +
+          'Please choose another account or try again in a moment.',
+        summary: 'Unable to verify account cash balance for BUY order',
+        data_as_of: dataAsOf,
+        sources
+      };
+    }
 
-      if (
-        accountBalance &&
-        currenciesComparable(currency, accountBalance.currency) &&
-        estimatedCost > accountBalance.balance
-      ) {
-        return {
-          success: false,
-          answer:
-            `Estimated cost ${currency} ${estimatedCost.toFixed(2)} exceeds available cash ` +
-            `${currency} ${accountBalance.balance.toFixed(2)} in account ${accountId}. ` +
-            'Reduce quantity, lower unit price, or fund the account first.',
-          summary: 'Insufficient account balance for BUY order',
-          data_as_of: dataAsOf,
-          sources
-        };
-      }
-    } catch {
-      // If balance fetch fails, defer enforcement to Ghostfolio API.
+    if (
+      currenciesComparable(currency, accountBalance.currency) &&
+      estimatedCost > accountBalance.balance
+    ) {
+      return {
+        success: true,
+        needsClarification: true,
+        missingFields: ['quantity'],
+        answer:
+          `Estimated cost ${currency} ${estimatedCost.toFixed(2)} exceeds available cash ` +
+          `${currency} ${accountBalance.balance.toFixed(2)} in the selected account. ` +
+          'Please provide a lower quantity, a lower unit price, or fund the account first.',
+        summary: 'Insufficient account balance for BUY order',
+        data_as_of: dataAsOf,
+        sources
+      };
+    }
+  }
+
+  if (type === 'SELL') {
+    const heldQuantity = parseHoldingQuantityBySymbol(portfolioSummary, symbol);
+    if (heldQuantity === undefined) {
+      return {
+        success: true,
+        needsClarification: true,
+        missingFields: ['quantity'],
+        answer:
+          `I could not verify your current ${symbol} holdings to validate this SELL order. ` +
+          'Please try again in a moment or confirm the quantity you currently hold.',
+        summary: 'Unable to verify holdings for SELL order',
+        data_as_of: dataAsOf,
+        sources
+      };
+    }
+
+    if (qty > heldQuantity) {
+      return {
+        success: true,
+        needsClarification: true,
+        missingFields: ['quantity'],
+        answer:
+          `Requested SELL quantity ${qty} exceeds your current holdings of ${heldQuantity} ${symbol}. ` +
+          'Please provide a lower quantity.',
+        summary: 'Insufficient holdings for SELL order',
+        data_as_of: dataAsOf,
+        sources
+      };
     }
   }
 
@@ -399,6 +599,38 @@ export async function createOrderTool({
   try {
     const order = await client.createOrder(dto, { impersonationId, token });
     const orderId = order?.id;
+    if (typeof orderId !== 'string' || !orderId.trim()) {
+      return {
+        success: false,
+        answer: 'Ghostfolio API did not return a valid order id. Order status is unknown; nothing was confirmed.',
+        summary: 'Create order failed: missing order id in API response',
+        error: {
+          error_code: 'GHOSTFOLIO_INVALID_RESPONSE',
+          message: 'Missing order id in Ghostfolio createOrder response',
+          retryable: false
+        },
+        data_as_of: dataAsOf,
+        sources
+      };
+    }
+
+    try {
+      await client.getOrderById(orderId, { impersonationId, token });
+    } catch (verificationError) {
+      const verificationMessage =
+        verificationError instanceof Error ? verificationError.message : String(verificationError);
+      return {
+        success: false,
+        answer:
+          `Order request was sent but the created activity could not be verified (id: ${orderId}). ` +
+          `Error: ${verificationMessage}.`,
+        summary: `Create order failed post-check: ${verificationMessage}`,
+        error: toToolErrorPayload(verificationError),
+        data_as_of: dataAsOf,
+        sources
+      };
+    }
+
     return {
       success: true,
       orderId,
@@ -408,11 +640,12 @@ export async function createOrderTool({
       sources
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const toolError = toToolErrorPayload(err);
     return {
       success: false,
-      answer: `Could not create order: ${message}. Please check the data and try again.`,
-      summary: `Create order failed: ${message}`,
+      answer: `Could not create order: ${toolError.message}. Please check the data and try again.`,
+      summary: `Create order failed: ${toolError.message}`,
+      error: toolError,
       data_as_of: dataAsOf,
       sources
     };

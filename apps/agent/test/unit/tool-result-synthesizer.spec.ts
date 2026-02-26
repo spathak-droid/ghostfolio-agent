@@ -170,4 +170,131 @@ describe('synthesizeToolResults', () => {
       'Transaction patterns: buy/sell ratio 2, 30d activity trend 100%, top symbol TSLA (50%).'
     );
   });
+
+  it('ignores contradictory textual summary and uses structured transaction fields', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      toolCalls: [
+        {
+          toolName: 'transaction_categorize',
+          success: true,
+          result: {
+            answer: 'buy/sell ratio unavailable (no sells)',
+            summary: 'no sells found',
+            categories: [
+              { category: 'BUY', count: 13, totalValue: 3000 },
+              { category: 'SELL', count: 3, totalValue: 1400 }
+            ],
+            data_as_of: '2026-04-01T00:00:00.000Z',
+            patterns: {
+              buySellRatio: 4.33,
+              totalTransactions: 16,
+              topSymbolByCount: {
+                symbol: 'SOL-USD',
+                sharePercent: 37.5
+              }
+            },
+            sources: ['agent_internal']
+          }
+        }
+      ]
+    });
+
+    expect(response.answer).toContain('Summary: Categorized 16 transactions.');
+    expect(response.answer).toContain('Transaction categories: BUY (13), SELL (3).');
+    expect(response.answer).toContain('Transaction patterns: buy/sell ratio 4.33, top symbol SOL-USD (37.5%).');
+    expect(response.answer).not.toContain('no sells');
+    expect(response.answer).not.toContain('unavailable');
+  });
+
+  it('builds market-data summary from structured payload instead of text summary', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      toolCalls: [
+        {
+          toolName: 'market_data',
+          success: true,
+          result: {
+            summary: 'market feed unavailable',
+            data_as_of: '2026-04-01T00:00:00.000Z',
+            sources: ['ghostfolio_api'],
+            symbols: [
+              { symbol: 'AAPL', currency: 'USD', currentPrice: 210.12, changePercent1m: 2.4 },
+              { symbol: 'TSLA', currency: 'USD', currentPrice: 190.45, changePercent1w: -1.1 }
+            ]
+          }
+        }
+      ]
+    });
+
+    expect(response.answer).toContain('Summary: Market data returned for 2 symbol(s).');
+    expect(response.answer).toContain('Market data: AAPL: USD 210.12 (+2.4% vs 1m ago); TSLA: USD 190.45 (-1.1% vs 1w ago).');
+    expect(response.answer).not.toContain('market feed unavailable');
+  });
+
+  it('reads structured per-symbol market-data error payloads', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      toolCalls: [
+        {
+          toolName: 'market_data',
+          success: true,
+          result: {
+            data_as_of: '2026-04-01T00:00:00.000Z',
+            sources: ['ghostfolio_api'],
+            symbols: [
+              {
+                symbol: 'BTC',
+                error: {
+                  error_code: 'MARKET_PRICE_MISSING',
+                  message: 'Missing market price for COINGECKO bitcoin',
+                  retryable: false
+                }
+              }
+            ]
+          }
+        }
+      ]
+    });
+
+    expect(response.answer).toContain('BTC: Missing market price for COINGECKO bitcoin');
+  });
+
+  it('lists compliance violations and warnings with rule ids in risks', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      toolCalls: [
+        {
+          toolName: 'compliance_check',
+          success: true,
+          result: {
+            data_as_of: '2026-02-26',
+            policyVersion: 'us-baseline-v1',
+            sources: ['policy_pack:us-baseline-v1'],
+            summary: 'Compliance check completed with 1 violation(s) and 1 warning(s).',
+            violations: [
+              {
+                rule_id: 'R-FINRA-2111',
+                message: 'Suitability inputs are required before personalized buy/sell guidance.'
+              }
+            ],
+            warnings: [
+              {
+                rule_id: 'R-IRS-WASH-SALE',
+                message: 'Potential wash sale window detected; review tax treatment.'
+              }
+            ]
+          }
+        }
+      ]
+    });
+
+    expect(response.answer).toContain('Compliance check: 1 violation(s), 1 warning(s).');
+    expect(response.answer).toContain(
+      'Violation (R-FINRA-2111): Suitability inputs are required before personalized buy/sell guidance.'
+    );
+    expect(response.answer).toContain(
+      'Warning (R-IRS-WASH-SALE): Potential wash sale window detected; review tax treatment.'
+    );
+  });
 });

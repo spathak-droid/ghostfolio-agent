@@ -1,0 +1,24 @@
+Step 3: Workflow state persistence
+
+What was added:
+- Agent now derives and persists AgentWorkflowState after each response.
+- Persisted fields include:
+  - pendingAction (idle | awaiting_clarification)
+  - pendingTool
+  - missingFields
+  - lastTool
+  - verificationFlags
+  - contextSummary
+  - pinnedFacts
+  - updatedAt
+
+How it is derived:
+- If latest successful tool result has needsClarification=true:
+  - pendingAction=awaiting_clarification
+  - pendingTool=latest tool
+  - missingFields from tool result
+- Stores verification flags from response verification.
+- Stores short summary + pinned facts for future context reuse.
+
+Where:
+- deriveWorkflowState() and persistConversationArtifacts() in apps/agent/server/agent.ts

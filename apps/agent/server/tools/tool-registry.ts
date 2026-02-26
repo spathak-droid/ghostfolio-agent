@@ -100,11 +100,52 @@ const TOOL_ERROR: ToolErrorModel = {
 
 export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   {
+    name: 'compliance_check',
+    description:
+      'Use when the user asks for compliance, policy checks, regulation validation, or whether a transaction/recommendation is allowed. ' +
+      'Evaluates deterministic policy rules and returns violations and warnings with source metadata. ' +
+      'Good for: "is this compliant?", "check regulations for this order", "run policy check".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        ...COMMON_INPUT.properties,
+        regulations: {
+          type: 'array',
+          description: 'Optional list of regulation rule IDs to restrict checks (e.g. R-FINRA-2111)'
+        },
+        symbol: { type: 'string', description: 'Optional ticker symbol (e.g. AAPL)' },
+        type: { type: 'string', description: 'Optional transaction type (BUY, SELL, etc.)' },
+        quantity: { type: 'number', description: 'Optional order quantity' },
+        unitPrice: { type: 'number', description: 'Optional unit price' },
+        currency: { type: 'string', description: 'Optional currency code' }
+      },
+      required: ['message']
+    },
+    output_schema: {
+      type: 'object',
+      description: 'Compliance check result with blocking violations and warnings',
+      properties: {
+        success: { type: 'boolean', description: 'Whether compliance check execution succeeded' },
+        isCompliant: { type: 'boolean', description: 'True when no blocking violations were found' },
+        violations: { type: 'array', description: 'Blocking policy findings' },
+        warnings: { type: 'array', description: 'Non-blocking policy findings' },
+        policyVersion: { type: 'string', description: 'Policy pack version used for evaluation' },
+        data_as_of: { type: 'string', description: 'Policy data timestamp' },
+        sources: { type: 'array', description: 'Regulation source URLs used in findings' },
+        summary: { type: 'string', description: 'Short summary of findings' },
+        answer: { type: 'string', description: 'Natural-language result' }
+      }
+    },
+    error_model: TOOL_ERROR,
+    idempotent: true
+  },
+  {
     name: 'portfolio_analysis',
     description:
       'Use when the user asks about their portfolio overview, allocation, performance, net worth, available balance, cash, or deposits. ' +
       'Calls GET /portfolio/details and returns accounts (with balance per account), holdings (per-symbol allocation, performance, quantity, value), platforms (with balance), and a summary (total value, cash, net performance, fees, dividends). ' +
-      'Good for: "What is my balance?", "How much cash do I have?", "Available balance", "What did I deposit?", "How is my portfolio?", "What is my allocation?", "Show my performance", "What do I hold?"',
+      'Good for: "What is my balance?", "How much cash do I have?", "Available balance", "What did I deposit?", "How is my portfolio?", "What is my allocation?", "Show my performance", "What do I hold?". ' +
+      'Do NOT use to execute transactions or edit activities; use create_order (or create_other_activities) only for explicit execution requests.',
     input_schema: COMMON_INPUT,
     output_schema: {
       type: 'object',
@@ -132,7 +173,8 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
       'This tool is current-only and does not provide historical comparisons. ' +
       'Accepts symbols[] (names or tickers) and metrics[]; currently supports metric "price" only. Unsupported metrics are ignored and reported. ' +
       'Resolves names via symbol lookup and returns current price. ' +
-      'Good for: "What is the price of bitcoin?", "Current price of AAPL", "quote for TSLA".',
+      'Good for: "What is the price of bitcoin?", "Current price of AAPL", "quote for TSLA". ' +
+      'Do NOT use for transaction history or ratio analytics; use transaction_categorize or transaction_timeline.',
     input_schema: {
       type: 'object',
       properties: {
@@ -167,7 +209,8 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     name: 'market_data_lookup',
     description:
       'Calls GET /api/v1/market-data/markets. Returns only Fear & Greed Index (CRYPTOCURRENCIES and STOCKS) from Ghostfolio—no symbol parameter, no per-symbol prices. ' +
-      'Use for: "How is the market sentiment?", "Fear and greed index". Do NOT use for "price of X" or "quote for AAPL"—use market_data instead.',
+      'Use for: "How is the market sentiment?", "Fear and greed index". Do NOT use for "price of X" or "quote for AAPL"—use market_data instead. ' +
+      'Do NOT use for user transaction analysis.',
     input_schema: COMMON_INPUT,
     output_schema: {
       type: 'object',
@@ -186,7 +229,8 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     description:
       'Use when the user asks for broad market condition, sentiment, or "which markets are doing good/bad right now". ' +
       'Calls GET /api/v1/market-data/markets and summarizes fear & greed levels for STOCKS and CRYPTOCURRENCIES. ' +
-      'Good for: "market overview", "how are markets doing?", "is market sentiment fear or greed?"',
+      'Good for: "market overview", "how are markets doing?", "is market sentiment fear or greed?". ' +
+      'Do NOT use for order execution or personal transaction history.',
     input_schema: COMMON_INPUT,
     output_schema: {
       type: 'object',
@@ -213,7 +257,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
       'Fetches the user\'s transactions (activities) from Ghostfolio via GET /order. ' +
       'Returns a list of transactions: each has date, type (BUY, SELL, DIVIDEND, etc.), symbol, quantity, unitPrice, value, SymbolProfile. ' +
       'Do not select this tool alone for the user; it is used internally before transaction_categorize or transaction_timeline. ' +
-      'Select transaction_categorize or transaction_timeline when the user asks about transaction history, categorization, or "when did I buy/sell".',
+      'Select transaction_categorize or transaction_timeline when the user asks about transaction history, categorization, buy/sell ratios, or "when did I buy/sell".',
     input_schema: {
       type: 'object',
       properties: {
@@ -247,7 +291,8 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
       'Requires transactions: run get_transactions first (orchestrator does this automatically). ' +
       'Understands optional filters from message for symbol, type, and date range (e.g. year, last year, this month, last N days). ' +
       'Returns categories with counts/totals and pattern metrics (buy/sell ratio, 30d activity trend, average trade size, concentration, fee drag), plus a short answer. ' +
-      'Good for: "Categorize my transactions", "Break down my transactions by type", "Summarize my activity".',
+      'Good for: "Categorize my transactions", "Break down my transactions by type", "Summarize my activity", "What is my buy/sell ratio?". ' +
+      'Do NOT use create_order for analytical phrases containing buy/sell terms (e.g. "buy sell ratio", "buy vs sell breakdown").',
     input_schema: TRANSACTION_INPUT,
     output_schema: {
       type: 'object',
@@ -290,7 +335,8 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
       'Requires transactions: run get_transactions first (orchestrator does this automatically). ' +
       'Supports optional filters by symbol, type, and date range. ' +
       'Returns a timeline of matching transactions (date, symbol, type, quantity, unitPrice). ' +
-      'Good for: "When did I buy AAPL?", "When did I sell X?", "At what price did I buy?", "Last transaction", "Latest transaction".',
+      'Good for: "When did I buy AAPL?", "When did I sell X?", "At what price did I buy?", "Last transaction", "Latest transaction". ' +
+      'For ratio/count analytics (buy vs sell counts), use transaction_categorize.',
     input_schema: TRANSACTION_INPUT,
     output_schema: {
       type: 'object',
@@ -312,10 +358,12 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   {
     name: 'create_order',
     description:
-      'Use when the user wants to add a buy, sell, dividend, or other activity (e.g. "I want to buy Apple", "Record a sell of 5 BTC", "Add a dividend"). ' +
-      'Requires symbol and type; for BUY/SELL also requires quantity. Do not invent unit price—leave blank so the tool fetches current price from market data. Always pass updateAccountBalance: true. ' +
+      'Use when the user wants to add a BUY or SELL trade (e.g. "I want to buy Apple", "Record a sell of 5 BTC"). ' +
+      'Requires symbol and type; for BUY/SELL requires quantity. Do not invent unit price—leave blank so the tool fetches current price from market data. Always pass updateAccountBalance: true. ' +
       'If required fields are missing, the tool returns a clarification question; ask the user and call again with the new info. ' +
-      'Good for: "Buy Apple shares", "I want to purchase 10 Tesla", "Add a buy order", "Record that I sold X".',
+      'Good for: "Buy Apple shares", "I want to purchase 10 Tesla", "Add a buy order", "Record that I sold X". ' +
+      'Never use for analytics/questions about existing history (e.g. buy/sell ratio, transaction breakdown, when did I buy/sell); use transaction_categorize or transaction_timeline instead. ' +
+      'For DIVIDEND/FEE/INTEREST/LIABILITY use create_other_activities.',
     input_schema: {
       type: 'object',
       properties: {
@@ -341,6 +389,11 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
         orderId: { type: 'string', description: 'Created order id when success' },
         needsClarification: { type: 'boolean', description: 'True when required fields are missing' },
         missingFields: { type: 'array', description: 'List of missing field names' },
+        symbolOptions: {
+          type: 'array',
+          description:
+            'Optional top symbol candidates when the provided symbol is ambiguous. Each item contains label and symbol for user selection.'
+        },
         answer: { type: 'string', description: 'Natural-language reply or follow-up question' },
         summary: { type: 'string', description: 'Short summary' },
         data_as_of: { type: 'string', description: 'ISO timestamp' },
@@ -351,36 +404,37 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     idempotent: false
   },
   {
-    name: 'update_order',
+    name: 'create_other_activities',
     description:
-      'Use when the user wants to edit an existing order/activity (e.g. "Update my last order", "Change the quantity of order X", "Edit activity id Y"). ' +
-      'Requires orderId. Always updateAccountBalance: true. Ask for order id if missing. ' +
-      'Good for: "Update order", "Edit activity", "Change my buy of AAPL".',
+      'Use when the user wants to add non-trade activities: DIVIDEND, FEE, INTEREST, LIABILITY. ' +
+      'Requires type (one of DIVIDEND/FEE/INTEREST/LIABILITY), symbol, and amount (unitPrice). Quantity defaults to 1 if omitted. ' +
+      'Always pass updateAccountBalance: true and ask follow-up clarifications when required fields are missing. ' +
+      'Good for: "Add a dividend for AAPL", "Record account fee", "Add interest income", "Record liability charge". ' +
+      'Do NOT use for BUY/SELL trades; use create_order.',
     input_schema: {
       type: 'object',
       properties: {
         ...COMMON_INPUT.properties,
-        orderId: { type: 'string', description: 'Required; activity/order id to update' },
-        date: { type: 'string', description: 'ISO date' },
-        quantity: { type: 'number', description: 'New quantity' },
-        unitPrice: { type: 'number', description: 'New unit price' },
-        fee: { type: 'number', description: 'New fee' },
-        currency: { type: 'string', description: 'Currency' },
-        symbol: { type: 'string', description: 'Symbol' },
-        type: { type: 'string', description: 'Activity type' },
-        dataSource: { type: 'string', description: 'Data source' },
-        accountId: { type: 'string', description: 'Account id' },
-        comment: { type: 'string', description: 'Comment' },
-        tags: { type: 'array', description: 'Tag ids' }
+        symbol: { type: 'string', description: 'Ticker or name (e.g. AAPL, Apple)' },
+        type: { type: 'string', description: 'DIVIDEND | FEE | INTEREST | LIABILITY' },
+        unitPrice: { type: 'number', description: 'Amount to record for the activity' },
+        quantity: { type: 'number', description: 'Optional quantity; defaults to 1' },
+        date: { type: 'string', description: 'ISO date; default current timestamp' },
+        currency: { type: 'string', description: 'e.g. USD; default from user base currency' },
+        fee: { type: 'number', description: 'Optional fee; default 0' },
+        accountId: { type: 'string', description: 'Optional account to link' },
+        dataSource: { type: 'string', description: 'Optional (e.g. MANUAL)' },
+        comment: { type: 'string', description: 'Optional comment' }
       },
       required: ['message']
     },
     output_schema: {
       type: 'object',
-      description: 'Update order result or clarification request',
+      description: 'Create non-trade activity result or clarification request',
       properties: {
-        success: { type: 'boolean', description: 'Whether the order was updated or clarification was returned' },
-        needsClarification: { type: 'boolean', description: 'True when orderId or required fields missing' },
+        success: { type: 'boolean', description: 'Whether the activity was created or clarification was returned' },
+        orderId: { type: 'string', description: 'Created activity id when success' },
+        needsClarification: { type: 'boolean', description: 'True when required fields are missing' },
         missingFields: { type: 'array', description: 'List of missing field names' },
         answer: { type: 'string', description: 'Natural-language reply or follow-up question' },
         summary: { type: 'string', description: 'Short summary' },
@@ -390,6 +444,43 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     },
     error_model: TOOL_ERROR,
     idempotent: false
+  },
+  {
+    name: 'get_orders',
+    description:
+      'Use when the user wants to list or find activities (orders) by symbol or name—e.g. "list my orders for apple", "find my doge orders", "show my AAPL activities". ' +
+      'Fetches activities from the portfolio and filters by that symbol/name. Returns matching orders with ids and details. ' +
+      'Good for: "List my Apple orders", "Find my doge purchases", "Show activities for TSLA".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        ...COMMON_INPUT.properties,
+        message: {
+          type: 'string',
+          description:
+            'User message: symbol or name to filter by (e.g. "apple", "doge", "AAPL").'
+        }
+      },
+      required: ['message']
+    },
+    output_schema: {
+      type: 'object',
+      description: 'List of orders (activities) matching the filter, or empty with "I didn\'t find that" answer',
+      properties: {
+        success: { type: 'boolean', description: 'Whether the fetch succeeded' },
+        orders: {
+          type: 'array',
+          description: 'Array of { id, symbol, type, date, quantity, unitPrice } for matching orders'
+        },
+        count: { type: 'number', description: 'Number of orders found' },
+        answer: { type: 'string', description: 'Natural-language reply: found N orders / I didn\'t find any orders for X' },
+        summary: { type: 'string', description: 'Short summary' },
+        data_as_of: { type: 'string', description: 'ISO timestamp' },
+        sources: { type: 'array', description: 'Source identifiers' }
+      }
+    },
+    error_model: TOOL_ERROR,
+    idempotent: true
   }
 ] as const;
 
@@ -401,6 +492,7 @@ export type RegisteredToolName = (typeof TOOL_DEFINITIONS)[number]['name'];
 
 /** Tool names the LLM can select (get_transactions is internal). */
 export const SELECTABLE_TOOL_NAMES: readonly AgentToolName[] = [
+  'compliance_check',
   'portfolio_analysis',
   'market_data',
   'market_data_lookup',
@@ -408,7 +500,8 @@ export const SELECTABLE_TOOL_NAMES: readonly AgentToolName[] = [
   'transaction_categorize',
   'transaction_timeline',
   'create_order',
-  'update_order'
+  'create_other_activities',
+  'get_orders'
 ];
 
 /** Tools that require get_transactions to run first (orchestrator runs get_transactions then this). */

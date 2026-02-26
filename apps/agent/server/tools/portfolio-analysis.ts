@@ -1,7 +1,6 @@
-import { appendFileSync } from 'fs';
-import { join } from 'path';
-
 import { GhostfolioClient } from '../ghostfolio-client';
+import { logger } from '../logger';
+import { toToolErrorPayload } from './tool-error';
 
 export async function portfolioAnalysisTool({
   client,
@@ -14,29 +13,41 @@ export async function portfolioAnalysisTool({
   message: string;
   token?: string;
 }) {
-  const data = await client.getPortfolioSummary({ impersonationId, token });
-  logPortfolioFetch(data);
-  const generatedAt = new Date().toISOString();
+  try {
+    const data = await client.getPortfolioSummary({ impersonationId, token });
+    logPortfolioFetch(data);
+    const generatedAt = new Date().toISOString();
 
-  const allocationResult = normalizeAllocation(data?.holdings);
-  const allocation = allocationResult.allocation;
-  const performance = normalizePerformance(data?.summary);
-  const dataAsOf = resolveDataAsOf({
-    createdAt: data?.createdAt,
-    generatedAt
-  });
+    const allocationResult = normalizeAllocation(data?.holdings);
+    const allocation = allocationResult.allocation;
+    const performance = normalizePerformance(data?.summary);
+    const dataAsOf = resolveDataAsOf({
+      createdAt: data?.createdAt,
+      generatedAt
+    });
 
-  return {
-    allocation,
-    data_as_of: dataAsOf,
-    performance,
-    message,
-    source: 'ghostfolio_api',
-    sources: ['ghostfolio_api'],
-    summary: 'Portfolio analysis from Ghostfolio data',
-    usd_removed_from_holdings: allocationResult.usdRemovedFromHoldings,
-    data
-  };
+    return {
+      allocation,
+      data_as_of: dataAsOf,
+      performance,
+      message,
+      source: 'ghostfolio_api',
+      sources: ['ghostfolio_api'],
+      summary: 'Portfolio analysis from Ghostfolio data',
+      usd_removed_from_holdings: allocationResult.usdRemovedFromHoldings,
+      data
+    };
+  } catch (error) {
+    const toolError = toToolErrorPayload(error);
+    return {
+      success: false,
+      answer: `Could not fetch portfolio details: ${toolError.message}`,
+      summary: `Portfolio analysis failed: ${toolError.message}`,
+      error: toolError,
+      data_as_of: new Date().toISOString(),
+      sources: ['ghostfolio_api']
+    };
+  }
 }
 
 function logPortfolioFetch(data: unknown) {
@@ -61,15 +72,7 @@ function logPortfolioFetch(data: unknown) {
     },
     timestamp: Date.now()
   };
-
-  try {
-    appendFileSync(join(process.cwd(), '.cursor', 'debug-af2e79.log'), `${JSON.stringify(payload)}\n`);
-  } catch {
-    // ignore logging failures
-  }
-
-  // eslint-disable-next-line no-console
-  console.log('[agent-portfolio] fetched:', payload);
+  logger.debug('[agent-portfolio] fetched:', payload);
 }
 
 /**

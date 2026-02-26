@@ -1,7 +1,6 @@
-import { appendFileSync } from 'fs';
-import { join } from 'path';
-
 import { GhostfolioClient } from '../ghostfolio-client';
+import { logger } from '../logger';
+import { toToolErrorPayload } from './tool-error';
 
 export async function getTransactionsTool({
   client,
@@ -18,26 +17,38 @@ export async function getTransactionsTool({
   take?: number;
   token?: string;
 }) {
-  const data = await client.getTransactions({ impersonationId, range, take, token });
-  const transactions =
-    isObject(data) && Array.isArray(data.activities)
-      ? (data.activities as Record<string, unknown>[])
-      : [];
-  logTransactionsFetch({
-    data,
-    message,
-    transactions
-  });
+  try {
+    const data = await client.getTransactions({ impersonationId, range, take, token });
+    const transactions =
+      isObject(data) && Array.isArray(data.activities)
+        ? (data.activities as Record<string, unknown>[])
+        : [];
+    logTransactionsFetch({
+      data,
+      message,
+      transactions
+    });
 
-  return {
-    data,
-    data_as_of: new Date().toISOString(),
-    message,
-    source: 'ghostfolio_api',
-    sources: ['ghostfolio_api'],
-    summary: `Fetched ${transactions.length} transactions from Ghostfolio`,
-    transactions
-  };
+    return {
+      data,
+      data_as_of: new Date().toISOString(),
+      message,
+      source: 'ghostfolio_api',
+      sources: ['ghostfolio_api'],
+      summary: `Fetched ${transactions.length} transactions from Ghostfolio`,
+      transactions
+    };
+  } catch (error) {
+    const toolError = toToolErrorPayload(error);
+    return {
+      success: false,
+      answer: `Could not fetch transactions: ${toolError.message}`,
+      summary: `Get transactions failed: ${toolError.message}`,
+      error: toolError,
+      data_as_of: new Date().toISOString(),
+      sources: ['ghostfolio_api']
+    };
+  }
 }
 
 function logTransactionsFetch({
@@ -70,15 +81,7 @@ function logTransactionsFetch({
     preview,
     timestamp: Date.now()
   };
-
-  try {
-    appendFileSync(join(process.cwd(), '.cursor', 'debug-af2e79.log'), `${JSON.stringify(payload)}\n`);
-  } catch {
-    // ignore logging failures
-  }
-
-  // eslint-disable-next-line no-console
-  console.log('[agent-transactions] fetched:', payload);
+  logger.debug('[agent-transactions] fetched:', payload);
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

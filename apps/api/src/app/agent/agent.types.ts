@@ -10,6 +10,7 @@ export interface AgentConversationMessage {
 
 export interface AgentToolCall {
   toolName:
+    | 'compliance_check'
     | 'get_transactions'
     | 'market_data'
     | 'market_data_lookup'

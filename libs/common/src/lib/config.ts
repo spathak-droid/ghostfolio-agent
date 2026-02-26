@@ -183,7 +183,8 @@ export const INVESTMENT_ACTIVITY_TYPES = [
 
 export const PORTFOLIO_SNAPSHOT_PROCESS_JOB_NAME = 'PORTFOLIO';
 export const PORTFOLIO_SNAPSHOT_PROCESS_JOB_OPTIONS: JobOptions = {
-  removeOnComplete: true
+  removeOnComplete: true,
+  removeOnFail: true
 };
 
 export const HEADER_KEY_IMPERSONATION = 'Impersonation-Id';

@@ -21,7 +21,7 @@ import {
   isBefore,
   isThisYear
 } from 'date-fns';
-import { cloneDeep, sortBy } from 'lodash';
+import { isNumber, cloneDeep, sortBy } from 'lodash';
 
 export class RoaiPortfolioCalculator extends PortfolioCalculator {
   private chartDates: string[];
@@ -144,7 +144,12 @@ export class RoaiPortfolioCalculator extends PortfolioCalculator {
     };
     start: Date;
   } & AssetProfileIdentifier): SymbolMetrics {
-    const currentExchangeRate = exchangeRates[format(new Date(), DATE_FORMAT)];
+    const rawCurrentExchangeRate =
+      exchangeRates[format(new Date(), DATE_FORMAT)];
+    const currentExchangeRate =
+      isNumber(rawCurrentExchangeRate) && Number.isFinite(rawCurrentExchangeRate)
+        ? rawCurrentExchangeRate
+        : undefined;
     const currentValues: { [date: string]: Big } = {};
     const currentValuesWithCurrencyEffect: { [date: string]: Big } = {};
     let fees = new Big(0);
@@ -421,7 +426,12 @@ export class RoaiPortfolioCalculator extends PortfolioCalculator {
         );
       }
 
-      const exchangeRateAtOrderDate = exchangeRates[order.date];
+      const rawExchangeRateAtOrderDate = exchangeRates[order.date];
+      const exchangeRateAtOrderDate =
+        isNumber(rawExchangeRateAtOrderDate) &&
+        Number.isFinite(rawExchangeRateAtOrderDate)
+          ? rawExchangeRateAtOrderDate
+          : undefined;
 
       if (order.type === 'DIVIDEND') {
         const dividend = order.quantity.mul(order.unitPrice);

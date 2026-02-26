@@ -2,6 +2,7 @@ export interface AgentChatRequest {
   conversationId: string;
   impersonationId?: string;
   message: string;
+  regulations?: string[];
   dateFrom?: string;
   dateTo?: string;
   metrics?: string[];
@@ -13,7 +14,6 @@ export interface AgentChatRequest {
   type?: string;
   wantsLatest?: boolean;
   createOrderParams?: CreateOrderParams;
-  updateOrderParams?: UpdateOrderParams;
 }
 
 export interface AgentConversationMessage {
@@ -22,13 +22,19 @@ export interface AgentConversationMessage {
 }
 
 export interface AgentError {
-  code: 'TOOL_EXECUTION_FAILED' | 'LLM_EXECUTION_FAILED';
+  code:
+    | 'TOOL_EXECUTION_FAILED'
+    | 'TOOL_EXECUTION_TIMEOUT'
+    | 'LLM_EXECUTION_FAILED'
+    | 'LLM_EXECUTION_TIMEOUT';
   message: string;
   recoverable: boolean;
 }
 
 export type AgentToolName =
+  | 'get_orders'
   | 'get_transactions'
+  | 'compliance_check'
   | 'market_data'
   | 'market_data_lookup'
   | 'market_overview'
@@ -36,15 +42,15 @@ export type AgentToolName =
   | 'transaction_categorize'
   | 'transaction_timeline'
   | 'create_order'
-  | 'update_order';
+  | 'create_other_activities';
 
 /** Order activity type (Ghostfolio API). */
 export type OrderType = 'BUY' | 'SELL' | 'DIVIDEND' | 'FEE' | 'INTEREST' | 'LIABILITY';
 
 /** Params for create_order tool (from LLM extraction). Tool sets updateAccountBalance: true. */
 export interface CreateOrderParams {
-  symbol: string;
-  type: OrderType;
+  symbol?: string;
+  type?: OrderType;
   quantity?: number;
   unitPrice?: number;
   date?: string;
@@ -55,20 +61,17 @@ export interface CreateOrderParams {
   comment?: string;
 }
 
-/** Params for update_order tool (from LLM extraction). */
-export interface UpdateOrderParams {
-  orderId: string;
-  date?: string;
-  quantity?: number;
-  unitPrice?: number;
-  fee?: number;
-  currency?: string;
-  symbol?: string;
-  type?: string;
-  dataSource?: string;
-  accountId?: string;
-  comment?: string;
-  tags?: string[];
+export interface ComplianceFacts {
+  concentration_risk: boolean;
+  constraints: boolean;
+  horizon: boolean;
+  is_recommendation: boolean;
+  quote_is_fresh?: boolean;
+  quote_staleness_check: boolean;
+  replacement_buy_signal: boolean;
+  realized_pnl?: string;
+  risk_tolerance: boolean;
+  transaction_type?: string;
 }
 
 export interface AgentToolCall {
@@ -104,6 +107,7 @@ export interface AgentChatResponse {
 export interface AgentToolInput {
   impersonationId?: string;
   message: string;
+  regulations?: string[];
   dateFrom?: string;
   dateTo?: string;
   metrics?: string[];
@@ -116,10 +120,11 @@ export interface AgentToolInput {
   type?: string;
   wantsLatest?: boolean;
   createOrderParams?: CreateOrderParams;
-  updateOrderParams?: UpdateOrderParams;
 }
 
 export interface AgentTools {
+  complianceCheck: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
+  getOrders: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   getTransactions: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   marketData: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   marketDataLookup: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
@@ -128,7 +133,7 @@ export interface AgentTools {
   transactionCategorize: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   transactionTimeline: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   createOrder: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
-  updateOrder: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
+  createOtherActivities?: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
 }
 
 export interface AgentTraceContext {
@@ -174,11 +179,16 @@ export interface AgentLlm {
     toolSummary: string,
     traceContext?: AgentTraceContext
   ) => Promise<string>;
-  /** Extract structured params for create_order or update_order from conversation. Optional. */
+  /** Extract structured params for create_order or create_other_activities from conversation. Optional. */
   getToolParametersForOrder?: (
     message: string,
     conversation: AgentConversationMessage[],
-    toolName: 'create_order' | 'update_order',
+    toolName: 'create_order' | 'create_other_activities',
     traceContext?: AgentTraceContext
-  ) => Promise<CreateOrderParams | UpdateOrderParams | undefined>;
+  ) => Promise<Partial<CreateOrderParams> | undefined>;
+  /** Extract normalized compliance facts from free text. Optional; deterministic fallback remains available. */
+  extractComplianceFacts?: (
+    message: string,
+    traceContext?: AgentTraceContext
+  ) => Promise<Partial<ComplianceFacts> | undefined>;
 }

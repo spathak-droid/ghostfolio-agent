@@ -1,18 +1,20 @@
 import { GhostfolioClient } from '../ghostfolio-client';
-import { AgentTools, CreateOrderParams, UpdateOrderParams } from '../types';
+import { AgentLlm, AgentTools, CreateOrderParams } from '../types';
 import { createOrderTool } from '../tools/create-order';
+import { getOrdersTool } from '../tools/get-orders';
 import { getTransactionsTool } from '../tools/get-transactions';
+import { complianceCheckTool } from '../tools/compliance-check';
 import { marketDataLookupTool } from '../tools/market-data-lookup';
 import { marketDataTool } from '../tools/market-data';
 import { marketOverviewTool } from '../tools/market-overview';
 import { portfolioAnalysisTool } from '../tools/portfolio-analysis';
 import { transactionCategorizeTool } from '../tools/transaction-categorize';
 import { transactionTimelineTool } from '../tools/transaction-timeline';
-import { updateOrderTool } from '../tools/update-order';
 
 interface RuntimeToolInput {
   impersonationId?: string;
   message: string;
+  regulations?: string[];
   dateFrom?: string;
   dateTo?: string;
   metrics?: string[];
@@ -25,7 +27,6 @@ interface RuntimeToolInput {
   type?: string;
   wantsLatest?: boolean;
   createOrderParams?: CreateOrderParams;
-  updateOrderParams?: UpdateOrderParams;
 }
 
 function resolveToolInput(a: unknown, b?: RuntimeToolInput): RuntimeToolInput {
@@ -34,13 +35,24 @@ function resolveToolInput(a: unknown, b?: RuntimeToolInput): RuntimeToolInput {
 }
 
 export function createLiveEvalTools({
-  ghostfolioBaseUrl
+  ghostfolioBaseUrl,
+  llm
 }: {
   ghostfolioBaseUrl: string;
+  llm?: AgentLlm;
 }): AgentTools {
   const client = new GhostfolioClient(ghostfolioBaseUrl);
 
   return {
+    complianceCheck: (a, b) => {
+      const { message, createOrderParams, regulations } = resolveToolInput(a, b);
+      return complianceCheckTool({
+        createOrderParams,
+        llmFactExtractor: llm?.extractComplianceFacts,
+        message,
+        regulations
+      });
+    },
     createOrder: (a, b) => {
       const { impersonationId, message, token, createOrderParams } = resolveToolInput(a, b);
       return createOrderTool({
@@ -127,14 +139,13 @@ export function createLiveEvalTools({
         wantsLatest
       });
     },
-    updateOrder: (a, b) => {
-      const { impersonationId, message, token, updateOrderParams } = resolveToolInput(a, b);
-      return updateOrderTool({
-        impersonationId,
+    getOrders: (a, b) => {
+      const { impersonationId, message, token } = resolveToolInput(a, b);
+      return getOrdersTool({
         client,
+        impersonationId,
         message,
-        token,
-        updateOrderParams
+        token
       });
     }
   };

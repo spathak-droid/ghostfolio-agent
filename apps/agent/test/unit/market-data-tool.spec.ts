@@ -124,6 +124,8 @@ describe('marketDataTool', () => {
     expect(result.answer).toContain('Missing market price');
 
     const symbols = result.symbols as Array<Record<string, unknown>>;
-    expect(symbols[0]?.error).toContain('Missing market price');
+    expect((symbols[0]?.error as { message?: string } | undefined)?.message).toContain(
+      'Missing market price'
+    );
   });
 });

@@ -3,20 +3,18 @@ import type { AgentTools } from '../../server/types';
 
 function buildTools(overrides: Partial<AgentTools> = {}): AgentTools {
   return {
+    complianceCheck: jest.fn().mockResolvedValue({}),
     createOrder: jest.fn().mockResolvedValue({
       answer: 'Please confirm order details.',
       needsClarification: true
     }),
+    getOrders: jest.fn().mockResolvedValue({}),
     getTransactions: jest.fn().mockResolvedValue({}),
     marketData: jest.fn().mockResolvedValue({}),
     marketDataLookup: jest.fn().mockResolvedValue({}),
     portfolioAnalysis: jest.fn().mockResolvedValue({}),
     transactionCategorize: jest.fn().mockResolvedValue({}),
     transactionTimeline: jest.fn().mockResolvedValue({}),
-    updateOrder: jest.fn().mockResolvedValue({
-      answer: 'Please confirm update details.',
-      needsClarification: true
-    }),
     ...overrides
   };
 }
@@ -52,7 +50,11 @@ describe('order-intent routing', () => {
     });
 
     expect(createOrder).not.toHaveBeenCalled();
-    expect(response.toolCalls).toHaveLength(0);
+    expect(response.toolCalls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ success: true, toolName: 'compliance_check' })
+      ])
+    );
     expect(answerFinanceQuestion).toHaveBeenCalled();
   });
 
@@ -89,5 +91,169 @@ describe('order-intent routing', () => {
       ])
     );
   });
+
+  it('does not trigger create_order for buy/sell ratio analytics requests', async () => {
+    const createOrder = jest.fn().mockResolvedValue({
+      answer: 'Please confirm order details.',
+      needsClarification: true
+    });
+    const transactionCategorize = jest.fn().mockResolvedValue({
+      answer: 'Categorized transactions.',
+      categories: [{ category: 'BUY', count: 13 }, { category: 'SELL', count: 3 }],
+      data_as_of: '2026-02-25T00:00:00.000Z',
+      patterns: { buySellRatio: 4.33 },
+      sources: ['agent_internal'],
+      summary: 'Categorized 16 transactions'
+    });
+    const tools = buildTools({ createOrder, transactionCategorize });
+    const agent = createAgent({
+      llm: {
+        answerFinanceQuestion: jest.fn().mockResolvedValue('fallback'),
+        reasonAboutQuery: jest.fn().mockResolvedValue({
+          intent: 'finance',
+          mode: 'tool_call',
+          rationale: 'needs transaction patterns',
+          tool: 'transaction_categorize',
+          tools: ['transaction_categorize']
+        }),
+        selectTool: jest.fn().mockResolvedValue({ tool: 'transaction_categorize' })
+      },
+      tools
+    });
+
+    await agent.chat({
+      conversationId: 'conv-order-intent-ratio',
+      message: 'what is my buy sell ratio',
+      token: 'jwt-token'
+    });
+
+    expect(transactionCategorize).toHaveBeenCalled();
+    expect(createOrder).not.toHaveBeenCalled();
+  });
+
+  it('strips create_order when LLM mixes it into non-order analytics tool list', async () => {
+    const createOrder = jest.fn().mockResolvedValue({
+      answer: 'Please confirm order details.',
+      needsClarification: true
+    });
+    const transactionCategorize = jest.fn().mockResolvedValue({
+      answer: 'Categorized transactions.',
+      categories: [{ category: 'BUY', count: 13 }, { category: 'SELL', count: 3 }],
+      data_as_of: '2026-02-25T00:00:00.000Z',
+      patterns: { buySellRatio: 4.33 },
+      sources: ['agent_internal'],
+      summary: 'Categorized 16 transactions'
+    });
+    const tools = buildTools({ createOrder, transactionCategorize });
+    const agent = createAgent({
+      llm: {
+        answerFinanceQuestion: jest.fn().mockResolvedValue('fallback'),
+        reasonAboutQuery: jest.fn().mockResolvedValue({
+          intent: 'finance',
+          mode: 'tool_call',
+          rationale: 'needs analytics',
+          tools: ['transaction_categorize', 'create_order']
+        }),
+        selectTool: jest.fn().mockResolvedValue({ tool: 'transaction_categorize' })
+      },
+      tools
+    });
+
+    await agent.chat({
+      conversationId: 'conv-order-intent-mixed-tools',
+      message: 'what is my buy sell ratio',
+      token: 'jwt-token'
+    });
+
+    expect(transactionCategorize).toHaveBeenCalled();
+    expect(createOrder).not.toHaveBeenCalled();
+  });
 });
 
+  it('routes advisory buy question to compliance_check instead of pure direct LLM', async () => {
+    const complianceCheck = jest.fn().mockResolvedValue({
+      answer: 'Compliance check found blocking policy violations.',
+      data_as_of: '2026-02-26',
+      isCompliant: false,
+      policyVersion: 'us-baseline-v1',
+      sources: ['policy_pack'],
+      summary: 'Compliance check completed with 1 violation(s) and 0 warning(s).',
+      violations: [{ rule_id: 'R-FINRA-2111', severity: 'violation' }],
+      warnings: []
+    });
+
+    const tools = buildTools({ complianceCheck });
+    const agent = createAgent({
+      llm: {
+        answerFinanceQuestion: jest.fn().mockResolvedValue('fallback'),
+        reasonAboutQuery: jest.fn().mockResolvedValue({
+          intent: 'general',
+          mode: 'direct_reply',
+          rationale: 'opinion question',
+          tool: 'none'
+        }),
+        selectTool: jest.fn().mockResolvedValue({ tool: 'none' })
+      },
+      tools
+    });
+
+    const response = await agent.chat({
+      conversationId: 'conv-order-intent-advisory-compliance',
+      message: 'Should I buy TSLA now?',
+      token: 'jwt-token'
+    });
+
+    expect(complianceCheck).toHaveBeenCalledTimes(1);
+    expect(response.toolCalls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ success: true, toolName: 'compliance_check' })
+      ])
+    );
+  });
+
+  it('does not route explicit compliance-check phrasing to create_order', async () => {
+    const createOrder = jest.fn().mockResolvedValue({
+      answer: 'Please choose an account for this order.',
+      needsClarification: true
+    });
+    const complianceCheck = jest.fn().mockResolvedValue({
+      answer: 'Compliance check completed.',
+      data_as_of: '2026-02-26',
+      isCompliant: true,
+      policyVersion: 'us-baseline-v1',
+      sources: ['policy_pack:us-baseline-v1'],
+      summary: 'Compliance check completed with 0 violation(s) and 0 warning(s).',
+      violations: [],
+      warnings: []
+    });
+    const tools = buildTools({ complianceCheck, createOrder });
+    const agent = createAgent({
+      llm: {
+        answerFinanceQuestion: jest.fn().mockResolvedValue('fallback'),
+        reasonAboutQuery: jest.fn().mockResolvedValue({
+          intent: 'finance',
+          mode: 'tool_call',
+          rationale: 'explicit compliance request',
+          tool: 'none'
+        }),
+        selectTool: jest.fn().mockResolvedValue({ tool: 'none' })
+      },
+      tools
+    });
+
+    const response = await agent.chat({
+      conversationId: 'conv-order-intent-compliance-phrase',
+      message: 'Run a compliance check for this trade: buy 10 AAPL',
+      token: 'jwt-token'
+    });
+
+    expect(complianceCheck).toHaveBeenCalledTimes(1);
+    expect(createOrder).not.toHaveBeenCalled();
+    expect(response.answer).toContain('I ran a compliance check');
+    expect(response.answer).toContain('no blocking violations');
+    expect(response.toolCalls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ success: true, toolName: 'compliance_check' })
+      ])
+    );
+  });

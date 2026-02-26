@@ -1,4 +1,5 @@
 import { GhostfolioClient } from '../../server/ghostfolio-client';
+import { GhostfolioApiError } from '../../server/ghostfolio-api-error';
 
 describe('GhostfolioClient', () => {
   const originalFetch = global.fetch;
@@ -47,5 +48,76 @@ describe('GhostfolioClient', () => {
       platforms: {}
     });
     expect(typeof (result as Record<string, unknown>).createdAt).toBe('string');
+  });
+
+  it('logs API call metadata for successful POST requests', async () => {
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => '{"id":"order-1"}'
+    }) as unknown as typeof fetch;
+
+    const client = new GhostfolioClient('http://localhost:3333');
+    await client.createOrder(
+      {
+        type: 'BUY',
+        symbol: 'TSLA',
+        currency: 'USD',
+        date: '2026-01-01T00:00:00.000Z',
+        quantity: 2,
+        unitPrice: 100,
+        fee: 0
+      },
+      { token: 'abc' }
+    );
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      '[ghostfolio-api]',
+      expect.stringContaining('"method":"POST"')
+    );
+    expect(consoleSpy).toHaveBeenCalledWith(
+      '[ghostfolio-api]',
+      expect.stringContaining('"path":"/api/v1/order"')
+    );
+  });
+
+  it('fails fast when Ghostfolio API request times out', async () => {
+    jest.useFakeTimers();
+    global.fetch = jest.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        const signal = init?.signal as AbortSignal | undefined;
+        signal?.addEventListener('abort', () => {
+          const error = new Error('aborted');
+          (error as Error & { name: string }).name = 'AbortError';
+          reject(error);
+        });
+      });
+    }) as unknown as typeof fetch;
+
+    const client = new GhostfolioClient('http://localhost:3333');
+    const pending = client.getUser({ token: 'abc' });
+
+    jest.advanceTimersByTime(15001);
+    await expect(pending).rejects.toThrow('timed out');
+    jest.useRealTimers();
+  });
+
+  it('throws GhostfolioApiError with retryable=true for 500 responses', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: async () => '{"message":"boom"}'
+    }) as unknown as typeof fetch;
+
+    const client = new GhostfolioClient('http://localhost:3333');
+    await expect(client.getUser({ token: 'abc' })).rejects.toEqual(
+      expect.objectContaining({
+        code: 'GHOSTFOLIO_HTTP_ERROR',
+        retryable: true,
+        status: 500
+      })
+    );
+    await expect(client.getUser({ token: 'abc' })).rejects.toBeInstanceOf(GhostfolioApiError);
   });
 });

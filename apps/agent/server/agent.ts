@@ -1,31 +1,77 @@
 import { traceable } from 'langsmith/traceable';
-
 import {
   AgentLlm,
   AgentChatRequest,
   AgentChatResponse,
   AgentConversationMessage,
-  AgentTraceContext,
   AgentTraceStep,
-  AgentToolName,
   AgentTools
 } from './types';
 import {
-  isTransactionDependentTool,
-  SELECTABLE_TOOL_NAMES,
-  TRANSACTION_DEPENDENT_TOOL_NAMES
+  isTransactionDependentTool
 } from './tools/tool-registry';
+import { createDefaultContextManager, type AgentContextManager } from './context-manager';
+import {
+  createInMemoryConversationStore,
+  type AgentConversationStore
+} from './conversation-store';
 import { scoreConfidence } from './verification/confidence-scorer';
 import { applyDomainConstraints } from './verification/domain-constraints';
 import { validateOutput } from './verification/output-validator';
+import { logger } from './logger';
 import { synthesizeToolResults } from './synthesis/tool-result-synthesizer';
-
-const memory = new Map<string, AgentConversationMessage[]>();
+import {
+  ensurePendingClarificationTool,
+  inferCreateOrderParamsFromMessage,
+  mergeCreateOrderParams,
+  normalizeOrderToolsForIntent,
+  preventOrderReplayWithoutPending,
+  prioritizeExecutionToolsForIntent,
+  sanitizeOrderToolsForNonOrderRequests,
+  isOrderConfirmationMessage,
+  hasPendingOrderClarification
+} from './agent-routing';
+import {
+  persistConversationArtifacts,
+  safeGetConversation,
+  safeGetState
+} from './agent-workflow-state';
+import {
+  AGENT_OPERATION_TIMEOUT_MS,
+  buildTraceMetadata,
+  buildTraceTags,
+  createTraceContext,
+  executeTool,
+  getReportedToolFailure,
+  hasUsableToolData,
+  inferToolRecoverableFromThrownError,
+  isTimeoutError,
+  runTransactionsDependentFlow,
+  timeoutMessageForOperation,
+  withOperationTimeout
+} from './agent-tool-runtime';
+import {
+  buildToolFailureResponse,
+  decideRoute,
+  detectInputFlags,
+  finalizeDirectResponse,
+  getPreferredSingleToolAnswerFromToolCalls,
+  handleNoToolRoute
+} from './agent-llm-runtime';
+const defaultConversationStore = createInMemoryConversationStore();
+const defaultContextManager = createDefaultContextManager();
+// Error policy: see docs/agent/error-handling-policy.md
+// Expected runtime failures are encoded in AgentChatResponse.errors/toolCalls (HTTP 200 path).
+// Unexpected boundary failures are handled by /chat with HTTP 500 AGENT_CHAT_FAILED.
 
 export function createAgent({
+  contextManager = defaultContextManager,
+  conversationStore = defaultConversationStore,
   llm,
   tools
 }: {
+  contextManager?: AgentContextManager;
+  conversationStore?: AgentConversationStore;
   llm?: AgentLlm;
   tools: AgentTools;
 }) {
@@ -38,20 +84,39 @@ export function createAgent({
       impersonationId,
       metrics,
       message,
+      regulations,
       range,
       symbol,
       symbols,
       take,
       token,
       type,
-      updateOrderParams: requestUpdateOrderParams,
       wantsLatest
     }: AgentChatRequest): Promise<AgentChatResponse> => {
-      const conversation = [...(memory.get(conversationId) ?? [])];
+      const persistedConversation = await safeGetConversation({
+        conversationId,
+        conversationStore
+      });
+      const persistedState = await safeGetState({
+        conversationId,
+        conversationStore
+      });
+      const baseCreateOrderParams = mergeCreateOrderParams(
+        persistedState?.pendingTool === 'create_order' ||
+          persistedState?.pendingTool === 'create_other_activities'
+          ? persistedState.draftCreateOrderParams
+          : undefined,
+        requestCreateOrderParams
+      );
+      const conversation = [...persistedConversation];
       conversation.push({ content: message, role: 'user' });
+      const llmConversation = contextManager.buildContext({
+        conversation,
+        state: persistedState
+      });
       const traceContext = createTraceContext({ conversationId, conversation, message });
 
-      console.log('[agent.chat] START', {
+      logger.debug('[agent.chat] START', {
         conversationId,
         message,
         conversationLength: conversation.length
@@ -62,15 +127,33 @@ export function createAgent({
       const trace: AgentTraceStep[] = [];
 
       const routeDecision = await decideRoute({
-        conversation,
+        conversation: llmConversation,
         llm,
         message,
         traceContext
       });
-      const selectedTools = routeDecision.tools;
+      const selectedTools = preventOrderReplayWithoutPending({
+        message,
+        pendingState: persistedState,
+        selectedTools: sanitizeOrderToolsForNonOrderRequests({
+          message,
+          pendingState: persistedState,
+          selectedTools: normalizeOrderToolsForIntent({
+            message,
+            selectedTools: prioritizeExecutionToolsForIntent({
+              message,
+              selectedTools: ensurePendingClarificationTool({
+                message,
+                pendingState: persistedState,
+                selectedTools: routeDecision.tools
+              })
+            })
+          })
+        })
+      });
       const intent = routeDecision.intent;
 
-      console.log('[agent.chat] ROUTE', {
+      logger.debug('[agent.chat] ROUTE', {
         intent,
         selectedTools,
         toolCount: selectedTools.length
@@ -83,85 +166,26 @@ export function createAgent({
         output: { intent, selectedTools }
       });
 
-      // #region agent log
-      fetch('http://127.0.0.1:7808/ingest/4da1e7d4-b39c-44d9-a939-8c4e2776c91d', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '2ea507' },
-        body: JSON.stringify({
-          sessionId: '2ea507',
-          location: 'agent.ts:routeDecision',
-          message: 'route decision after decideRoute',
-          data: { intent, toolCount: selectedTools.length, tools: selectedTools },
-          timestamp: Date.now(),
-          hypothesisId: 'route'
-        })
-      }).catch(() => undefined);
-      // #endregion
-
       if (selectedTools.length === 0) {
-        // #region agent log
-        fetch('http://127.0.0.1:7808/ingest/4da1e7d4-b39c-44d9-a939-8c4e2776c91d', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '2ea507' },
-          body: JSON.stringify({
-            sessionId: '2ea507',
-            location: 'agent.ts:no-tools-branch',
-            message: 'selectedTools.length===0, deciding answer source',
-            data: { hasLlm: Boolean(llm), messagePreview: message.slice(0, 80) },
-            timestamp: Date.now(),
-            hypothesisId: 'A'
-          })
-        }).catch(() => undefined);
-        // #endregion
-        const baseAnswer = llm
-          ? await llm.answerFinanceQuestion(message, conversation, traceContext)
-          : 'I can help with portfolio, market data, or transaction categorization questions.';
-        console.log('[agent.chat] NO_TOOLS_DIRECT_ANSWER', {
-          messagePreview: message.slice(0, 80),
-          answerLength: baseAnswer.length,
-          answerPreview: baseAnswer.slice(0, 300) + (baseAnswer.length > 300 ? '...' : '')
-        });
-        const outputValidation = validateOutput(baseAnswer);
-        const inputFlags = detectInputFlags(message);
-        const constraints = applyDomainConstraints(baseAnswer, [
-          ...outputValidation.errors,
-          ...inputFlags
-        ], {
-          intent
-        });
-
-        trace.push({
-          type: 'llm',
-          name: 'answer',
-          input: { messagePreview: message.slice(0, 200) },
-          output: { answerPreview: baseAnswer.slice(0, 500) }
-        });
-        const response: AgentChatResponse = {
-          answer: baseAnswer,
-          conversation: [
-            ...conversation,
-            {
-              content: baseAnswer,
-              role: 'assistant'
-            }
-          ],
+        return handleNoToolRoute({
+          conversation,
+          conversationId,
+          conversationStore,
           errors,
+          llm,
+          llmConversation,
+          message,
+          pendingClarification: hasPendingOrderClarification(persistedState),
+          previousState: persistedState,
           toolCalls,
           trace,
-          verification: {
-            confidence: scoreConfidence({
-              hasErrors: false,
-              invalid: !constraints.isValid
-            }),
-            flags: constraints.flags,
-            isValid: constraints.isValid
-          }
-        };
-
-        memory.set(conversationId, response.conversation);
-        return response;
+          traceContext,
+          treatAsOrderConfirmation: isOrderConfirmationMessage(message)
+        });
       }
 
+      let latestCreateOrderParams: import('./types').CreateOrderParams | undefined =
+        baseCreateOrderParams;
       try {
         for (const tool of selectedTools) {
           if (isTransactionDependentTool(tool)) {
@@ -187,31 +211,57 @@ export function createAgent({
           }
 
           try {
-            let createOrderParams = requestCreateOrderParams;
-            let updateOrderParams = requestUpdateOrderParams;
+            let createOrderParams = latestCreateOrderParams;
             if (
-              (tool === 'create_order' || tool === 'update_order') &&
+              (tool === 'create_order' || tool === 'create_other_activities') &&
               llm?.getToolParametersForOrder
             ) {
-              const extracted = await llm.getToolParametersForOrder(
-                message,
-                conversation,
-                tool,
-                traceContext
-              );
-              if (extracted) {
-                if (tool === 'create_order') {
-                  createOrderParams = {
-                    ...(extracted as import('./types').CreateOrderParams),
-                    ...(requestCreateOrderParams ?? {})
-                  };
+              let extracted: Partial<import('./types').CreateOrderParams> | undefined;
+              try {
+                const getToolParametersForOrder = llm.getToolParametersForOrder;
+                if (getToolParametersForOrder) {
+                  extracted = await withOperationTimeout({
+                    operation: 'llm.get_tool_parameters_for_order',
+                    task: () =>
+                      getToolParametersForOrder(message, llmConversation, tool, traceContext)
+                  });
                 } else {
-                  updateOrderParams = {
-                    ...(extracted as import('./types').UpdateOrderParams),
-                    ...(requestUpdateOrderParams ?? {})
-                  };
+                  extracted = undefined;
+                }
+              } catch (error) {
+                if (isTimeoutError(error)) {
+                  errors.push({
+                    code: 'LLM_EXECUTION_TIMEOUT',
+                    message: 'llm.get_tool_parameters_for_order timed out after 25 seconds',
+                    recoverable: true
+                  });
+                  extracted = undefined;
+                } else {
+                  errors.push({
+                    code: 'LLM_EXECUTION_FAILED',
+                    message:
+                      error instanceof Error
+                        ? error.message
+                        : 'llm.get_tool_parameters_for_order failed',
+                    recoverable: true
+                  });
+                  extracted = undefined;
                 }
               }
+              if (extracted) {
+                createOrderParams = mergeCreateOrderParams(
+                  createOrderParams,
+                  extracted as import('./types').CreateOrderParams,
+                  requestCreateOrderParams
+                );
+              }
+            }
+            if (tool === 'create_order' || tool === 'create_other_activities') {
+              createOrderParams = mergeCreateOrderParams(
+                createOrderParams,
+                inferCreateOrderParamsFromMessage(message)
+              );
+              latestCreateOrderParams = createOrderParams;
             }
             const result = await executeTool({
               dateFrom,
@@ -219,6 +269,7 @@ export function createAgent({
               impersonationId,
               metrics,
               message,
+              regulations,
               range,
               symbol,
               symbols,
@@ -229,9 +280,33 @@ export function createAgent({
               traceContext,
               type,
               wantsLatest,
-              createOrderParams,
-              updateOrderParams
+              createOrderParams
             });
+            const reportedFailure = getReportedToolFailure(result);
+            if (reportedFailure) {
+              errors.push({
+                code: 'TOOL_EXECUTION_FAILED',
+                message: reportedFailure.message,
+                recoverable: reportedFailure.recoverable
+              });
+              logger.debug('[agent.chat] TOOL_RESULT', {
+                tool,
+                success: false,
+                error: reportedFailure.message
+              });
+              toolCalls.push({
+                result: { reason: 'tool_failure' },
+                success: false,
+                toolName: tool
+              });
+              trace.push({
+                type: 'tool',
+                name: tool,
+                input: { messagePreview: message.slice(0, 200) },
+                output: { reason: 'tool_failure', error: reportedFailure.message }
+              });
+              continue;
+            }
             toolCalls.push({
               result,
               success: true,
@@ -243,7 +318,7 @@ export function createAgent({
               input: { messagePreview: message.slice(0, 200) },
               output: result
             });
-            console.log('[agent.chat] TOOL_RESULT', {
+            logger.debug('[agent.chat] TOOL_RESULT', {
               tool,
               success: true,
               resultKeys: typeof result === 'object' && result !== null ? Object.keys(result as object) : [],
@@ -253,21 +328,26 @@ export function createAgent({
                   : String(result)
             });
           } catch (error) {
-            const errMsg = error instanceof Error ? error.message : 'unknown tool failure';
+            const isTimeout = isTimeoutError(error);
+            const errMsg = isTimeout
+              ? `${tool} timed out after 25 seconds`
+              : error instanceof Error
+                ? error.message
+                : 'unknown tool failure';
             errors.push({
-              code: 'TOOL_EXECUTION_FAILED',
+              code: isTimeout ? 'TOOL_EXECUTION_TIMEOUT' : 'TOOL_EXECUTION_FAILED',
               message: errMsg,
-              recoverable: true
+              recoverable: isTimeout ? true : inferToolRecoverableFromThrownError(error)
             });
 
-            console.log('[agent.chat] TOOL_RESULT', {
+            logger.debug('[agent.chat] TOOL_RESULT', {
               tool,
               success: false,
               error: errMsg
             });
 
             toolCalls.push({
-              result: { reason: 'tool_failure' },
+              result: { reason: isTimeout ? 'tool_timeout' : 'tool_failure' },
               success: false,
               toolName: tool
             });
@@ -275,25 +355,59 @@ export function createAgent({
               type: 'tool',
               name: tool,
               input: { messagePreview: message.slice(0, 200) },
-              output: { reason: 'tool_failure', error: errMsg }
+              output: { reason: isTimeout ? 'tool_timeout' : 'tool_failure', error: errMsg }
             });
           }
         }
 
         if (toolCalls.every(({ success }) => !success)) {
-          if (llm) {
-            return finalizeDirectResponse({
-              conversation,
-              conversationId,
+          const hasTimeoutFailure = errors.some(({ code }) => code === 'TOOL_EXECUTION_TIMEOUT');
+          if (hasTimeoutFailure) {
+            const timeoutAnswer = timeoutMessageForOperation('tool.batch');
+            const timeoutResponse: AgentChatResponse = {
+              answer: timeoutAnswer,
+              conversation: [
+                ...conversation,
+                {
+                  content: timeoutAnswer,
+                  role: 'assistant'
+                }
+              ],
               errors,
-              hasCriticalFlags: true,
-              llm,
-              message,
               toolCalls,
               trace,
-              traceContext,
-              verificationFlags: ['tool_failure']
+              verification: {
+                confidence: scoreConfidence({ hasErrors: true, invalid: true }),
+                flags: ['tool_timeout'],
+                isValid: false
+              }
+            };
+            await persistConversationArtifacts({
+              conversationId,
+              conversationStore,
+              previousState: persistedState,
+              response: timeoutResponse,
+              toolCalls
             });
+            return timeoutResponse;
+          }
+          if (llm) {
+          return finalizeDirectResponse({
+            conversation,
+            conversationId,
+            conversationStore,
+            draftCreateOrderParams: latestCreateOrderParams,
+            errors,
+            hasCriticalFlags: true,
+            llm,
+            llmConversation,
+            message,
+            previousState: persistedState,
+            toolCalls,
+            trace,
+            traceContext,
+            verificationFlags: ['tool_failure']
+          });
           }
 
           const authFailure = errors.some(({ message: errorMessage }) =>
@@ -303,26 +417,20 @@ export function createAgent({
             authFailure
               ? 'I could not access your Ghostfolio data because authentication failed. Please sign in again and retry.'
               : 'I could not complete the request because all selected tools failed. Please retry.';
-          const failureResponse: AgentChatResponse = {
+          const failureResponse = buildToolFailureResponse({
             answer: failureAnswer,
-            conversation: [
-              ...conversation,
-              {
-                content: failureAnswer,
-                role: 'assistant'
-              }
-            ],
+            conversation,
             errors,
             toolCalls,
-            trace,
-            verification: {
-              confidence: scoreConfidence({ hasErrors: true, invalid: true }),
-              flags: ['tool_failure'],
-              isValid: false
-            }
-          };
-
-          memory.set(conversationId, failureResponse.conversation);
+            trace
+          });
+          await persistConversationArtifacts({
+            conversationId,
+            conversationStore,
+            previousState: persistedState,
+            response: failureResponse,
+            toolCalls
+          });
           return failureResponse;
         }
 
@@ -330,10 +438,14 @@ export function createAgent({
           return finalizeDirectResponse({
             conversation,
             conversationId,
+            conversationStore,
+            draftCreateOrderParams: latestCreateOrderParams,
             errors,
             hasCriticalFlags: true,
             llm,
+            llmConversation,
             message,
+            previousState: persistedState,
             toolCalls,
             trace,
             traceContext,
@@ -363,7 +475,7 @@ export function createAgent({
           }
         );
 
-        console.log('[agent.chat] SYNTHESIZED', {
+        logger.debug('[agent.chat] SYNTHESIZED', {
           answerLength: synthesized.answer.length,
           answerPreview: synthesized.answer.slice(0, 400) + (synthesized.answer.length > 400 ? '...' : ''),
           flags: synthesized.flags,
@@ -378,25 +490,41 @@ export function createAgent({
         });
 
         let baseAnswer = synthesized.answer;
-        if (llm?.synthesizeFromToolResults) {
-          const clarification = getClarificationAnswerFromToolCalls(toolCalls);
-          if (clarification) {
-            baseAnswer = clarification;
-          } else {
+        const clarification = getPreferredSingleToolAnswerFromToolCalls(toolCalls);
+        if (clarification) {
+          baseAnswer = clarification;
+        } else if (llm?.synthesizeFromToolResults) {
             try {
-              const llmAnswer = await llm.synthesizeFromToolResults(
-                message,
-                conversation,
-                synthesized.answer,
-                traceContext
-              );
-              if (typeof llmAnswer === 'string' && llmAnswer.trim().length > 0) {
-                baseAnswer = llmAnswer.trim();
+              const synthesizeFromToolResults = llm.synthesizeFromToolResults;
+              if (synthesizeFromToolResults) {
+                const llmAnswer = await withOperationTimeout({
+                  operation: 'llm.synthesize_from_tool_results',
+                  task: () =>
+                    synthesizeFromToolResults(message, llmConversation, synthesized.answer, traceContext)
+                });
+                if (typeof llmAnswer === 'string' && llmAnswer.trim().length > 0) {
+                  baseAnswer = llmAnswer.trim();
+                }
               }
-            } catch {
+            } catch (error) {
+              if (isTimeoutError(error)) {
+                errors.push({
+                  code: 'LLM_EXECUTION_TIMEOUT',
+                  message: 'llm.synthesize_from_tool_results timed out after 25 seconds',
+                  recoverable: true
+                });
+              } else {
+                errors.push({
+                  code: 'LLM_EXECUTION_FAILED',
+                  message:
+                    error instanceof Error
+                      ? error.message
+                      : 'llm.synthesize_from_tool_results failed',
+                  recoverable: true
+                });
+              }
               baseAnswer = synthesized.answer;
             }
-          }
         }
 
         const outputValidation = validateOutput(baseAnswer);
@@ -420,7 +548,7 @@ export function createAgent({
           hasCriticalFlags,
           toolCalls
         };
-        console.log('[agent.chat] FINALIZE_INPUT', {
+        logger.debug('[agent.chat] FINALIZE_INPUT', {
           answerLength: baseAnswer.length,
           answerPreview: baseAnswer.slice(0, 300) + (baseAnswer.length > 300 ? '...' : ''),
           constraintsIsValid: constraints.isValid,
@@ -473,10 +601,17 @@ export function createAgent({
             })
           }
         )(finalizeInput);
-        memory.set(conversationId, response.conversation);
+        await persistConversationArtifacts({
+          conversationId,
+          conversationStore,
+          draftCreateOrderParams: latestCreateOrderParams,
+          previousState: persistedState,
+          response,
+          toolCalls
+        });
         (response as AgentChatResponse).trace = trace;
 
-        console.log('[agent.chat] FINALIZE_OUTPUT', {
+        logger.debug('[agent.chat] FINALIZE_OUTPUT', {
           answerLength: response.answer.length,
           answerPreview: response.answer.slice(0, 300) + (response.answer.length > 300 ? '...' : ''),
           verification: response.verification
@@ -485,54 +620,41 @@ export function createAgent({
         return response as AgentChatResponse;
       } catch (error) {
         const failureAnswer =
-          'I could not complete the request because a tool failed. Please retry.';
-        const errMsg = error instanceof Error ? error.message : 'unknown tool failure';
-        // #region agent log
-        fetch('http://127.0.0.1:7808/ingest/4da1e7d4-b39c-44d9-a939-8c4e2776c91d', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '8ff55f' },
-          body: JSON.stringify({
-            sessionId: '8ff55f',
-            location: 'agent.ts:chat catch',
-            message: 'Agent returned tool failure',
-            data: { errMsg, errName: error instanceof Error ? (error as Error).name : 'unknown' },
-            timestamp: Date.now(),
-            hypothesisId: 'C'
-          })
-        }).catch(() => { /* ingest may be unavailable */ });
-        // #endregion
+          isTimeoutError(error)
+            ? timeoutMessageForOperation('tool.batch')
+            : 'I could not complete the request because a tool failed. Please retry.';
+        const errMsg = isTimeoutError(error)
+          ? `agent tool flow timed out after ${AGENT_OPERATION_TIMEOUT_MS / 1000} seconds`
+          : error instanceof Error
+            ? error.message
+            : 'unknown tool failure';
         errors.push({
-          code: 'TOOL_EXECUTION_FAILED',
+          code: isTimeoutError(error) ? 'TOOL_EXECUTION_TIMEOUT' : 'TOOL_EXECUTION_FAILED',
           message: errMsg,
-          recoverable: true
+          recoverable: isTimeoutError(error) ? true : inferToolRecoverableFromThrownError(error)
         });
 
         toolCalls.push({
-          result: { reason: 'tool_failure' },
+          result: { reason: isTimeoutError(error) ? 'tool_timeout' : 'tool_failure' },
           success: false,
           toolName: selectedTools[0] ?? 'transaction_categorize'
         });
 
-        const failureResponse: AgentChatResponse = {
+        const failureResponse = buildToolFailureResponse({
           answer: failureAnswer,
-          conversation: [
-            ...conversation,
-            {
-              content: failureAnswer,
-              role: 'assistant'
-            }
-          ],
+          conversation,
           errors,
           toolCalls,
-          trace,
-          verification: {
-            confidence: scoreConfidence({ hasErrors: true, invalid: true }),
-            flags: ['tool_failure'],
-            isValid: false
-          }
-        };
-
-        memory.set(conversationId, failureResponse.conversation);
+          trace
+        });
+        await persistConversationArtifacts({
+          conversationId,
+          conversationStore,
+          draftCreateOrderParams: latestCreateOrderParams,
+          previousState: persistedState,
+          response: failureResponse,
+          toolCalls
+        });
 
         return failureResponse;
       }
@@ -543,779 +665,4 @@ export function createAgent({
   return {
     chat: tracedChat
   };
-}
-
-function detectInputFlags(message: string): string[] {
-  const normalized = message.toLowerCase();
-  const flags: string[] = [];
-
-  if (
-    normalized.includes('invest all your money') ||
-    normalized.includes('guaranteed return')
-  ) {
-    flags.push('deterministic_financial_advice');
-  }
-
-  return flags;
-}
-
-/**
- * When the only tool result is a clarification (needsClarification + answer), return that answer
- * so we use it directly instead of sending to the LLM (which may reply "I cannot execute trades").
- */
-function getClarificationAnswerFromToolCalls(
-  toolCalls: AgentChatResponse['toolCalls']
-): string | undefined {
-  if (toolCalls.length !== 1 || !toolCalls[0].success) return undefined;
-  const result = toolCalls[0].result as Record<string, unknown>;
-  if (result?.needsClarification !== true) return undefined;
-  const answer = typeof result.answer === 'string' ? result.answer.trim() : undefined;
-  return answer && answer.length > 0 ? answer : undefined;
-}
-
-async function executeTool({
-  dateFrom,
-  dateTo,
-  impersonationId,
-  metrics,
-  message,
-  range,
-  symbol,
-  symbols,
-  take,
-  traceContext,
-  token,
-  tool,
-  tools,
-  type,
-  wantsLatest,
-  createOrderParams,
-  updateOrderParams
-}: {
-  dateFrom?: string;
-  dateTo?: string;
-  impersonationId?: string;
-  metrics?: string[];
-  message: string;
-  range?: string;
-  symbol?: string;
-  symbols?: string[];
-  take?: number;
-  traceContext: AgentTraceContext;
-  token?: string;
-  tool: AgentToolName;
-  tools: AgentTools;
-  type?: string;
-  wantsLatest?: boolean;
-  createOrderParams?: import('./types').CreateOrderParams;
-  updateOrderParams?: import('./types').UpdateOrderParams;
-}) {
-  const runtimeTrace = {
-    metadata: buildTraceMetadata({
-      step: `tool.${tool}`,
-      traceContext
-    }),
-    tags: buildTraceTags({
-      step: `tool.${tool}`,
-      traceContext
-    })
-  };
-
-  if (tool === 'portfolio_analysis') {
-    return traceable(tools.portfolioAnalysis, {
-      name: `tool.portfolio_analysis.turn_${traceContext.turnId}`,
-      run_type: 'tool'
-    })(runtimeTrace, { impersonationId, message, token });
-  }
-
-  if (tool === 'market_data') {
-    return traceable(tools.marketData, {
-      name: `tool.market_data.turn_${traceContext.turnId}`,
-      run_type: 'tool'
-    })(runtimeTrace, { impersonationId, message, metrics, symbols, token });
-  }
-
-  if (tool === 'market_data_lookup') {
-    return traceable(tools.marketDataLookup, {
-      name: `tool.market_data_lookup.turn_${traceContext.turnId}`,
-      run_type: 'tool'
-    })(runtimeTrace, { impersonationId, message, token });
-  }
-
-  if (tool === 'market_overview') {
-    if (tools.marketOverview) {
-      return traceable(tools.marketOverview, {
-        name: `tool.market_overview.turn_${traceContext.turnId}`,
-        run_type: 'tool'
-      })(runtimeTrace, { impersonationId, message, token });
-    }
-    return traceable(tools.marketDataLookup, {
-      name: `tool.market_data_lookup.turn_${traceContext.turnId}`,
-      run_type: 'tool'
-    })(runtimeTrace, { impersonationId, message, token });
-  }
-
-  if (tool === 'get_transactions') {
-    return traceable(tools.getTransactions, {
-      name: `tool.get_transactions.turn_${traceContext.turnId}`,
-      run_type: 'tool'
-    })(runtimeTrace, { impersonationId, message, range, take, token });
-  }
-
-  if (tool === 'transaction_timeline') {
-    return traceable(tools.transactionTimeline, {
-      name: `tool.transaction_timeline.turn_${traceContext.turnId}`,
-      run_type: 'tool'
-    })(runtimeTrace, { dateFrom, dateTo, impersonationId, message, symbol, token, type, wantsLatest });
-  }
-
-  if (tool === 'create_order') {
-    return traceable(tools.createOrder, {
-      name: `tool.create_order.turn_${traceContext.turnId}`,
-      run_type: 'tool'
-    })(runtimeTrace, { impersonationId, message, token, createOrderParams });
-  }
-
-  if (tool === 'update_order') {
-    return traceable(tools.updateOrder, {
-      name: `tool.update_order.turn_${traceContext.turnId}`,
-      run_type: 'tool'
-    })(runtimeTrace, { impersonationId, message, token, updateOrderParams });
-  }
-
-  return traceable(tools.transactionCategorize, {
-    name: `tool.transaction_categorize.turn_${traceContext.turnId}`,
-    run_type: 'tool'
-  })(runtimeTrace, { dateFrom, dateTo, impersonationId, message, symbol, token, type });
-}
-
-/** Keyword hints per selectable tool; used when LLM is unavailable. Registry is source of truth for tool names. */
-const SELECTABLE_KEYWORD_HINTS: Readonly<Record<string, string[]>> = {
-  portfolio_analysis: [
-    'portfolio',
-    'allocation',
-    'balance',
-    'cash',
-    'deposit',
-    'deposited',
-    'available',
-    'net worth',
-    'how much do i have'
-  ],
-  market_data: [
-    'price of',
-    'current price',
-    'bitcoin price',
-    'how much difference',
-    'how much was',
-    'price in',
-    'last week',
-    'last month',
-    'price from today'
-  ],
-  market_data_lookup: ['market data', 'fear and greed index'],
-  market_overview: [
-    'market overview',
-    'market summary',
-    'how are markets doing',
-    'markets right now',
-    'doing good',
-    'doing bad',
-    'market sentiment'
-  ],
-  transaction_categorize: ['transaction', 'categorize', 'category'],
-  transaction_timeline: [
-    'when did i buy',
-    'when did i sell',
-    'at what price',
-    'last transaction',
-    'latest transaction',
-    'most recent transaction',
-    'when i bought',
-    'when i sold'
-  ],
-  create_order: [
-    'buy',
-    'purchase',
-    'add activity',
-    'record buy',
-    'add order',
-    'record a buy',
-    'record a sell',
-    'i want to buy',
-    'i want to sell'
-  ],
-  update_order: ['update order', 'edit activity', 'change order', 'edit order', 'modify order']
-};
-
-function selectToolsByKeyword(message: string): AgentToolName[] {
-  const normalized = message.toLowerCase();
-  const tools: AgentToolName[] = [];
-
-  for (const toolName of SELECTABLE_TOOL_NAMES) {
-    const hints = SELECTABLE_KEYWORD_HINTS[toolName];
-    if (hints?.some((hint) => normalized.includes(hint))) {
-      tools.push(toolName);
-    }
-  }
-
-  return [...new Set(tools)];
-}
-
-async function selectTools({
-  conversation,
-  llm,
-  message,
-  traceContext
-}: {
-  conversation: AgentConversationMessage[];
-  llm?: AgentLlm;
-  message: string;
-  traceContext: AgentTraceContext;
-}): Promise<AgentToolName[]> {
-  const inferred = selectToolsByKeyword(message);
-  if (classifyIntent(message) === 'general') {
-    return [];
-  }
-
-  if (llm) {
-    try {
-      const selected = await llm.selectTool(message, conversation, traceContext);
-
-      if (selected.tool === 'none') {
-        return inferred;
-      }
-
-      return [...new Set([selected.tool, ...inferred])];
-    } catch {
-      return inferred;
-    }
-  }
-
-  return inferred;
-}
-
-/**
- * Schema-driven safety net: when the router returns direct_reply but the message
- * clearly implies retrieval (time ref, price/symbol, ticker), we prefer tool_call.
- * Uses minimal regex set only; no vague heuristics.
- */
-function messageMatchesRetrievalPatterns(message: string): boolean {
-  const normalized = message.toLowerCase();
-  if (/\b(20\d{2})\b/.test(message)) return true;
-  if (/\b(last week|last month|last year|ytd|today|yesterday)\b/.test(normalized)) return true;
-  if (/\b(price|quote|cost|return|performance)\b/.test(normalized)) return true;
-  if (/\b[A-Z]{1,5}\b/.test(message)) return true;
-  if (/\b(btc|bitcoin|eth|ethereum)\b/.test(normalized)) return true;
-  return false;
-}
-
-function isExplicitOrderExecutionIntent(message: string): boolean {
-  const normalized = message.trim().toLowerCase();
-
-  const advisoryPatterns = [
-    /\bshould i\s+(buy|sell)\b/,
-    /\b(do you think|would you)\b.*\b(buy|sell)\b/,
-    /\bis it (a )?good (idea )?to\s+(buy|sell)\b/,
-    /\bbuy or sell\b/,
-    /\bcan i\s+(buy|sell)\b/
-  ];
-  if (advisoryPatterns.some((pattern) => pattern.test(normalized))) {
-    return false;
-  }
-
-  if (/^(buy|sell)\b/.test(normalized)) {
-    return !normalized.includes('?');
-  }
-
-  return [
-    /\b(i want to|i'd like to|please)\s+(buy|sell)\b/,
-    /\b(add|record)\s+(a\s+)?(buy|sell)\b/,
-    /\b(place|execute|submit|create|update)\s+(an?\s+)?order\b/,
-    /\b(buy|sell)\s+\d+(\.\d+)?\s+[a-z0-9.-]+\b/
-  ].some((pattern) => pattern.test(normalized));
-}
-
-async function decideRoute({
-  conversation,
-  llm,
-  message,
-  traceContext
-}: {
-  conversation: AgentConversationMessage[];
-  llm?: AgentLlm;
-  message: string;
-  traceContext: AgentTraceContext;
-}) {
-  const inferredIntent = classifyIntent(message);
-  const inferredTools = await selectTools({
-    conversation,
-    llm,
-    message,
-    traceContext
-  });
-
-  if (!llm?.reasonAboutQuery) {
-    return {
-      intent: inferredIntent,
-      tools: inferredTools
-    };
-  }
-
-  try {
-    const decision = await llm.reasonAboutQuery(message, conversation, traceContext);
-
-    if (decision.mode === 'direct_reply') {
-      if (messageMatchesRetrievalPatterns(message) && inferredTools.length > 0) {
-        return { intent: decision.intent, tools: inferredTools };
-      }
-      // When user asks to buy/sell/add/update order, keep create_order or update_order so the tool can ask for missing fields (e.g. quantity)
-      const hasOrderTool = inferredTools.some(
-        (t) => t === 'create_order' || t === 'update_order'
-      );
-      if (hasOrderTool && isExplicitOrderExecutionIntent(message)) {
-        return { intent: decision.intent, tools: inferredTools };
-      }
-      return {
-        intent: decision.intent,
-        tools: [] as AgentToolName[]
-      };
-    }
-
-    if (Array.isArray(decision.tools) && decision.tools.length > 0) {
-      return {
-        intent: decision.intent,
-        tools: [...new Set([...decision.tools, ...inferredTools])]
-      };
-    }
-
-    if (decision.tool && decision.tool !== 'none') {
-      return {
-        intent: decision.intent,
-        tools: [...new Set([decision.tool, ...inferredTools])]
-      };
-    }
-  } catch {
-    return {
-      intent: inferredIntent,
-      tools: inferredTools
-    };
-  }
-
-  return {
-    intent: inferredIntent,
-    tools: inferredTools
-  };
-}
-
-function isSmallTalk(message: string) {
-  const normalized = message.trim().toLowerCase();
-  return [
-    'hello',
-    'hi',
-    'hey',
-    'yo',
-    'sup',
-    'thanks',
-    'thank you',
-    'good morning',
-    'good afternoon',
-    'good evening',
-    'how are you'
-  ].includes(normalized);
-}
-
-function classifyIntent(message: string): 'finance' | 'general' {
-  if (isSmallTalk(message)) {
-    return 'general';
-  }
-
-  return hasFinanceEntityOrAction(message) ? 'finance' : 'general';
-}
-
-function hasFinanceEntityOrAction(message: string) {
-  const normalized = message.toLowerCase();
-  const financeKeywords = [
-    'portfolio',
-    'allocation',
-    'market',
-    'price',
-    'stock',
-    'crypto',
-    'bitcoin',
-    'btc',
-    'tsla',
-    'tesla',
-    'aapl',
-    'nvda',
-    'transaction',
-    'buy',
-    'sell',
-    'holding',
-    'holdings',
-    'p&l',
-    'performance',
-    'return',
-    'balance',
-    'account',
-    'cash',
-    'interest',
-    'liability',
-    'ticker'
-  ];
-
-  return financeKeywords.some((keyword) => normalized.includes(keyword));
-}
-
-async function finalizeDirectResponse({
-  conversation,
-  conversationId,
-  errors,
-  hasCriticalFlags,
-  llm,
-  message,
-  toolCalls,
-  trace,
-  traceContext,
-  verificationFlags
-}: {
-  conversation: AgentConversationMessage[];
-  conversationId: string;
-  errors: AgentChatResponse['errors'];
-  hasCriticalFlags: boolean;
-  llm: AgentLlm;
-  message: string;
-  toolCalls: AgentChatResponse['toolCalls'];
-  trace: AgentTraceStep[];
-  traceContext: AgentTraceContext;
-  verificationFlags: string[];
-}): Promise<AgentChatResponse> {
-  const baseAnswer = await llm.answerFinanceQuestion(message, conversation, traceContext);
-  trace.push({
-    type: 'llm',
-    name: 'answer',
-    input: { messagePreview: message.slice(0, 200) },
-    output: { answerPreview: baseAnswer.slice(0, 500) }
-  });
-  const outputValidation = validateOutput(baseAnswer);
-  const inputFlags = detectInputFlags(message);
-  const constraints = applyDomainConstraints(
-    baseAnswer,
-    [...verificationFlags, ...outputValidation.errors, ...inputFlags],
-    { intent: classifyIntent(message) }
-  );
-  const response: AgentChatResponse = {
-    answer: baseAnswer,
-    conversation: [
-      ...conversation,
-      {
-        content: baseAnswer,
-        role: 'assistant'
-      }
-    ],
-    errors,
-    toolCalls,
-    trace,
-    verification: {
-      confidence: scoreConfidence({
-        hasCriticalFlags,
-        hasErrors: errors.length > 0,
-        invalid: !constraints.isValid
-      }),
-      flags: constraints.flags,
-      isValid: constraints.isValid
-    }
-  };
-
-  memory.set(conversationId, response.conversation);
-  return response;
-}
-
-function hasUsableToolData(toolCalls: AgentChatResponse['toolCalls']) {
-  return toolCalls.some(({ result, success }) => {
-    if (!success) {
-      return false;
-    }
-
-    if (!isObject(result)) {
-      return false;
-    }
-
-    if (hasPopulatedField(result, 'summary')) {
-      return true;
-    }
-
-    if (hasPopulatedArray(result, 'prices')) {
-      return true;
-    }
-
-    if (hasPopulatedArray(result, 'timeline')) {
-      return true;
-    }
-
-    if (hasPopulatedArray(result, 'categories')) {
-      return true;
-    }
-
-    if (hasPopulatedArray(result, 'transactions')) {
-      return true;
-    }
-
-    const data = result.data;
-    if (!isObject(data)) {
-      return false;
-    }
-
-    return (
-      hasPopulatedArray(data, 'activities') ||
-      hasPopulatedObject(data, 'holdings') ||
-      hasPopulatedObject(data, 'summary')
-    );
-  });
-}
-
-function hasPopulatedField(value: Record<string, unknown>, field: string) {
-  const item = value[field];
-  return typeof item === 'string' ? item.trim().length > 0 : Boolean(item);
-}
-
-function hasPopulatedArray(value: Record<string, unknown>, field: string) {
-  const item = value[field];
-  return Array.isArray(item) && item.length > 0;
-}
-
-function hasPopulatedObject(value: Record<string, unknown>, field: string) {
-  const item = value[field];
-  return isObject(item) && Object.keys(item).length > 0;
-}
-
-function buildTraceMetadata({
-  step,
-  traceContext
-}: {
-  step: string;
-  traceContext: AgentTraceContext;
-}) {
-  return {
-    conversation_id: traceContext.conversationId,
-    message_preview: traceContext.messagePreview,
-    session_id: traceContext.sessionId,
-    step,
-    turn_id: traceContext.turnId
-  };
-}
-
-function buildTraceTags({
-  step,
-  traceContext
-}: {
-  step: string;
-  traceContext: AgentTraceContext;
-}) {
-  return [
-    'agent',
-    `conversation:${traceContext.conversationId}`,
-    `session:${traceContext.sessionId}`,
-    `step:${step}`,
-    `turn:${traceContext.turnId}`
-  ];
-}
-
-function createTraceContext({
-  conversation,
-  conversationId,
-  message
-}: {
-  conversation: AgentConversationMessage[];
-  conversationId: string;
-  message: string;
-}): AgentTraceContext {
-  const turnId =
-    conversation.filter(({ role }) => role === 'user').length;
-
-  return {
-    conversationId,
-    messagePreview: message.slice(0, 120),
-    sessionId: conversationId,
-    turnId
-  };
-}
-
-async function runTransactionsDependentFlow({
-  dateFrom,
-  dateTo,
-  dependentTool,
-  errors,
-  impersonationId,
-  message,
-  range,
-  symbol,
-  take,
-  token,
-  toolCalls,
-  tools,
-  trace,
-  traceContext,
-  type,
-  wantsLatest
-}: {
-  dateFrom?: string;
-  dateTo?: string;
-  dependentTool: (typeof TRANSACTION_DEPENDENT_TOOL_NAMES)[number];
-  errors: AgentChatResponse['errors'];
-  impersonationId?: string;
-  message: string;
-  range?: string;
-  symbol?: string;
-  take?: number;
-  token?: string;
-  toolCalls: AgentChatResponse['toolCalls'];
-  tools: AgentTools;
-  trace: AgentTraceStep[];
-  traceContext: AgentTraceContext;
-  type?: string;
-  wantsLatest?: boolean;
-}) {
-  let transactions: Record<string, unknown>[] = [];
-
-  try {
-    const transactionResult = await executeTool({
-      dateFrom,
-      dateTo,
-      impersonationId,
-      message,
-      range,
-      symbol,
-      take,
-      token,
-      tool: 'get_transactions',
-      tools,
-      traceContext,
-      type,
-      wantsLatest
-    });
-
-    transactions = extractTransactions(transactionResult);
-    toolCalls.push({
-      result: transactionResult,
-      success: true,
-      toolName: 'get_transactions'
-    });
-    trace.push({
-      type: 'tool',
-      name: 'get_transactions',
-      input: { messagePreview: message.slice(0, 200) },
-      output: transactionResult
-    });
-    console.log('[agent.chat] TOOL_RESULT (transaction flow)', {
-      tool: 'get_transactions',
-      success: true,
-      transactionCount: Array.isArray(transactions) ? transactions.length : 0,
-      resultPreview:
-        typeof transactionResult === 'object' && transactionResult !== null
-          ? JSON.stringify(transactionResult).slice(0, 400) + '...'
-          : String(transactionResult)
-    });
-  } catch (error) {
-    errors.push({
-      code: 'TOOL_EXECUTION_FAILED',
-      message: error instanceof Error ? error.message : 'failed to fetch transactions',
-      recoverable: true
-    });
-    toolCalls.push({
-      result: { reason: 'tool_failure' },
-      success: false,
-      toolName: 'get_transactions'
-    });
-    trace.push({
-      type: 'tool',
-      name: 'get_transactions',
-      input: { messagePreview: message.slice(0, 200) },
-      output: { reason: 'tool_failure' }
-    });
-  }
-
-  try {
-    const toolHandler =
-      dependentTool === 'transaction_timeline'
-        ? tools.transactionTimeline
-        : tools.transactionCategorize;
-    const step =
-      dependentTool === 'transaction_timeline'
-        ? 'tool.transaction_timeline'
-        : 'tool.transaction_categorize';
-
-    const result = await traceable(toolHandler, {
-      name: `${step}.turn_${traceContext.turnId}`,
-      run_type: 'tool'
-    })(
-      {
-        metadata: buildTraceMetadata({
-          step,
-          traceContext
-        }),
-        tags: buildTraceTags({
-          step,
-          traceContext
-        })
-      },
-      { dateFrom, dateTo, impersonationId, message, symbol, token, transactions, type, wantsLatest }
-    );
-
-    toolCalls.push({
-      result,
-      success: true,
-      toolName: dependentTool
-    });
-    trace.push({
-      type: 'tool',
-      name: dependentTool,
-      input: { messagePreview: message.slice(0, 200), hadTransactions: transactions.length > 0 },
-      output: result
-    });
-    console.log('[agent.chat] TOOL_RESULT (transaction flow)', {
-      tool: dependentTool,
-      success: true,
-      resultKeys: typeof result === 'object' && result !== null ? Object.keys(result as object) : [],
-      resultPreview:
-        typeof result === 'object' && result !== null
-          ? JSON.stringify(result).slice(0, 500) + (JSON.stringify(result).length > 500 ? '...' : '')
-          : String(result)
-    });
-  } catch (error) {
-    errors.push({
-      code: 'TOOL_EXECUTION_FAILED',
-      message: error instanceof Error ? error.message : 'unknown tool failure',
-      recoverable: true
-    });
-    toolCalls.push({
-      result: { reason: 'tool_failure' },
-      success: false,
-      toolName: dependentTool
-    });
-    trace.push({
-      type: 'tool',
-      name: dependentTool,
-      input: { messagePreview: message.slice(0, 200) },
-      output: { reason: 'tool_failure' }
-    });
-  }
-}
-
-function extractTransactions(result: Record<string, unknown>) {
-  const directTransactions = result.transactions;
-  if (Array.isArray(directTransactions)) {
-    return directTransactions.filter(isObject);
-  }
-
-  const data = result.data;
-  if (isObject(data) && Array.isArray(data.activities)) {
-    return data.activities.filter(isObject);
-  }
-
-  return [];
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }

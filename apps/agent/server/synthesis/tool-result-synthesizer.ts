@@ -1,5 +1,5 @@
 import { AgentToolName } from '../types';
-import { getToolDefinition } from '../tools/tool-registry';
+import { logger } from '../logger';
 
 export interface ToolExecutionResult {
   result: Record<string, unknown>;
@@ -21,7 +21,7 @@ export function synthesizeToolResults({
   existingFlags: string[];
   toolCalls: ToolExecutionResult[];
 }) {
-  console.log('[agent.synthesize_tool_results] INPUT', {
+  logger.debug('[agent.synthesize_tool_results] INPUT', {
     existingFlags,
     toolCallCount: toolCalls.length,
     toolNames: toolCalls.map((c) => c.toolName),
@@ -46,16 +46,11 @@ export function synthesizeToolResults({
 
     const rawPayload = isObject(call.result) ? call.result : {};
     const payload = unwrapToolPayload(rawPayload);
-    const toolDef = getToolDefinition(call.toolName);
-    const hasAnswerInSchema = Boolean(toolDef?.output_schema.properties?.answer);
-    const payloadAnswer = stringOrUndefined(rawPayload.answer) ?? stringOrUndefined(payload.answer);
-    const payloadSummary =
-      stringOrUndefined(rawPayload.summary) ?? stringOrUndefined(payload.summary);
-    // Prefer tool's answer field when registry says it exists and tool returned it (e.g. transaction_timeline, transaction_categorize)
-    const primarySummary =
-      hasAnswerInSchema && payloadAnswer?.trim()
-        ? payloadAnswer.trim()
-        : payloadSummary;
+    const primarySummary = buildDeterministicToolSummary({
+      payload,
+      rawPayload,
+      toolName: call.toolName
+    });
 
     if (primarySummary) {
       summaryParts.push(primarySummary);
@@ -110,7 +105,9 @@ export function synthesizeToolResults({
           .map((item) => {
             if (!isObject(item)) return undefined;
             const sym = stringOrUndefined(item.symbol) ?? 'unknown';
-            const err = stringOrUndefined(item.error);
+            const err =
+              stringOrUndefined(item.error) ??
+              (isObject(item.error) ? stringOrUndefined(item.error.message) : undefined);
             if (err) return `${sym}: ${err}`;
             const price = numberOrUndefined(item.currentPrice);
             const currency = stringOrUndefined(item.currency) ?? '';
@@ -237,6 +234,13 @@ export function synthesizeToolResults({
       }
 
       nextSteps.push('Validate uncategorized transactions and update category rules.');
+      enforceTransactionConsistency({
+        categories: payload.categories,
+        flags,
+        keyFindings,
+        patterns: payload.patterns,
+        risks
+      });
     }
 
     if (call.toolName === 'transaction_timeline') {
@@ -280,6 +284,22 @@ export function synthesizeToolResults({
 
       nextSteps.push('Compare entry prices to current market prices before your next rebalance.');
     }
+
+    if (call.toolName === 'compliance_check') {
+      const complianceFindings = extractComplianceFindings(payload);
+      keyFindings.push(
+        `Compliance check: ${complianceFindings.violations.length} violation(s), ${complianceFindings.warnings.length} warning(s).`
+      );
+      risks.push(...complianceFindings.violations);
+      if (complianceFindings.warnings.length > 0) {
+        risks.push(...complianceFindings.warnings);
+      }
+      nextSteps.push(
+        complianceFindings.violations.length > 0
+          ? 'Resolve compliance violations before executing this trade.'
+          : 'No blocking compliance issues found; validate assumptions before execution.'
+      );
+    }
   }
 
   const dedupedFlags = [...new Set(flags)];
@@ -319,7 +339,7 @@ export function synthesizeToolResults({
   }
 
   const answer = sections.join('\n');
-  console.log('[agent.synthesize_tool_results] OUTPUT', {
+  logger.debug('[agent.synthesize_tool_results] OUTPUT', {
     answerLength: answer.length,
     answerPreview: answer.slice(0, 500) + (answer.length > 500 ? '...' : ''),
     flags: dedupedFlags,
@@ -330,6 +350,155 @@ export function synthesizeToolResults({
     answer,
     flags: dedupedFlags
   };
+}
+
+function buildDeterministicToolSummary({
+  payload,
+  rawPayload,
+  toolName
+}: {
+  payload: Record<string, unknown>;
+  rawPayload: Record<string, unknown>;
+  toolName: AgentToolName;
+}) {
+  if (toolName === 'portfolio_analysis') {
+    const allocation = Array.isArray(payload.allocation) ? payload.allocation : [];
+    const holdings = isObject(payload.holdings) ? payload.holdings : undefined;
+    const count =
+      allocation.length > 0
+        ? allocation.length
+        : holdings
+          ? Object.keys(holdings).filter((symbol) => symbol !== 'USD').length
+          : undefined;
+    return count === undefined
+      ? 'Portfolio analysis completed from structured portfolio payload.'
+      : `Portfolio analysis completed for ${count} holding(s).`;
+  }
+
+  if (toolName === 'market_data') {
+    const symbols = Array.isArray(payload.symbols) ? payload.symbols : [];
+    return `Market data returned for ${symbols.length} symbol(s).`;
+  }
+
+  if (toolName === 'market_overview') {
+    return 'Market overview returned sentiment snapshots for available asset classes.';
+  }
+
+  if (toolName === 'market_data_lookup') {
+    const prices = Array.isArray(payload.prices) ? payload.prices : [];
+    return `Market price lookup returned ${prices.length} price point(s).`;
+  }
+
+  if (toolName === 'transaction_categorize') {
+    const patterns = isObject(payload.patterns) ? payload.patterns : undefined;
+    const patternCount = numberOrUndefined(patterns?.totalTransactions);
+    const categoryCount = sumCategoryCount(payload.categories);
+    const total = patternCount ?? categoryCount;
+    return total === undefined
+      ? 'Transaction categorization completed from structured transaction payload.'
+      : `Categorized ${total} transactions.`;
+  }
+
+  if (toolName === 'transaction_timeline') {
+    const timeline = Array.isArray(payload.timeline) ? payload.timeline : [];
+    return `Transaction timeline returned ${timeline.length} event(s).`;
+  }
+
+  if (toolName === 'compliance_check') {
+    return 'Compliance check completed.';
+  }
+
+  return stringOrUndefined(rawPayload.summary) ?? stringOrUndefined(payload.summary);
+}
+
+function extractComplianceFindings(payload: Record<string, unknown>): {
+  violations: string[];
+  warnings: string[];
+} {
+  const violations = normalizeComplianceItems(payload.violations, 'Violation');
+  const warnings = normalizeComplianceItems(payload.warnings, 'Warning');
+
+  return { violations, warnings };
+}
+
+function normalizeComplianceItems(items: unknown, label: 'Violation' | 'Warning'): string[] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items
+    .map((item) => {
+      if (!isObject(item)) {
+        return undefined;
+      }
+      const ruleId = stringOrUndefined(item.rule_id) ?? 'unknown_rule';
+      const message = stringOrUndefined(item.message) ?? 'No details provided.';
+      return `${label} (${ruleId}): ${message}`;
+    })
+    .filter((entry): entry is string => Boolean(entry));
+}
+
+function sumCategoryCount(categories: unknown): number | undefined {
+  if (!Array.isArray(categories)) {
+    return undefined;
+  }
+
+  let total = 0;
+  let hasValue = false;
+  for (const item of categories) {
+    if (!isObject(item)) continue;
+    const count = numberOrUndefined(item.count);
+    if (count === undefined) continue;
+    total += count;
+    hasValue = true;
+  }
+
+  return hasValue ? total : undefined;
+}
+
+function enforceTransactionConsistency({
+  categories,
+  flags,
+  keyFindings,
+  patterns,
+  risks
+}: {
+  categories: unknown;
+  flags: string[];
+  keyFindings: string[];
+  patterns: unknown;
+  risks: string[];
+}) {
+  const sellCount = resolveCategoryCount(categories, 'SELL');
+  const patternObject = isObject(patterns) ? patterns : undefined;
+  const ratio = numberOrUndefined(patternObject?.buySellRatio);
+
+  if (sellCount > 0 && ratio === undefined) {
+    flags.push('transaction_ratio_inconsistent');
+    risks.push('Structured transaction payload has SELL transactions but no buy/sell ratio.');
+  }
+
+  if (sellCount > 0) {
+    for (let i = 0; i < keyFindings.length; i++) {
+      keyFindings[i] = keyFindings[i].replace(/buy\/sell ratio unavailable[^,.]*/gi, '').trim();
+    }
+  }
+}
+
+function resolveCategoryCount(categories: unknown, type: string): number {
+  if (!Array.isArray(categories)) {
+    return 0;
+  }
+
+  for (const item of categories) {
+    if (!isObject(item)) continue;
+    const category = stringOrUndefined(item.category);
+    if (category !== type) continue;
+    const count = numberOrUndefined(item.count);
+    return count ?? 0;
+  }
+
+  return 0;
 }
 
 function hasProvenance(payload: Record<string, unknown>) {

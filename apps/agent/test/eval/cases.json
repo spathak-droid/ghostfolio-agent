@@ -32,9 +32,5 @@
   {
     "input": "I want to buy Apple shares",
     "expectedTool": "create_order"
-  },
-  {
-    "input": "Edit activity xyz-123",
-    "expectedTool": "update_order"
   }
 ]

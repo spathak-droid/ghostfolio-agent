@@ -6,5 +6,7 @@ describe('tool registry', () => {
 
     expect(names).toContain('market_overview');
     expect(SELECTABLE_TOOL_NAMES).toContain('market_overview');
+    expect(names).toContain('compliance_check');
+    expect(SELECTABLE_TOOL_NAMES).toContain('compliance_check');
   });
 });

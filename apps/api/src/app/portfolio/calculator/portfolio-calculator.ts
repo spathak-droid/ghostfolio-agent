@@ -117,7 +117,7 @@ export abstract class PortfolioCalculator {
     }
 
     this.activities = activities
-      .map(
+      .flatMap(
         ({
           date,
           feeInAssetProfileCurrency,
@@ -138,16 +138,59 @@ export abstract class PortfolioCalculator {
             date = endOfDay(new Date());
           }
 
-          return {
-            SymbolProfile,
-            tags,
-            type,
-            date: format(date, DATE_FORMAT),
-            fee: new Big(feeInAssetProfileCurrency),
-            feeInBaseCurrency: new Big(feeInBaseCurrency),
-            quantity: new Big(quantity),
-            unitPrice: new Big(unitPriceInAssetProfileCurrency)
-          };
+          const hasInvalidNumber =
+            !isNumber(feeInAssetProfileCurrency) ||
+            !isNumber(feeInBaseCurrency) ||
+            !isNumber(quantity) ||
+            !isNumber(unitPriceInAssetProfileCurrency) ||
+            !Number.isFinite(feeInAssetProfileCurrency) ||
+            !Number.isFinite(feeInBaseCurrency) ||
+            !Number.isFinite(quantity) ||
+            !Number.isFinite(unitPriceInAssetProfileCurrency);
+          if (hasInvalidNumber) {
+            Logger.warn(
+              JSON.stringify({
+                date,
+                feeInAssetProfileCurrency,
+                feeInBaseCurrency,
+                quantity,
+                symbol: SymbolProfile?.symbol,
+                type,
+                unitPriceInAssetProfileCurrency
+              }),
+              'PortfolioCalculator: skipping malformed activity'
+            );
+            return [];
+          }
+
+          try {
+            return [
+              {
+                SymbolProfile,
+                tags,
+                type,
+                date: format(date, DATE_FORMAT),
+                fee: new Big(feeInAssetProfileCurrency),
+                feeInBaseCurrency: new Big(feeInBaseCurrency),
+                quantity: new Big(quantity),
+                unitPrice: new Big(unitPriceInAssetProfileCurrency)
+              }
+            ];
+          } catch {
+            Logger.warn(
+              JSON.stringify({
+                date,
+                feeInAssetProfileCurrency,
+                feeInBaseCurrency,
+                quantity,
+                symbol: SymbolProfile?.symbol,
+                type,
+                unitPriceInAssetProfileCurrency
+              }),
+              'PortfolioCalculator: Big.js parse failed, skipping malformed activity'
+            );
+            return [];
+          }
         }
       )
       .sort((a, b) => {
@@ -267,9 +310,20 @@ export abstract class PortfolioCalculator {
         marketSymbolMap[date] = {};
       }
 
-      if (marketSymbol.marketPrice) {
-        marketSymbolMap[date][marketSymbol.symbol] = new Big(
-          marketSymbol.marketPrice
+      const marketPrice = marketSymbol.marketPrice;
+      const hasFiniteMarketPrice =
+        isNumber(marketPrice) && Number.isFinite(marketPrice);
+
+      if (hasFiniteMarketPrice) {
+        marketSymbolMap[date][marketSymbol.symbol] = new Big(marketPrice);
+      } else if (marketPrice !== undefined && marketPrice !== null) {
+        Logger.warn(
+          JSON.stringify({
+            date,
+            marketPrice,
+            symbol: marketSymbol.symbol
+          }),
+          'PortfolioCalculator: skipping malformed market price'
         );
       }
     }
@@ -339,13 +393,17 @@ export abstract class PortfolioCalculator {
     } = {};
 
     for (const item of lastTransactionPoint.items) {
-      const marketPriceInBaseCurrency = (
-        marketSymbolMap[endDateString]?.[item.symbol] ?? item.averagePrice
-      ).mul(
+      const exchangeRateAtEndDate =
         exchangeRatesByCurrency[`${item.currency}${this.currency}`]?.[
           endDateString
-        ] ?? 1
-      );
+        ];
+      const safeExchangeRateAtEndDate =
+        isNumber(exchangeRateAtEndDate) && Number.isFinite(exchangeRateAtEndDate)
+          ? exchangeRateAtEndDate
+          : 1;
+      const marketPriceInBaseCurrency = (
+        marketSymbolMap[endDateString]?.[item.symbol] ?? item.averagePrice
+      ).mul(safeExchangeRateAtEndDate);
 
       const {
         currentValues,
@@ -446,9 +504,7 @@ export abstract class PortfolioCalculator {
         quantity: item.quantity,
         symbol: item.symbol,
         tags: item.tags,
-        valueInBaseCurrency: new Big(marketPriceInBaseCurrency).mul(
-          item.quantity
-        )
+        valueInBaseCurrency: marketPriceInBaseCurrency.mul(item.quantity)
       });
 
       totalInterestWithCurrencyEffect = totalInterestWithCurrencyEffect.plus(
@@ -472,7 +528,24 @@ export abstract class PortfolioCalculator {
 
     const accountBalanceItemsMap = this.accountBalanceItems.reduce(
       (map, { date, value }) => {
-        map[date] = new Big(value);
+        const hasInvalidValue = !isNumber(value) || !Number.isFinite(value);
+
+        if (hasInvalidValue) {
+          Logger.warn(
+            JSON.stringify({ date, value }),
+            'PortfolioCalculator: skipping malformed account balance'
+          );
+          return map;
+        }
+
+        try {
+          map[date] = new Big(value);
+        } catch {
+          Logger.warn(
+            JSON.stringify({ date, value }),
+            'PortfolioCalculator: Big.js parse failed, skipping malformed account balance'
+          );
+        }
 
         return map;
       },
@@ -1162,9 +1235,37 @@ export abstract class PortfolioCalculator {
       });
 
       const job = await this.portfolioSnapshotService.getJob(jobId);
+      let shouldComputeSnapshotDirectly = false;
 
       if (job) {
-        await job.finished();
+        try {
+          await job.finished();
+        } catch (error) {
+          Logger.warn(
+            JSON.stringify({
+              error: error instanceof Error ? error.message : error,
+              jobId
+            }),
+            'PortfolioCalculator: queued snapshot job failed, falling back to direct computation'
+          );
+
+          try {
+            await job.remove();
+          } catch {}
+
+          shouldComputeSnapshotDirectly = true;
+        }
+      } else {
+        Logger.warn(
+          JSON.stringify({ jobId }),
+          'PortfolioCalculator: queued snapshot job was not found, falling back to direct computation'
+        );
+        shouldComputeSnapshotDirectly = true;
+      }
+
+      if (shouldComputeSnapshotDirectly) {
+        this.snapshot = await this.computeSnapshot();
+        return;
       }
 
       await this.initialize();

@@ -1,0 +1,23 @@
+Step 4: Context management policy (summary + pinned facts + recent window)
+
+What was added:
+- Added AgentContextManager in apps/agent/server/context-manager.ts.
+- Default policy:
+  - Keep only recent N messages for LLM context (default 10).
+  - Add a compact context summary message for older history.
+  - Add pinned facts / pending clarification context from persisted workflow state.
+
+Runtime config:
+- AGENT_CONTEXT_WINDOW_MAX_MESSAGES (default 10)
+- AGENT_CONTEXT_SUMMARY_SAMPLE_MESSAGES (default 6)
+
+Agent integration:
+- agent.ts now:
+  - Loads persisted conversation + state from store.
+  - Builds llmConversation via context manager.
+  - Uses llmConversation for route/answer/synthesis/param extraction calls.
+  - Persists updated conversation + workflow state after each response path.
+
+Validation:
+- apps/agent/test/unit/context-manager.spec.ts
+- apps/agent/test/unit/agent-conversation-persistence.spec.ts

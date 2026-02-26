@@ -33,6 +33,17 @@ interface AgentToolCall {
   result: Record<string, unknown>;
 }
 
+interface SymbolOption {
+  dataSource?: string;
+  label: string;
+  symbol: string;
+}
+
+interface WidgetCreateOrderParams {
+  dataSource?: string;
+  symbol: string;
+}
+
 interface AgentVerification {
   confidence: number;
   flags?: string[];
@@ -202,6 +213,7 @@ export function mountChatWidget(container: HTMLElement) {
   const form = document.createElement('form');
   form.className = 'agent-widget__form';
   form.setAttribute('aria-label', 'Chat with the finance agent');
+  let nextCreateOrderParams: WidgetCreateOrderParams | undefined;
 
   const input = document.createElement('input');
   input.type = 'text';
@@ -272,6 +284,66 @@ export function mountChatWidget(container: HTMLElement) {
       body.textContent = content;
     }
     li.classList.remove('agent-widget__message--loading', 'agent-widget__message--error');
+  }
+
+  function appendSymbolOptions(li: HTMLElement, response: AgentChatResponse): void {
+    const toolCalls = response.toolCalls ?? [];
+    const latestOrderCall = [...toolCalls]
+      .reverse()
+      .find((call) => call.toolName === 'create_order' && call.success);
+    if (!latestOrderCall) {
+      return;
+    }
+
+    const result = latestOrderCall.result;
+    const needsClarification = result?.needsClarification === true;
+    const rawOptions = result?.symbolOptions;
+    if (!needsClarification || !Array.isArray(rawOptions) || rawOptions.length === 0) {
+      return;
+    }
+
+    const options = rawOptions
+      .filter((option): option is SymbolOption => {
+        if (!option || typeof option !== 'object') return false;
+        const rec = option as Record<string, unknown>;
+        return typeof rec.symbol === 'string' && typeof rec.label === 'string';
+      })
+      .slice(0, 3);
+    if (options.length === 0) {
+      return;
+    }
+
+    const existing = li.querySelector('.agent-widget__symbol-options');
+    if (existing) {
+      existing.remove();
+    }
+
+    const container = document.createElement('div');
+    container.className = 'agent-widget__symbol-options';
+    const title = document.createElement('div');
+    title.className = 'agent-widget__symbol-options-title';
+    title.textContent = 'Select a symbol:';
+    container.appendChild(title);
+
+    const list = document.createElement('div');
+    list.className = 'agent-widget__symbol-options-list';
+    for (const option of options) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'agent-widget__symbol-option-chip';
+      chip.textContent = option.label;
+      chip.addEventListener('click', () => {
+        nextCreateOrderParams = {
+          dataSource: option.dataSource,
+          symbol: option.symbol
+        };
+        input.value = option.symbol;
+        form.dispatchEvent(new Event('submit', { cancelable: true }));
+      });
+      list.appendChild(chip);
+    }
+    container.appendChild(list);
+    li.appendChild(container);
   }
 
   const STRING_TRUNCATE_LEN = 200;
@@ -648,10 +720,11 @@ export function mountChatWidget(container: HTMLElement) {
         credentials: 'same-origin',
         body: JSON.stringify({
           conversationId,
-          message: value,
-          ...(token ? { accessToken: token } : {})
+          ...(nextCreateOrderParams ? { createOrderParams: nextCreateOrderParams } : {}),
+          message: value
         })
       });
+      nextCreateOrderParams = undefined;
 
       const data = (await res.json()) as AgentChatResponse | { message?: string };
 
@@ -671,6 +744,7 @@ export function mountChatWidget(container: HTMLElement) {
           : 'No response.';
       setMessageContent(loadingLi, answer);
       if (res.ok) {
+        appendSymbolOptions(loadingLi, data as AgentChatResponse);
         appendDetailsToggle(loadingLi, data as AgentChatResponse);
       }
     } catch {
@@ -884,6 +958,41 @@ function injectWidgetStyles() {
     }
     .agent-widget__message-body {
       word-break: break-word;
+      white-space: pre-line;
+    }
+    .agent-widget__symbol-options {
+      margin-top: 8px;
+      padding-top: 6px;
+      border-top: 1px solid rgba(15, 19, 32, 0.08);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .agent-widget__symbol-options-title {
+      font-size: 10px;
+      color: #5c6470;
+    }
+    .agent-widget__symbol-options-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .agent-widget__symbol-option-chip {
+      border: 1px solid rgba(47, 123, 255, 0.25);
+      background: rgba(47, 123, 255, 0.1);
+      color: #1a5de8;
+      border-radius: 10px;
+      font-size: 11px;
+      line-height: 1.2;
+      padding: 4px 8px;
+      cursor: pointer;
+    }
+    .agent-widget__symbol-option-chip:hover {
+      background: rgba(47, 123, 255, 0.16);
+    }
+    .agent-widget__symbol-option-chip:focus-visible {
+      outline: 2px solid #3d7aff;
+      outline-offset: 2px;
     }
     .agent-widget__message--welcome .agent-widget__message-body {
       display: flex;

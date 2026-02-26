@@ -2,14 +2,24 @@ import 'dotenv/config';
 
 import express from 'express';
 import { existsSync } from 'fs';
-import { appendFileSync } from 'fs';
-import { join } from 'path';
 
 import { createAgent } from './agent';
-import { normalizeAuthToken } from './auth-token';
+import {
+  parseCreateOrderParams,
+  validateChatBody,
+  validateImpersonationId,
+  validateTokenLength
+} from './chat-request-validation';
+import { createConversationStoreFromEnv } from './conversation-store';
+import { createDefaultContextManager } from './context-manager';
+import { resolveGhostfolioBaseUrl } from './ghostfolio-base-url';
 import { GhostfolioClient } from './ghostfolio-client';
 import { createOpenAiClientFromEnv } from './openai-client';
+import { resolveRequestToken } from './request-auth';
 import { createOrderTool } from './tools/create-order';
+import { createOtherActivitiesTool } from './tools/create-other-activities';
+import { complianceCheckTool } from './tools/compliance-check';
+import { getOrdersTool } from './tools/get-orders';
 import { getTransactionsTool } from './tools/get-transactions';
 import { marketDataTool } from './tools/market-data';
 import { marketDataLookupTool } from './tools/market-data-lookup';
@@ -17,25 +27,33 @@ import { marketOverviewTool } from './tools/market-overview';
 import { portfolioAnalysisTool } from './tools/portfolio-analysis';
 import { transactionCategorizeTool } from './tools/transaction-categorize';
 import { transactionTimelineTool } from './tools/transaction-timeline';
-import { updateOrderTool } from './tools/update-order';
+import { logger } from './logger';
 import { resolveWidgetCorsOrigin, resolveWidgetDistPath } from './widget-static';
 
 const app = express();
 // Railway and similar platforms set PORT; fall back to AGENT_PORT for local dev
 const port = Number(process.env.PORT ?? process.env.AGENT_PORT ?? '4444');
-const ghostfolioBaseUrl = process.env.GHOSTFOLIO_BASE_URL ?? 'http://localhost:3333';
+const ghostfolioBaseUrl = process.env.GHOSTFOLIO_BASE_URL?.trim() || 'http://localhost:3333';
 if (process.env.GHOSTFOLIO_BASE_URL === undefined || process.env.GHOSTFOLIO_BASE_URL === '') {
-  console.log('[agent] GHOSTFOLIO_BASE_URL not set, using default:', ghostfolioBaseUrl);
+  logger.info('[agent] GHOSTFOLIO_BASE_URL not set, using fallback base URL:', ghostfolioBaseUrl);
 } else {
-  console.log('[agent] GHOSTFOLIO_BASE_URL=', ghostfolioBaseUrl);
+  logger.info('[agent] GHOSTFOLIO_BASE_URL=', ghostfolioBaseUrl);
 }
 const widgetDistPath = resolveWidgetDistPath(
   process.cwd(),
   process.env.AGENT_WIDGET_DIST_PATH
 );
 const widgetCorsOrigin = resolveWidgetCorsOrigin(process.env.AGENT_WIDGET_CORS_ORIGIN);
-const ghostfolioClient = new GhostfolioClient(ghostfolioBaseUrl);
 const llm = createOpenAiClientFromEnv();
+const allowBodyAccessToken = false;
+const allowInsecureGhostfolioHttp =
+  process.env.AGENT_ALLOW_INSECURE_GHOSTFOLIO_HTTP === 'true';
+const ghostfolioAllowedHosts = (
+  process.env.AGENT_GHOSTFOLIO_ALLOWED_HOSTS ?? ''
+)
+  .split(',')
+  .map((host) => host.trim())
+  .filter(Boolean);
 
 // traceable() calls the tool with (runtimeTrace, input); use second arg when present so token is passed
 function toolInput(
@@ -43,6 +61,7 @@ function toolInput(
   b?: {
     impersonationId?: string;
     message: string;
+    regulations?: string[];
     dateFrom?: string;
     dateTo?: string;
     metrics?: string[];
@@ -55,11 +74,11 @@ function toolInput(
     type?: string;
     wantsLatest?: boolean;
     createOrderParams?: import('./types').CreateOrderParams;
-    updateOrderParams?: import('./types').UpdateOrderParams;
   }
 ): {
   impersonationId?: string;
   message: string;
+  regulations?: string[];
   dateFrom?: string;
   dateTo?: string;
   metrics?: string[];
@@ -72,12 +91,12 @@ function toolInput(
   type?: string;
   wantsLatest?: boolean;
   createOrderParams?: import('./types').CreateOrderParams;
-  updateOrderParams?: import('./types').UpdateOrderParams;
 } {
   if (b && typeof b.message === 'string') return b;
   return a as {
     impersonationId?: string;
     message: string;
+    regulations?: string[];
     dateFrom?: string;
     dateTo?: string;
     metrics?: string[];
@@ -90,61 +109,37 @@ function toolInput(
     type?: string;
     wantsLatest?: boolean;
     createOrderParams?: import('./types').CreateOrderParams;
-    updateOrderParams?: import('./types').UpdateOrderParams;
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function parseCreateOrderParams(value: unknown): import('./types').CreateOrderParams | undefined {
-  if (!isRecord(value)) return undefined;
-  if (typeof value.symbol !== 'string' || typeof value.type !== 'string') return undefined;
-
-  const parsed: import('./types').CreateOrderParams = {
-    symbol: value.symbol,
-    type: value.type as import('./types').OrderType
-  };
-
-  if (typeof value.quantity === 'number') parsed.quantity = value.quantity;
-  if (typeof value.unitPrice === 'number') parsed.unitPrice = value.unitPrice;
-  if (typeof value.date === 'string') parsed.date = value.date;
-  if (typeof value.currency === 'string') parsed.currency = value.currency;
-  if (typeof value.fee === 'number') parsed.fee = value.fee;
-  if (typeof value.accountId === 'string') parsed.accountId = value.accountId;
-  if (typeof value.dataSource === 'string') parsed.dataSource = value.dataSource;
-  if (typeof value.comment === 'string') parsed.comment = value.comment;
-
-  return parsed;
-}
-
-function parseUpdateOrderParams(value: unknown): import('./types').UpdateOrderParams | undefined {
-  if (!isRecord(value)) return undefined;
-  if (typeof value.orderId !== 'string') return undefined;
-
-  const parsed: import('./types').UpdateOrderParams = {
-    orderId: value.orderId
-  };
-
-  if (typeof value.date === 'string') parsed.date = value.date;
-  if (typeof value.quantity === 'number') parsed.quantity = value.quantity;
-  if (typeof value.unitPrice === 'number') parsed.unitPrice = value.unitPrice;
-  if (typeof value.fee === 'number') parsed.fee = value.fee;
-  if (typeof value.currency === 'string') parsed.currency = value.currency;
-  if (typeof value.symbol === 'string') parsed.symbol = value.symbol;
-  if (typeof value.type === 'string') parsed.type = value.type;
-  if (typeof value.dataSource === 'string') parsed.dataSource = value.dataSource;
-  if (typeof value.accountId === 'string') parsed.accountId = value.accountId;
-  if (typeof value.comment === 'string') parsed.comment = value.comment;
-  if (Array.isArray(value.tags)) {
-    parsed.tags = value.tags.filter((tag): tag is string => typeof tag === 'string');
+function parsePositiveInteger(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
   }
 
-  return parsed;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+
+  return Math.floor(parsed);
 }
 // Tool Registry execution wiring: each tool in TOOL_DEFINITIONS is implemented below and passed to the agent.
-const agent = createAgent({
+const conversationStore = createConversationStoreFromEnv({
+  redisUrl: process.env.AGENT_REDIS_URL ?? process.env.REDIS_URL,
+  storeType: process.env.AGENT_CONVERSATION_STORE,
+  ttlMs: parsePositiveInteger(process.env.AGENT_CONVERSATION_TTL_MS)
+});
+const contextManager = createDefaultContextManager({
+  maxRecentMessages:
+    parsePositiveInteger(process.env.AGENT_CONTEXT_WINDOW_MAX_MESSAGES) ?? 10,
+  summarySampleMessages:
+    parsePositiveInteger(process.env.AGENT_CONTEXT_SUMMARY_SAMPLE_MESSAGES) ?? 6
+});
+function createAgentWithClient(ghostfolioClient: GhostfolioClient) {
+  return createAgent({
+  contextManager,
+  conversationStore,
   llm,
   tools: {
     getTransactions: (a, b) => {
@@ -156,6 +151,15 @@ const agent = createAgent({
         range,
         take,
         token
+      });
+    },
+    complianceCheck: (a, b) => {
+      const { message, createOrderParams, regulations } = toolInput(a, b);
+      return complianceCheckTool({
+        createOrderParams,
+        llmFactExtractor: llm?.extractComplianceFacts,
+        message,
+        regulations
       });
     },
     marketData: (a, b) => {
@@ -233,20 +237,30 @@ const agent = createAgent({
         createOrderParams
       });
     },
-    updateOrder: (a, b) => {
-      const { impersonationId, message, token, updateOrderParams } = toolInput(a, b);
-      return updateOrderTool({
+    createOtherActivities: (a, b) => {
+      const { impersonationId, message, token, createOrderParams } = toolInput(a, b);
+      return createOtherActivitiesTool({
         client: ghostfolioClient,
         impersonationId,
         message,
         token,
-        updateOrderParams
+        createOrderParams
+      });
+    },
+    getOrders: (a, b) => {
+      const { impersonationId, message, token } = toolInput(a, b);
+      return getOrdersTool({
+        client: ghostfolioClient,
+        impersonationId,
+        message,
+        token
       });
     }
   }
 });
+}
 
-app.use(express.json());
+app.use(express.json({ limit: '200kb' }));
 
 app.use('/widget', (_request, response, next) => {
   response.header('Access-Control-Allow-Origin', widgetCorsOrigin);
@@ -270,75 +284,110 @@ app.get('/health', (_request, response) => {
 });
 
 app.post('/chat', async (request, response) => {
+  const requestBody =
+    request.body && typeof request.body === 'object' && !Array.isArray(request.body)
+      ? (request.body as Record<string, unknown>)
+      : {};
   const hasTokenFromHeader = Boolean(request.headers.authorization);
   const hasTokenFromBody = Boolean(
-    typeof request.body?.accessToken === 'string' && request.body.accessToken.trim()
+    typeof requestBody.accessToken === 'string' && requestBody.accessToken.trim()
   );
-  const token =
-    normalizeAuthToken(request.headers.authorization) ??
-    (typeof request.body?.accessToken === 'string' && request.body.accessToken.trim()
-      ? request.body.accessToken.trim()
-      : undefined);
+  const tokenResolution = resolveRequestToken({
+    allowBodyAccessToken,
+    authorizationHeader: request.headers.authorization,
+    bodyAccessToken:
+      typeof requestBody.accessToken === 'string'
+        ? requestBody.accessToken
+        : undefined
+  });
+  if (!tokenResolution.ok) {
+    const err = tokenResolution as { status: 400; error: string };
+    response
+      .status(err.status)
+      .json({ error: err.error, code: 'VALIDATION_ERROR' });
+    return;
+  }
+  const token = tokenResolution.token;
   const impersonationId =
     typeof request.headers['impersonation-id'] === 'string'
       ? request.headers['impersonation-id']
       : undefined;
-
-  // #region agent log
-  try {
-    const logPath = join(process.cwd(), '.cursor', 'debug-af2e79.log');
-    appendFileSync(
-      logPath,
-      JSON.stringify({
-        location: 'agent/index.ts:chat',
-        message: 'agent received request',
-        hasTokenFromHeader,
-        hasTokenFromBody,
-        hasToken: Boolean(token),
-        ghostfolioBaseUrl,
-        timestamp: Date.now()
-      }) + '\n'
-    );
-  } catch {
-    // ignore
+  const impersonationValidation = validateImpersonationId(impersonationId);
+  if (!impersonationValidation.ok) {
+    const err = impersonationValidation as { status: 400; error: string };
+    response
+      .status(err.status)
+      .json({ error: err.error, code: 'VALIDATION_ERROR' });
+    return;
   }
-  // eslint-disable-next-line no-console
-  console.log('[agent-auth] Agent received:', {
+
+  const tokenCheck = validateTokenLength(token);
+  if (!tokenCheck.ok) {
+    const err = tokenCheck as { status: 400; error: string };
+    response.status(err.status).json({ error: err.error, code: 'VALIDATION_ERROR' });
+    return;
+  }
+
+  const validation = validateChatBody(requestBody);
+  if (!validation.ok) {
+    const err = validation as { status: 400; error: string };
+    response.status(err.status).json({ error: err.error, code: 'VALIDATION_ERROR' });
+    return;
+  }
+
+  const ghostfolioBaseUrlResolution = resolveGhostfolioBaseUrl({
+    allowedHosts: ghostfolioAllowedHosts,
+    allowInsecureHttp: allowInsecureGhostfolioHttp,
+    configuredBaseUrl: process.env.GHOSTFOLIO_BASE_URL,
+    fallbackBaseUrl: ghostfolioBaseUrl
+  });
+  if (!ghostfolioBaseUrlResolution.ok) {
+    const err = ghostfolioBaseUrlResolution as { status: 500; error: string };
+    response.status(err.status).json({
+      error: err.error,
+      code: 'CONFIGURATION_ERROR'
+    });
+    return;
+  }
+  const resolvedGhostfolioBaseUrl = ghostfolioBaseUrlResolution.url;
+  const requestAgent = createAgentWithClient(new GhostfolioClient(resolvedGhostfolioBaseUrl));
+  logger.debug('[agent-auth] Agent received:', {
     hasTokenFromHeader,
     hasTokenFromBody,
     hasToken: Boolean(token),
-    ghostfolioBaseUrl
-  });
-  // #endregion
-
-  const chatResponse = await agent.chat({
-    conversationId: request.body.conversationId,
-    createOrderParams: parseCreateOrderParams(request.body?.createOrderParams),
-    dateFrom:
-      typeof request.body?.dateFrom === 'string' ? request.body.dateFrom : undefined,
-    dateTo: typeof request.body?.dateTo === 'string' ? request.body.dateTo : undefined,
-    impersonationId,
-    metrics: Array.isArray(request.body?.metrics)
-      ? request.body.metrics.filter((item: unknown): item is string => typeof item === 'string')
-      : undefined,
-    message: request.body.message,
-    range: typeof request.body?.range === 'string' ? request.body.range : undefined,
-    symbol: typeof request.body?.symbol === 'string' ? request.body.symbol : undefined,
-    symbols: Array.isArray(request.body?.symbols)
-      ? request.body.symbols.filter((item: unknown): item is string => typeof item === 'string')
-      : undefined,
-    take: typeof request.body?.take === 'number' ? request.body.take : undefined,
-    token,
-    type: typeof request.body?.type === 'string' ? request.body.type : undefined,
-    updateOrderParams: parseUpdateOrderParams(request.body?.updateOrderParams),
-    wantsLatest: typeof request.body?.wantsLatest === 'boolean' ? request.body.wantsLatest : undefined
+    ghostfolioBaseUrl: resolvedGhostfolioBaseUrl
   });
 
-  response.status(200).json(chatResponse);
+  try {
+    const createOrderParamsResult = parseCreateOrderParams(requestBody.createOrderParams);
+    if (!createOrderParamsResult.ok) {
+      const err = createOrderParamsResult as { status: 400; error: string };
+      response
+        .status(err.status)
+        .json({ error: err.error, code: 'VALIDATION_ERROR' });
+      return;
+    }
+
+    const chatResponse = await requestAgent.chat({
+      ...validation.params,
+      createOrderParams: createOrderParamsResult.params,
+      impersonationId: impersonationValidation.value,
+      token
+    });
+
+    response.status(200).json(chatResponse);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Unhandled agent.chat failure';
+    logger.error('[agent.chat] UNHANDLED_ERROR', { message });
+    response.status(500).json({
+      answer: 'Something went wrong. Please try again.',
+      error: 'AGENT_CHAT_FAILED'
+    });
+  }
 });
 
 const host = process.env.HOST ?? '0.0.0.0';
 app.listen(port, host, () => {
-  // eslint-disable-next-line no-console
-  console.log(`[agent] listening on http://${host}:${port}`);
+  logger.info(`[agent] listening on http://${host}:${port}`);
 });

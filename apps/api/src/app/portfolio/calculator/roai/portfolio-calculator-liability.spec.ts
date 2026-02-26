@@ -17,6 +17,7 @@ import { Activity } from '@ghostfolio/common/interfaces';
 import { PerformanceCalculationType } from '@ghostfolio/common/types/performance-calculation-type.type';
 
 import { Big } from 'big.js';
+import { Job } from 'bull';
 
 jest.mock('@ghostfolio/api/app/portfolio/current-rate.service', () => {
   return {
@@ -79,7 +80,7 @@ describe('PortfolioCalculator', () => {
   });
 
   describe('compute portfolio snapshot', () => {
-    it.only('with liability activity', async () => {
+    it('with liability activity', async () => {
       jest.useFakeTimers().setSystemTime(parseDate('2022-01-31').getTime());
 
       const activities: Activity[] = [
@@ -114,5 +115,177 @@ describe('PortfolioCalculator', () => {
         new Big(3000)
       );
     });
+
+    it('skips malformed activity rows instead of crashing portfolio calculation', async () => {
+      jest.useFakeTimers().setSystemTime(parseDate('2022-01-31').getTime());
+
+      const activities: Activity[] = [
+        {
+          ...activityDummyData,
+          date: new Date('2022-01-15'),
+          feeInAssetProfileCurrency: 0,
+          feeInBaseCurrency: 0,
+          quantity: 1,
+          SymbolProfile: {
+            ...symbolProfileDummyData,
+            currency: 'USD',
+            dataSource: 'MANUAL',
+            name: 'Loan',
+            symbol: '55196015-1365-4560-aa60-8751ae6d18f8'
+          },
+          type: 'LIABILITY',
+          unitPriceInAssetProfileCurrency: 3000
+        },
+        {
+          ...(activityDummyData as Activity),
+          date: new Date('2022-01-20'),
+          feeInAssetProfileCurrency: 0,
+          feeInBaseCurrency: 0,
+          quantity: 1,
+          SymbolProfile: {
+            ...symbolProfileDummyData,
+            currency: 'USD',
+            dataSource: 'MANUAL',
+            name: 'Broken Loan',
+            symbol: '9d7e7847-c33f-4dbf-85cc-d2f0f9e7db36'
+          },
+          type: 'LIABILITY',
+          unitPriceInAssetProfileCurrency: Number.NaN
+        }
+      ];
+
+      const portfolioCalculator = portfolioCalculatorFactory.createCalculator({
+        activities,
+        calculationType: PerformanceCalculationType.ROAI,
+        currency: 'USD',
+        userId: userDummyData.id
+      });
+
+      await expect(portfolioCalculator.computeSnapshot()).resolves.toBeDefined();
+      const portfolioSnapshot = await portfolioCalculator.computeSnapshot();
+      expect(portfolioSnapshot.totalLiabilitiesWithCurrencyEffect).toEqual(
+        new Big(3000)
+      );
+    });
+
+    it('skips malformed account balance rows instead of crashing portfolio calculation', async () => {
+      jest.useFakeTimers().setSystemTime(parseDate('2022-01-31').getTime());
+
+      const activities: Activity[] = [
+        {
+          ...activityDummyData,
+          date: new Date('2022-01-15'),
+          feeInAssetProfileCurrency: 0,
+          feeInBaseCurrency: 0,
+          quantity: 1,
+          SymbolProfile: {
+            ...symbolProfileDummyData,
+            currency: 'USD',
+            dataSource: 'MANUAL',
+            name: 'Loan',
+            symbol: '55196015-1365-4560-aa60-8751ae6d18f8'
+          },
+          type: 'LIABILITY',
+          unitPriceInAssetProfileCurrency: 3000
+        }
+      ];
+
+      const portfolioCalculator = portfolioCalculatorFactory.createCalculator({
+        accountBalanceItems: [
+          { date: '2022-01-20', value: 1200 },
+          { date: '2022-01-21', value: Number.NaN }
+        ],
+        activities,
+        calculationType: PerformanceCalculationType.ROAI,
+        currency: 'USD',
+        userId: userDummyData.id
+      });
+
+      await expect(portfolioCalculator.computeSnapshot()).resolves.toBeDefined();
+    });
+
+    it('handles non-finite exchange rates without crashing portfolio calculation', async () => {
+      jest.useFakeTimers().setSystemTime(parseDate('2022-01-31').getTime());
+
+      jest
+        .spyOn(exchangeRateDataService, 'getExchangeRatesByCurrency')
+        .mockResolvedValue({
+          USDUSD: {
+            '2022-01-15': Number.NaN,
+            '2022-01-31': Number.NaN
+          }
+        });
+
+      const activities: Activity[] = [
+        {
+          ...activityDummyData,
+          date: new Date('2022-01-15'),
+          feeInAssetProfileCurrency: 0,
+          feeInBaseCurrency: 0,
+          quantity: 1,
+          SymbolProfile: {
+            ...symbolProfileDummyData,
+            currency: 'USD',
+            dataSource: 'MANUAL',
+            name: 'Loan',
+            symbol: '55196015-1365-4560-aa60-8751ae6d18f8'
+          },
+          type: 'LIABILITY',
+          unitPriceInAssetProfileCurrency: 3000
+        }
+      ];
+
+      const portfolioCalculator = portfolioCalculatorFactory.createCalculator({
+        activities,
+        calculationType: PerformanceCalculationType.ROAI,
+        currency: 'USD',
+        userId: userDummyData.id
+      });
+
+      await expect(portfolioCalculator.computeSnapshot()).resolves.toBeDefined();
+    });
+
+    it('falls back to direct computation when queued snapshot job fails', async () => {
+      jest.useFakeTimers().setSystemTime(parseDate('2022-01-31').getTime());
+
+      jest
+        .spyOn(portfolioSnapshotService, 'addJobToQueue')
+        .mockResolvedValue({} as Job);
+
+      jest.spyOn(portfolioSnapshotService, 'getJob').mockResolvedValue({
+        finished: () => {
+          return Promise.reject(new Error('[big.js] Invalid number'));
+        }
+      } as unknown as Job);
+
+      const activities: Activity[] = [
+        {
+          ...activityDummyData,
+          date: new Date('2022-01-15'),
+          feeInAssetProfileCurrency: 0,
+          feeInBaseCurrency: 0,
+          quantity: 1,
+          SymbolProfile: {
+            ...symbolProfileDummyData,
+            currency: 'USD',
+            dataSource: 'MANUAL',
+            name: 'Loan',
+            symbol: '55196015-1365-4560-aa60-8751ae6d18f8'
+          },
+          type: 'LIABILITY',
+          unitPriceInAssetProfileCurrency: 3000
+        }
+      ];
+
+      const portfolioCalculator = portfolioCalculatorFactory.createCalculator({
+        activities,
+        calculationType: PerformanceCalculationType.ROAI,
+        currency: 'USD',
+        userId: userDummyData.id
+      });
+
+      await expect(portfolioCalculator.computeSnapshot()).resolves.toBeDefined();
+    });
+
   });
 });
