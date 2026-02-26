@@ -4,6 +4,7 @@
   "homepage": "https://ghostfol.io",
   "license": "AGPL-3.0",
   "repository": "https://github.com/ghostfolio/ghostfolio",
+  "fork-ts-checker": {},
   "scripts": {
     "affected": "nx affected",
     "affected:apps": "nx affected:apps",

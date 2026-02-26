@@ -13,6 +13,7 @@ RUN npm install --ignore-scripts
 
 # Agent source and widget build
 COPY apps/agent apps/agent
+COPY docs/agent docs/agent
 RUN npm run build:agent-widget
 
 # Railway sets PORT; agent uses PORT or AGENT_PORT (see index.ts)
