@@ -143,14 +143,14 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     name: 'fact_check',
     description:
       'Use when the user asks to verify, double-check, or fact-check a price or market data claim. ' +
-      'Compares Ghostfolio (primary) with CoinGecko (second source) for crypto symbols and returns match/mismatch with provenance. ' +
-      'Good for: "verify bitcoin price", "fact check the price of ETH", "confirm current price of solana". ' +
-      'Stocks have no second source; tool reports "no second source" for non-crypto.',
+      'Compares Ghostfolio (primary) with Yahoo Finance (second source) for both stocks and crypto symbols and returns match/mismatch with provenance. ' +
+      'Good for: "verify bitcoin price", "fact check the price of AAPL", "confirm current price of ETH". ' +
+      'Requires symbols to be explicitly specified (pre-resolved upstream); if no symbols provided, asks the user to specify them.',
     input_schema: {
       type: 'object',
       properties: {
         ...COMMON_INPUT.properties,
-        symbols: { type: 'array', description: 'Optional symbol names or tickers to verify (e.g. ["bitcoin"], ["ETH"])' }
+        symbols: { type: 'array', description: 'Symbol names or tickers to verify (e.g. ["AAPL"], ["BTC-USD"], ["ETH-USD"])' }
       },
       required: ['message']
     },
@@ -160,11 +160,11 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
       properties: {
         match: { type: 'boolean', description: 'True when primary and secondary prices agree within tolerance (or no second source)' },
         primary: { type: 'object', description: 'Primary result from Ghostfolio (symbols with prices)' },
-        secondary: { type: 'object', description: 'Secondary result from CoinGecko or null' },
+        secondary: { type: 'object', description: 'Secondary result from Yahoo Finance or null' },
         discrepancy: { type: 'string', description: 'Human-readable discrepancy when match is false' },
         comparisons: { type: 'array', description: 'Per-symbol comparison details' },
         answer: { type: 'string', description: 'Natural-language verdict' },
-        sources: { type: 'array', description: 'Source identifiers (ghostfolio_api, coingecko)' },
+        sources: { type: 'array', description: 'Source identifiers (ghostfolio_api, yahoo_finance)' },
         data_as_of: { type: 'string', description: 'ISO timestamp' },
         summary: { type: 'string', description: 'Short summary' }
       }

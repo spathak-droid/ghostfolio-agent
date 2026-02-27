@@ -1,4 +1,4 @@
-import { symbolToCoinGeckoId } from '../clients';
+// Yahoo Finance supports stocks and crypto; we accept most standard symbols
 import type { AgentToolCall } from '../types';
 
 const PRICE_QUERY_PATTERN =
@@ -241,8 +241,11 @@ function normalizeSymbol(input: unknown): string | undefined {
 }
 
 function isSecondSourceEligible(symbol: string): boolean {
-  const canonical = `${symbol}-USD`;
-  return Boolean(symbolToCoinGeckoId(canonical));
+  // Yahoo Finance supports most stocks and crypto symbols.
+  // We accept any standard ticker symbol (2-5 uppercase chars, or crypto format like BTC-USD).
+  if (!symbol || symbol.length === 0) return false;
+  if (symbol.length > 15) return false; // Reject very long symbols
+  return true;
 }
 
 function isWithinTolerance(value: number, expected: number): boolean {

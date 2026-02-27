@@ -28,7 +28,7 @@ describe('factComplianceCheckTool', () => {
     mockedFactCheckTool.mockResolvedValue({
       data_as_of: '2026-02-27T00:00:00.000Z',
       match: true,
-      sources: ['ghostfolio_api', 'coingecko'],
+      sources: ['ghostfolio_api', 'yahoo_finance'],
       summary: 'Fact check ok'
     });
     mockedComplianceCheckTool.mockResolvedValue({
@@ -51,7 +51,7 @@ describe('factComplianceCheckTool', () => {
     expect(result.fact_check).toEqual(expect.objectContaining({ match: true }));
     expect(result.compliance_check).toEqual(expect.objectContaining({ isCompliant: true }));
     expect(result.sources).toEqual(
-      expect.arrayContaining(['ghostfolio_api', 'coingecko', 'policy_pack:us-baseline-v1'])
+      expect.arrayContaining(['ghostfolio_api', 'yahoo_finance', 'policy_pack:us-baseline-v1'])
     );
     expect(result.data_as_of).toBe('2026-02-27T00:00:00.000Z');
   });

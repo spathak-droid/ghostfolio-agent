@@ -1,19 +1,15 @@
 /**
- * Fact-check tool: cross-check market_data (price) against CoinGecko as second source.
+ * Fact-check tool: cross-check market_data (price) against Yahoo Finance as second source.
  *
- * Purpose: Verify price claims for crypto symbols by comparing Ghostfolio primary
- *          result with CoinGecko; returns match/mismatch and provenance.
- * Inputs: message, optional symbols; uses Ghostfolio client and CoinGecko client.
+ * Purpose: Verify price claims for symbols by comparing Ghostfolio primary
+ *          result with Yahoo Finance; returns match/mismatch and provenance.
+ *          Yahoo Finance supports both stocks (AAPL, TSLA) and crypto (BTC-USD, ETH-USD).
+ * Inputs: message, symbols (required; pre-resolved upstream by symbol-resolver); uses Ghostfolio and Yahoo Finance.
  * Outputs: match, primary, secondary, discrepancy?, answer, sources, data_as_of.
  * Failure modes: primary failure → tool error; secondary failure → secondary null, answer states limitation.
  */
 
-import {
-  getSimplePrice,
-  symbolToCoinGeckoId,
-  type CoinGeckoClientError,
-  type CoinGeckoClientResponse
-} from '../clients';
+import { getYahooQuote, type YahooFinanceClientError, type YahooFinanceClientResponse } from '../clients';
 import type { GhostfolioClient } from '../clients';
 import { toToolErrorPayload } from './tool-error';
 import { marketDataTool } from './market-data';
@@ -41,29 +37,6 @@ function roundTwo(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-function parseSymbolsFromMessage(message: string): string[] {
-  const normalized = message.toLowerCase();
-  const symbols: string[] = [];
-  const aliasKeys = ['bitcoin', 'btc', 'ethereum', 'eth', 'solana', 'sol', 'tesla', 'tsla', 'apple', 'aapl'];
-
-  for (const key of aliasKeys) {
-    if (normalized.includes(key)) {
-      symbols.push(key);
-    }
-  }
-
-  const tickerMatch = message.match(/\b([A-Z]{2,5})\b/g);
-  if (tickerMatch) {
-    for (const ticker of tickerMatch) {
-      if (!symbols.includes(ticker.toLowerCase())) {
-        symbols.push(ticker);
-      }
-    }
-  }
-
-  return [...new Set(symbols)].slice(0, MAX_SYMBOLS);
-}
-
 function isPriceWithinTolerance(primary: number, secondary: number): boolean {
   if (primary <= 0) return false;
   const pct = Math.abs(primary - secondary) / primary * 100;
@@ -81,15 +54,14 @@ export async function factCheckTool({
     const symbols =
       Array.isArray(inputSymbols) && inputSymbols.length > 0
         ? inputSymbols.filter(Boolean).slice(0, MAX_SYMBOLS)
-        : parseSymbolsFromMessage(message ?? '');
+        : [];
 
     if (symbols.length === 0) {
       return {
         match: true,
         primary: { symbols: [], summary: 'No symbols to verify' },
         secondary: null,
-        answer:
-          'No symbols specified. Ask to verify a price for a symbol (e.g. "verify bitcoin price", "fact check ETH").',
+        answer: 'No symbols to verify. Please specify the symbol(s) to fact-check (e.g. AAPL, BTC-USD).',
         sources: ['ghostfolio_api'],
         data_as_of: new Date().toISOString(),
         summary: 'Fact check: no symbols provided'
@@ -108,20 +80,17 @@ export async function factCheckTool({
     const primarySymbols = Array.isArray(primaryResult.symbols) ? primaryResult.symbols : [];
     const primaryItems = primarySymbols as PrimarySymbolItem[];
 
-    const idsToFetch: string[] = [];
-    const symbolById: Record<string, string> = {};
+    const symbolsToFetch: string[] = [];
     for (const item of primaryItems) {
       if (item.error || typeof item.currentPrice !== 'number' || item.currentPrice <= 0) continue;
-      const id = symbolToCoinGeckoId(item.symbol);
-      if (id && !idsToFetch.includes(id)) {
-        idsToFetch.push(id);
-        symbolById[id] = item.symbol;
+      if (!symbolsToFetch.includes(item.symbol)) {
+        symbolsToFetch.push(item.symbol);
       }
     }
 
-    let secondary: CoinGeckoClientResponse | null = null;
-    if (idsToFetch.length > 0) {
-      secondary = await getSimplePrice(idsToFetch, 'usd');
+    let secondary: YahooFinanceClientResponse | null = null;
+    if (symbolsToFetch.length > 0) {
+      secondary = await getYahooQuote(symbolsToFetch);
     }
 
     const comparisons: { symbol: string; primaryPrice: number; secondaryPrice?: number; match: boolean; note?: string }[] = [];
@@ -140,16 +109,7 @@ export async function factCheckTool({
         continue;
       }
       const price = roundTwo(item.currentPrice);
-      const id = symbolToCoinGeckoId(item.symbol);
-      if (!id) {
-        comparisons.push({
-          symbol: item.symbol,
-          primaryPrice: price,
-          match: true,
-          note: 'No second source (stocks/other not on CoinGecko)'
-        });
-        continue;
-      }
+
       if (!secondary?.ok) {
         comparisons.push({
           symbol: item.symbol,
@@ -159,24 +119,24 @@ export async function factCheckTool({
         });
         allMatch = false;
         const errMsg =
-          secondary && !secondary.ok
-            ? (secondary as CoinGeckoClientError).message
-            : 'unknown';
-        discrepancyParts.push(`CoinGecko unavailable: ${errMsg}`);
+          secondary && !secondary.ok ? (secondary as YahooFinanceClientError).message : 'unknown';
+        discrepancyParts.push(`Yahoo Finance unavailable: ${errMsg}`);
         continue;
       }
-      const secPrice = secondary.data[id]?.usd;
-      if (typeof secPrice !== 'number' || !Number.isFinite(secPrice)) {
+
+      const secData = secondary.data[item.symbol];
+      if (!secData || typeof secData.regularMarketPrice !== 'number' || !Number.isFinite(secData.regularMarketPrice)) {
         comparisons.push({
           symbol: item.symbol,
           primaryPrice: price,
           match: true,
-          note: 'No CoinGecko price for this id'
+          note: `No Yahoo Finance price for ${item.symbol}`
         });
         allMatch = false;
         continue;
       }
-      const secRounded = roundTwo(secPrice);
+
+      const secRounded = roundTwo(secData.regularMarketPrice);
       const match = isPriceWithinTolerance(price, secRounded);
       comparisons.push({
         symbol: item.symbol,
@@ -187,20 +147,20 @@ export async function factCheckTool({
       if (!match) {
         allMatch = false;
         discrepancyParts.push(
-          `${item.symbol}: Ghostfolio ${item.currency} ${price} vs CoinGecko USD ${secRounded}`
+          `${item.symbol}: Ghostfolio ${item.currency} ${price} vs Yahoo Finance ${secData.currency} ${secRounded}`
         );
       }
     }
 
     const sources: string[] = ['ghostfolio_api'];
-    if (secondary?.ok) sources.push('coingecko');
+    if (secondary?.ok) sources.push('yahoo_finance');
 
     const answer =
       discrepancyParts.length > 0
         ? `Fact check: discrepancy between sources. ${discrepancyParts.join('; ')}.`
-        : idsToFetch.length === 0
-          ? 'Fact check: no second source available for the requested symbols (CoinGecko supports crypto only).'
-          : 'Fact check: prices match between Ghostfolio and CoinGecko within tolerance.';
+        : symbolsToFetch.length === 0
+          ? 'Fact check: no symbols to verify.'
+          : 'Fact check: prices match between Ghostfolio and Yahoo Finance within tolerance.';
 
     const summary =
       allMatch && comparisons.length > 0

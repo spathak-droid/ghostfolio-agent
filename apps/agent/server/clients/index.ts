@@ -6,12 +6,9 @@ export {
   type UpdateOrderDtoBody
 } from './ghostfolio-client';
 export {
-  symbolToCoinGeckoId,
-  getSimplePrice,
-  COINGECKO_SYMBOL_IDS,
-  type CoinGeckoSimplePriceResult,
-  type CoinGeckoClientResult,
-  type CoinGeckoClientError,
-  type CoinGeckoClientResponse,
-  type CoinGeckoClientConfig
-} from './coingecko-client';
+  getYahooQuote,
+  type YahooFinanceClientResult,
+  type YahooFinanceClientError,
+  type YahooFinanceClientResponse,
+  type YahooFinanceClientConfig
+} from './yahoo-finance-client';
