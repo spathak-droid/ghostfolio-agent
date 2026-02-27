@@ -15,6 +15,7 @@ import {
 } from '../tools/tool-registry';
 import { logger } from '../utils';
 import {
+  enforceFinanceScopeAnswer,
   extractMessageContent,
   fallbackDirectAnswer,
   getUtcContext,
@@ -143,7 +144,7 @@ export function createOpenAiClient({
                 resultPreview:
                   content.slice(0, 300) + (content.length > 300 ? '...' : '')
               });
-              return content;
+              return enforceFinanceScopeAnswer(message, content);
             }
 
             const retryContent = await callByTier({
@@ -166,9 +167,9 @@ export function createOpenAiClient({
                   retryContent.slice(0, 300) +
                   (retryContent.length > 300 ? '...' : '')
               });
-              return retryContent;
+              return enforceFinanceScopeAnswer(message, retryContent);
             }
-            const fallback = fallbackDirectAnswer(message);
+            const fallback = enforceFinanceScopeAnswer(message, fallbackDirectAnswer(message));
             logger.debug('[llm.answer_finance_question] OUTPUT (fallback)', {
               resultPreview: fallback.slice(0, 200)
             });

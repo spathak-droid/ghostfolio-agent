@@ -18,8 +18,20 @@ export function parseFlexibleNumber(value: unknown): number | undefined {
 }
 
 /** Used only when the LLM is unavailable (no client, API error, or no content). Do not use when the LLM has returned an answer—let the LLM decide. */
-export function fallbackDirectAnswer(_message: string) {
-  void _message;
+export function fallbackDirectAnswer(message: string) {
+  const normalized = message.toLowerCase();
+
+  // Context-specific fallback for jokes
+  if (normalized.includes('joke')) {
+    return 'Here\'s a finance joke: Why did the stock broker go to the beach? To find some liquid assets!';
+  }
+
+  // Greeting-aware fallback
+  if (isGreetingMessage(message)) {
+    return 'Hi! I can help with portfolio, market data, and transaction questions. Ask me about holdings, allocation, buy dates, or entry prices.';
+  }
+
+  // Generic fallback
   return 'I can help with portfolio, market data, and transaction questions. Ask me about holdings, allocation, buy dates, or entry prices.';
 }
 
