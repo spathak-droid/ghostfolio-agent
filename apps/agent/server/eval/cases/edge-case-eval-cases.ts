@@ -234,7 +234,9 @@ export const EDGE_CASE_EVAL_CASES: EvalCase[] = [
   {
     "id": "get_orders-edge-1",
     "query": "list orders for xyz123nonexistent",
-    "expectedTools": [],
+    "expectedTools": [
+      "get_orders"
+    ],
     "difficulty": "edge",
     "expectedOutput": [],
     "passFailCriteria": [
@@ -247,7 +249,8 @@ export const EDGE_CASE_EVAL_CASES: EvalCase[] = [
       "correctness",
       "edge_cases"
     ],
-    "expectedRoute": "llm_user",
+    "expectedRoute": "llm_tools_llm_user",
+    "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
     "mustContain": [],
     "mustNotContain": []

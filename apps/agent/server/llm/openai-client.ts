@@ -480,6 +480,86 @@ Return strict JSON: {"tool":"${toolList}|none"}`,
         step: 'llm.synthesize_tool_errors',
         traceContext
       });
+    },
+    async clarifyQuantityUnit(message, symbol, quantity, unitPrice, traceContext) {
+      return runWithOptionalTrace({
+        fn: async () => {
+          logger.debug('[llm.clarify_quantity_unit] INPUT', {
+            symbol,
+            quantity,
+            unitPrice,
+            messagePreview: message.slice(0, 100)
+          });
+
+          try {
+            const estimatedCost = quantity * unitPrice;
+            const content = await callByTier({
+              tier: 'fast',
+              traceContext,
+              requireJson: true,
+              messages: [
+                {
+                  content:
+                    'You are a finance assistant helping clarify ambiguous quantity inputs. ' +
+                    'When a user says "100 coins", "100 of X", or similar, determine if they meant: ' +
+                    '1. 100 COINS/UNITS of the asset, OR ' +
+                    '2. $100 (currency amount) worth of the asset. ' +
+                    'Return strict JSON: {"unit":"coins"|"currency","clarification":"brief explanation"}. ' +
+                    'If the quantity as-stated would result in a very large transaction (>$100,000), ' +
+                    'strongly assume they meant the currency amount instead. Be concise in clarification.',
+                  role: 'system'
+                },
+                {
+                  content:
+                    `User message: "${message}"\n\n` +
+                    `Symbol: ${symbol}\n` +
+                    `Stated quantity: ${quantity}\n` +
+                    `Current unit price: $${unitPrice.toFixed(2)}\n` +
+                    `Estimated cost at stated quantity: $${estimatedCost.toFixed(2)}\n\n` +
+                    `Determine if the quantity "${quantity}" should be interpreted as ${quantity} COINS of ${symbol}, ` +
+                    `or $${quantity} worth of ${symbol}.`,
+                  role: 'user'
+                }
+              ]
+            });
+
+            if (!content) {
+              logger.debug('[llm.clarify_quantity_unit] OUTPUT (empty)', {});
+              return undefined;
+            }
+
+            try {
+              const parsed = JSON.parse(content) as Record<string, unknown>;
+              const unit = parsed.unit === 'coins' || parsed.unit === 'currency' ? parsed.unit : undefined;
+              const clarification = typeof parsed.clarification === 'string' ? parsed.clarification.trim() : '';
+
+              if (!unit) {
+                logger.warn('[llm.clarify_quantity_unit] Invalid unit in response', { parsed });
+                return undefined;
+              }
+
+              logger.debug('[llm.clarify_quantity_unit] OUTPUT', { unit, clarificationLength: clarification.length });
+              return { unit, clarification };
+            } catch (parseError) {
+              logger.warn('[llm.clarify_quantity_unit] JSON parse failed', {
+                contentPreview: content.slice(0, 100),
+                error: parseError instanceof Error ? parseError.message : String(parseError)
+              });
+              return undefined;
+            }
+          } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            const code = (error as Error & { code?: string }).code;
+            logger.warn('[llm.clarify_quantity_unit] API_FAILED', {
+              errorCode: code,
+              errorMessage: errorMsg
+            });
+            return undefined;
+          }
+        },
+        step: 'llm.clarify_quantity_unit',
+        traceContext
+      });
     }
   };
 }

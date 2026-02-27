@@ -469,6 +469,7 @@ function createAgentWithClient(ghostfolioClient: GhostfolioClient, storeScopeId:
         const { impersonationId, message, token, createOrderParams } = toolInput(a, b);
         return createOrderTool({
           client: ghostfolioClient,
+          clarifyQuantityUnit: llm?.clarifyQuantityUnit,
           impersonationId,
           message,
           token,

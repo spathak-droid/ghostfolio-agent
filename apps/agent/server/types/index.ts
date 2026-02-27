@@ -231,4 +231,12 @@ export interface AgentLlm {
     userMessage: string,
     traceContext?: AgentTraceContext
   ) => Promise<string>;
+  /** Clarify whether a quantity should be interpreted as coins/units or currency amount. Optional. */
+  clarifyQuantityUnit?: (
+    message: string,
+    symbol: string,
+    quantity: number,
+    unitPrice: number,
+    traceContext?: AgentTraceContext
+  ) => Promise<{ unit: 'coins' | 'currency'; clarification: string } | undefined>;
 }

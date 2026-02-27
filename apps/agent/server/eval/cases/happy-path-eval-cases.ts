@@ -690,7 +690,9 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
   {
     "id": "get_orders-happy-1",
     "query": "list my orders for apple",
-    "expectedTools": [],
+    "expectedTools": [
+      "get_orders"
+    ],
     "difficulty": "happy",
     "expectedOutput": [],
     "passFailCriteria": [
@@ -702,7 +704,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
       "tool_execution",
       "correctness"
     ],
-    "expectedRoute": "llm_user",
+    "expectedRoute": "llm_tools_llm_user",
+    "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
     "mustContain": [],
     "mustNotContain": []
