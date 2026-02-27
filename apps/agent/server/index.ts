@@ -25,6 +25,7 @@ installCrashHandlers();
 import { createAgent, createDefaultContextManager } from './agent';
 import {
   createConversationStoreFromEnv,
+  createConversationHistoryStoreFromEnv,
   createFeedbackStoreFromEnv,
   createRegulationStoreFromEnv,
   createToolResponseCacheStoreFromEnv,
@@ -36,6 +37,8 @@ import { createAgentApp, resolveWidgetRuntimeConfig } from './http/app-factory';
 import { createChatHandler } from './http/chat-handler';
 import { createClearHandler } from './http/clear-handler';
 import { createFeedbackHandler } from './http/feedback-handler';
+import { createHistoryGetHandler } from './http/history-get-handler';
+import { createHistoryListHandler } from './http/history-list-handler';
 import { createRateLimitMiddleware } from './http/rate-limit';
 import { analyzeStockTrendTool } from './tools/analyze-stock-trend';
 import { complianceCheckTool } from './tools/compliance-check';
@@ -108,6 +111,8 @@ try {
     ttlMs: parsePositiveInteger(process.env.AGENT_CONVERSATION_TTL_MS)
   });
 
+  const conversationHistoryStore = createConversationHistoryStoreFromEnv();
+
 const contextManager = createDefaultContextManager({
   maxRecentMessages: parsePositiveInteger(process.env.AGENT_CONTEXT_WINDOW_MAX_MESSAGES) ?? 10,
   summarySampleMessages:
@@ -123,6 +128,10 @@ const feedbackRateLimitMax =
   parsePositiveInteger(process.env.AGENT_FEEDBACK_RATE_LIMIT_MAX) ?? 120;
 const feedbackRateLimitWindowMs =
   parsePositiveInteger(process.env.AGENT_FEEDBACK_RATE_LIMIT_WINDOW_MS) ?? 60_000;
+const historyRateLimitMax =
+  parsePositiveInteger(process.env.AGENT_HISTORY_RATE_LIMIT_MAX) ?? 60;
+const historyRateLimitWindowMs =
+  parsePositiveInteger(process.env.AGENT_HISTORY_RATE_LIMIT_WINDOW_MS) ?? 60_000;
 const toolResponseCache = createToolResponseCacheStoreFromEnv({
   redisUrl: process.env.AGENT_REDIS_URL ?? process.env.REDIS_URL
 });
@@ -497,6 +506,7 @@ function createAgentWithClient(ghostfolioClient: GhostfolioClient) {
     chatHandler: createChatHandler({
       allowBodyAccessToken,
       allowInsecureGhostfolioHttp,
+      conversationHistoryStore,
       createAgentWithClient,
       ghostfolioAllowedHosts,
       ghostfolioBaseUrl
@@ -507,7 +517,11 @@ function createAgentWithClient(ghostfolioClient: GhostfolioClient) {
     }),
     clearHandler: createClearHandler({
       allowBodyAccessToken,
-      conversationStore
+      conversationStore,
+      conversationHistoryStore,
+      ghostfolioBaseUrl,
+      allowInsecureGhostfolioHttp,
+      ghostfolioAllowedHosts
     }),
     clearRateLimiter: createRateLimitMiddleware({
       maxRequests: clearRateLimitMax,
@@ -519,6 +533,24 @@ function createAgentWithClient(ghostfolioClient: GhostfolioClient) {
     feedbackRateLimiter: createRateLimitMiddleware({
       maxRequests: feedbackRateLimitMax,
       windowMs: feedbackRateLimitWindowMs
+    }),
+    historyGetHandler: createHistoryGetHandler({
+      allowBodyAccessToken,
+      allowInsecureGhostfolioHttp,
+      conversationHistoryStore,
+      ghostfolioAllowedHosts,
+      ghostfolioBaseUrl
+    }),
+    historyListHandler: createHistoryListHandler({
+      allowBodyAccessToken,
+      allowInsecureGhostfolioHttp,
+      conversationHistoryStore,
+      ghostfolioAllowedHosts,
+      ghostfolioBaseUrl
+    }),
+    historyRateLimiter: createRateLimitMiddleware({
+      maxRequests: historyRateLimitMax,
+      windowMs: historyRateLimitWindowMs
     }),
     widgetCorsOrigin,
     widgetDistPath

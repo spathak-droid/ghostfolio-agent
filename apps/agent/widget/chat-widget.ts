@@ -11,7 +11,9 @@ import {
   resolveChatApiUrl,
   resolveClearConversationApiUrl,
   resolveFeedbackApiUrl,
-  resolveGhostIconPath
+  resolveGhostIconPath,
+  resolveHistoryApiUrl,
+  resolveHistoryItemApiUrl
 } from './utils/urls';
 import { formatMessageTime } from './utils/format';
 import type {
@@ -44,6 +46,7 @@ export function mountChatWidget(container: HTMLElement) {
   const authApiUrl = resolveAuthApiUrl();
   const feedbackApiUrl = resolveFeedbackApiUrl(chatApiUrl);
   const clearApiUrl = resolveClearConversationApiUrl(chatApiUrl);
+  const historyApiUrl = resolveHistoryApiUrl(chatApiUrl);
 
   const widget = document.createElement('div');
   widget.className = 'agent-widget';
@@ -80,7 +83,7 @@ export function mountChatWidget(container: HTMLElement) {
 
   const subtitle = document.createElement('p');
   subtitle.className = 'agent-widget__subtitle';
-  subtitle.textContent = 'Ask about your portfolio or market context';
+  // subtitle.textContent = 'Your Portfolio Agent';
 
   const headerActions = document.createElement('div');
   headerActions.className = 'agent-widget__header-actions';
@@ -95,6 +98,25 @@ export function mountChatWidget(container: HTMLElement) {
     </svg>
   `;
 
+  const historyButton = document.createElement('button');
+  historyButton.type = 'button';
+  historyButton.className = 'agent-widget__history-btn';
+  historyButton.setAttribute('aria-label', 'Chat history');
+  historyButton.setAttribute('aria-expanded', 'false');
+  historyButton.setAttribute('aria-haspopup', 'true');
+  historyButton.innerHTML = `
+    <svg class="agent-widget__history-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 8v4l2 2"/>
+      <circle cx="12" cy="12" r="10"/>
+    </svg>
+  `;
+
+  const historyDropdown = document.createElement('div');
+  historyDropdown.className = 'agent-widget__history-dropdown';
+  historyDropdown.setAttribute('role', 'listbox');
+  historyDropdown.setAttribute('aria-label', 'Past conversations');
+  historyDropdown.hidden = true;
+
   const signOutButton = document.createElement('button');
   signOutButton.type = 'button';
   signOutButton.className = 'agent-widget__sign-out';
@@ -108,14 +130,16 @@ export function mountChatWidget(container: HTMLElement) {
   closeButton.textContent = '×';
 
   headerActions.appendChild(signOutButton);
+  headerActions.appendChild(historyButton);
   headerActions.appendChild(newChatButton);
   headerActions.appendChild(closeButton);
 
   headerContent.appendChild(title);
-  headerContent.appendChild(subtitle);
+  // headerContent.appendChild(subtitle);
   header.appendChild(headerIcon);
   header.appendChild(headerContent);
   header.appendChild(headerActions);
+  header.appendChild(historyDropdown);
 
   const signInView = document.createElement('div');
   signInView.className = 'agent-widget__sign-in-view';
@@ -155,6 +179,7 @@ export function mountChatWidget(container: HTMLElement) {
       messages.appendChild(createWelcomeMessage());
       formWrap.classList.remove('agent-widget__form-wrap--hidden');
       signOutButton.style.display = '';
+      historyButton.style.display = '';
     } else {
       signInView.innerHTML = '';
       signInView.appendChild(
@@ -165,6 +190,8 @@ export function mountChatWidget(container: HTMLElement) {
       messages.innerHTML = '';
       formWrap.classList.add('agent-widget__form-wrap--hidden');
       signOutButton.style.display = 'none';
+      historyButton.style.display = 'none';
+      historyDropdown.hidden = true;
     }
   }
 
@@ -480,6 +507,118 @@ export function mountChatWidget(container: HTMLElement) {
   signOutButton.addEventListener('click', () => {
     clearAuthToken();
     renderInitialContent();
+  });
+
+  function showHistoryLoading(): void {
+    historyDropdown.innerHTML = '';
+    historyDropdown.appendChild(
+      Object.assign(document.createElement('div'), {
+        className: 'agent-widget__history-loading',
+        textContent: 'Loading…'
+      })
+    );
+    historyDropdown.hidden = false;
+    historyButton.setAttribute('aria-expanded', 'true');
+  }
+
+  function renderHistoryList(list: { id: string; title: string | null; updatedAt: string }[]): void {
+    historyDropdown.innerHTML = '';
+    if (list.length === 0) {
+      historyDropdown.appendChild(
+        Object.assign(document.createElement('div'), {
+          className: 'agent-widget__history-empty',
+          textContent: 'No past conversations'
+        })
+      );
+      return;
+    }
+    const token = getAuthToken();
+    const impersonationId = getImpersonationId();
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (impersonationId) headers[IMPERSONATION_HEADER] = impersonationId;
+    for (const conv of list) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'agent-widget__history-item';
+      btn.setAttribute('role', 'option');
+      const title = conv.title?.trim() || 'Conversation';
+      const titleText = title.length > 60 ? title.slice(0, 57) + '…' : title;
+      const updated = conv.updatedAt ? formatMessageTime(new Date(conv.updatedAt)) : '';
+      const titleEl = document.createElement('span');
+      titleEl.className = 'agent-widget__history-item-title';
+      titleEl.textContent = titleText;
+      btn.appendChild(titleEl);
+      const sub = document.createElement('span');
+      sub.className = 'agent-widget__history-item-date';
+      sub.textContent = updated;
+      btn.appendChild(sub);
+      btn.title = title;
+      btn.addEventListener('click', () => loadHistoryConversation(conv.id, headers));
+      historyDropdown.appendChild(btn);
+    }
+  }
+
+  async function loadHistoryConversation(
+    conversationId: string,
+    headers: Record<string, string>
+  ): Promise<void> {
+    historyDropdown.hidden = true;
+    historyButton.setAttribute('aria-expanded', 'false');
+    const itemUrl = resolveHistoryItemApiUrl(chatApiUrl, conversationId);
+    const r = await fetch(itemUrl, { headers, credentials: 'same-origin' });
+    if (!r.ok) return;
+    const item = (await r.json()) as {
+      id: string;
+      messages: { content: string; role: 'user' | 'assistant' }[];
+    };
+    currentConversationId = item.id;
+    nextCreateOrderParams = undefined;
+    messages.innerHTML = '';
+    for (const msg of item.messages ?? []) {
+      appendMessage(msg.content, msg.role);
+    }
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  historyButton.addEventListener('click', async () => {
+    if (historyDropdown.hidden) {
+      showHistoryLoading();
+      const token = getAuthToken();
+      const impersonationId = getImpersonationId();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      if (impersonationId) headers[IMPERSONATION_HEADER] = impersonationId;
+      try {
+        const res = await fetch(historyApiUrl, { headers, credentials: 'same-origin' });
+        const data = (await res.json()) as {
+          conversations?: { id: string; title: string | null; updatedAt: string }[];
+        };
+        renderHistoryList(data.conversations ?? []);
+      } catch {
+        historyDropdown.innerHTML = '';
+        historyDropdown.appendChild(
+          Object.assign(document.createElement('div'), {
+            className: 'agent-widget__history-empty',
+            textContent: 'Could not load history'
+          })
+        );
+      }
+    } else {
+      historyDropdown.hidden = true;
+      historyButton.setAttribute('aria-expanded', 'false');
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    const target = e.target as Node;
+    if (
+      historyDropdown && !historyDropdown.hidden &&
+      !historyDropdown.contains(target) && !historyButton.contains(target)
+    ) {
+      historyDropdown.hidden = true;
+      historyButton.setAttribute('aria-expanded', 'false');
+    }
   });
 
   newChatButton.addEventListener('click', async () => {

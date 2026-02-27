@@ -11,8 +11,21 @@ interface WidgetAssetProxyResponse {
 /** Ensures URL has a scheme so fetch() does not throw "Failed to parse URL". */
 function normalizeAgentServiceUrl(raw: string | undefined): string {
   const base = (raw ?? 'http://localhost:4444').trim();
-  if (/^https?:\/\//i.test(base)) return base;
-  return `https://${base}`;
+  if (!/^https?:\/\//i.test(base)) {
+    return `https://${base}`;
+  }
+  // Railway internal hostnames use private network; HTTPS often fails (cert/TLS).
+  // Force http for *.railway.internal so API→agent server-to-server works.
+  try {
+    const u = new URL(base);
+    if (u.hostname.toLowerCase().endsWith('.railway.internal')) {
+      u.protocol = 'http:';
+      return u.toString();
+    }
+  } catch {
+    // leave as-is if URL parse fails
+  }
+  return base;
 }
 
 @Injectable()
@@ -128,6 +141,70 @@ export class AgentService {
       );
     }
     return { ok: Boolean(data.ok) };
+  }
+
+  public async getHistory(
+    authorizationHeader?: string,
+    impersonationId?: string,
+    limit?: number
+  ): Promise<{ conversations: { id: string; title: string | null; updatedAt: string; messageCount: number }[] }> {
+    const url = new URL(`${this.agentServiceUrl}/chat/history`);
+    if (typeof limit === 'number' && limit > 0) {
+      url.searchParams.set('limit', String(Math.min(100, limit)));
+    }
+    const response = await fetch(url.toString(), {
+      headers: {
+        ...(authorizationHeader ? { Authorization: authorizationHeader } : {}),
+        ...(impersonationId ? { 'Impersonation-Id': impersonationId } : {})
+      },
+      method: 'GET'
+    });
+    const data = (await response.json()) as {
+      conversations?: { id: string; title: string | null; updatedAt: string; messageCount: number }[];
+    };
+    if (!response.ok) {
+      throw new HttpException(
+        data as Record<string, unknown>,
+        response.status
+      );
+    }
+    return { conversations: data.conversations ?? [] };
+  }
+
+  public async getHistoryById(
+    conversationId: string,
+    authorizationHeader?: string,
+    impersonationId?: string
+  ): Promise<{
+    id: string;
+    userId: string;
+    title: string | null;
+    messages: { content: string; role: 'user' | 'assistant' }[];
+    createdAt: string;
+    updatedAt: string;
+  }> {
+    const response = await fetch(
+      `${this.agentServiceUrl}/chat/history/${encodeURIComponent(conversationId)}`,
+      {
+        headers: {
+          ...(authorizationHeader ? { Authorization: authorizationHeader } : {}),
+          ...(impersonationId ? { 'Impersonation-Id': impersonationId } : {})
+        },
+        method: 'GET'
+      }
+    );
+    const data = (await response.json()) as Record<string, unknown>;
+    if (!response.ok) {
+      throw new HttpException(data, response.status);
+    }
+    return data as {
+      id: string;
+      userId: string;
+      title: string | null;
+      messages: { content: string; role: 'user' | 'assistant' }[];
+      createdAt: string;
+      updatedAt: string;
+    };
   }
 
   public async feedback(

@@ -689,7 +689,8 @@ describe('synthesizeToolResults', () => {
             allocation: [],
             data_as_of: '2026-02-27T00:00:00.000Z',
             performance: {
-              currentNetWorth: 351101.8,
+              balance: 351101.8,
+              portfolio: 351101.8,
               netPerformance: 13521.8,
               netPerformancePercentage: 0.0006
             },
@@ -704,7 +705,7 @@ describe('synthesizeToolResults', () => {
     expect(response.answer).toContain('Portfolio status: in profit.');
   });
 
-  it('uses totalValueInBaseCurrency as portfolio worth finding', () => {
+  it('uses portfolio balance in findings when performance has portfolio and balance', () => {
     const response = synthesizeToolResults({
       existingFlags: [],
       toolCalls: [
@@ -716,19 +717,78 @@ describe('synthesizeToolResults', () => {
             sources: ['ghostfolio_api'],
             summary: 'Portfolio analysis from Ghostfolio performance data',
             performance: {
-              currentNetWorth: 351563.41,
-              totalValueInBaseCurrency: 314684.15
+              balance: 351563.41,
+              portfolio: 314684.15
             }
           }
         }
       ]
     });
 
-    expect(response.answer).toContain('Portfolio worth: 314684.15.');
-    expect(response.answer).not.toContain('Current net worth (portfolio + cash):');
+    expect(response.answer).toContain('Portfolio balance: 314684.15.');
+    // When we have portfolio value we show only Portfolio balance, not Balance, so the answer uses the portfolio number
+    expect(response.answer).not.toContain('Balance: 351563.41');
   });
 
-  it('shows portfolio worth before net performance for portfolio analysis prompts', () => {
+  it('uses top-level normalized performance not data.performance so portfolio balance is correct', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      toolCalls: [
+        {
+          toolName: 'portfolio_analysis',
+          success: true,
+          result: {
+            data_as_of: '2026-02-27T00:00:00.000Z',
+            sources: ['ghostfolio_api'],
+            summary: 'Portfolio analysis from Ghostfolio performance data',
+            performance: {
+              portfolio: 75040,
+              balance: 367055.09,
+              netPerformance: 2536.19,
+              totalInvestment: 75128.26
+            },
+            data: {
+              chart: [],
+              performance: {
+                currentNetWorth: 367055.09,
+                currentValueInBaseCurrency: 75040
+              }
+            }
+          }
+        }
+      ]
+    });
+
+    expect(response.answer).toContain('Portfolio balance: 75040.');
+    expect(response.answer).not.toContain('Balance: 367055.09');
+  });
+
+  it('shows only Portfolio balance when balance equals portfolio to avoid duplicating the same number', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      toolCalls: [
+        {
+          toolName: 'portfolio_analysis',
+          success: true,
+          result: {
+            data_as_of: '2026-02-27T00:00:00.000Z',
+            sources: ['ghostfolio_api'],
+            summary: 'Portfolio analysis from Ghostfolio performance data',
+            performance: {
+              balance: 366864.01,
+              portfolio: 366864.01,
+              netPerformance: 2345.11
+            }
+          }
+        }
+      ]
+    });
+
+    expect(response.answer).toContain('Portfolio balance: 366864.01.');
+    expect(response.answer).not.toContain('Balance: 366864.01.');
+  });
+
+  it('shows Portfolio before net performance for portfolio analysis prompts', () => {
     const response = synthesizeToolResults({
       existingFlags: [],
       userMessage: 'Analyze my portfolio',
@@ -741,7 +801,7 @@ describe('synthesizeToolResults', () => {
             sources: ['ghostfolio_api'],
             summary: 'Portfolio analysis from Ghostfolio performance data',
             performance: {
-              totalValueInBaseCurrency: 352394.34,
+              portfolio: 352394.34,
               netPerformance: 14814.36,
               netPerformancePercentage: 0.0007
             }
@@ -750,11 +810,11 @@ describe('synthesizeToolResults', () => {
       ]
     });
 
-    const worthIndex = response.answer.indexOf('Portfolio worth: 352394.34.');
+    const portfolioIndex = response.answer.indexOf('Portfolio balance: 352394.34.');
     const performanceIndex = response.answer.indexOf('Net performance: 14814.36.');
-    expect(worthIndex).toBeGreaterThan(-1);
+    expect(portfolioIndex).toBeGreaterThan(-1);
     expect(performanceIndex).toBeGreaterThan(-1);
-    expect(worthIndex).toBeLessThan(performanceIndex);
+    expect(portfolioIndex).toBeLessThan(performanceIndex);
   });
 
   it('renders findings for fact_compliance_check and surfaces mismatch risk', () => {

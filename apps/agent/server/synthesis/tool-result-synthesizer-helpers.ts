@@ -289,10 +289,17 @@ export function unwrapToolPayload(payload: Record<string, unknown>) {
     return payload;
   }
 
-  return {
+  const topLevelPerformance = payload.performance;
+  const unwrapped = {
     ...payload,
     ...nestedData
   };
+  // Prefer top-level normalized performance (e.g. portfolio_analysis returns performance.portfolio, .balance)
+  // over data.performance (raw API: currentNetWorth, currentValueInBaseCurrency) so synthesis uses the right numbers.
+  if (isObject(topLevelPerformance)) {
+    unwrapped.performance = topLevelPerformance;
+  }
+  return unwrapped;
 }
 
 export function extractBalanceAndCashFindings(payload: Record<string, unknown>): string[] {
@@ -313,18 +320,30 @@ function extractSummaryBalanceFindings(summary: unknown): string[] {
 
   const findings: string[] = [];
   const cash = numberOrUndefined(summary.cash);
-  const totalValue = numberOrUndefined(summary.totalValueInBaseCurrency);
+  const portfolioValue =
+    numberOrUndefined(summary.portfolio) ?? numberOrUndefined(summary.totalValueInBaseCurrency);
+  const balanceValue =
+    numberOrUndefined(summary.balance) ?? numberOrUndefined(summary.currentNetWorth);
   if (cash !== undefined && Number.isFinite(cash)) {
     findings.push(`Cash (USD): ${roundToTwo(cash)}.`);
   }
-  if (totalValue !== undefined && Number.isFinite(totalValue)) {
-    findings.push(`Portfolio worth: ${roundToTwo(totalValue)}.`);
+  if (portfolioValue !== undefined && Number.isFinite(portfolioValue)) {
+    findings.push(`Portfolio balance: ${roundToTwo(portfolioValue)}.`);
     const holdingsOnly =
-      cash !== undefined && Number.isFinite(cash) ? totalValue - cash : totalValue;
+      cash !== undefined && Number.isFinite(cash) ? portfolioValue - cash : portfolioValue;
     findings.push(
       `Holdings value (investments only, excluding cash): ${roundToTwo(holdingsOnly)}.`
     );
-    findings.push(`Total value (holdings + cash): ${roundToTwo(totalValue)}.`);
+    findings.push(`Total value (holdings + cash): ${roundToTwo(portfolioValue)}.`);
+  }
+  // When we have portfolio value, do not add Balance—use Portfolio balance only so the answer uses the portfolio number.
+  // Only add Balance when there is no portfolio value (e.g. holdings summary with different shape).
+  if (
+    balanceValue !== undefined &&
+    Number.isFinite(balanceValue) &&
+    portfolioValue === undefined
+  ) {
+    findings.push(`Balance (net worth): ${roundToTwo(balanceValue)}.`);
   }
   return findings;
 }

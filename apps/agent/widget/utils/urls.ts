@@ -47,6 +47,21 @@ export function resolveClearConversationApiUrl(chatApiUrl: string): string {
   return CHAT_API_PATH + '/clear';
 }
 
+export function resolveHistoryApiUrl(chatApiUrl: string): string {
+  if (chatApiUrl.endsWith(CHAT_API_PATH)) {
+    return chatApiUrl.slice(0, -'/chat'.length) + '/chat/history';
+  }
+  if (chatApiUrl.endsWith('/chat')) {
+    return chatApiUrl + '/history';
+  }
+  return CHAT_API_PATH + '/history';
+}
+
+export function resolveHistoryItemApiUrl(chatApiUrl: string, conversationId: string): string {
+  const base = resolveHistoryApiUrl(chatApiUrl);
+  return `${base}/${encodeURIComponent(conversationId)}`;
+}
+
 export function generateConversationId(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();

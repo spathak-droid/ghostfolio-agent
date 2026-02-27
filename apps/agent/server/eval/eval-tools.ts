@@ -152,10 +152,10 @@ export function createEvalTools(captures: ToolCapture[]): AgentTools {
       track('portfolio_analysis', inputOrRun, input);
       return buildResult({
         performance: {
-          currentNetWorth: 100000,
+          balance: 100000,
+          portfolio: 95000,
           netPerformance: 2500,
-          netPerformancePercentage: 0.025,
-          totalValueInBaseCurrency: 95000
+          netPerformancePercentage: 0.025
         },
         summary: 'Portfolio analysis from Ghostfolio data'
       });

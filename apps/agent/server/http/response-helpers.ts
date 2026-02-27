@@ -22,11 +22,11 @@ export function sendConfigError(response: Response, error: string): void {
 
 /**
  * Send a structured agent failure (HTTP 500).
- * Use for unhandled exceptions in chat, clear, or other agent operations.
+ * Use for unhandled exceptions in chat, clear, history, or other agent operations.
  */
 export function sendAgentFailed(
   response: Response,
-  errorCode: 'AGENT_CHAT_FAILED' | 'AGENT_CHAT_CLEAR_FAILED',
+  errorCode: 'AGENT_CHAT_FAILED' | 'AGENT_CHAT_CLEAR_FAILED' | 'AGENT_HISTORY_FAILED',
   options: { answer?: string } = {}
 ): void {
   const body: Record<string, string> = { code: errorCode, error: errorCode };

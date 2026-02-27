@@ -161,6 +161,87 @@ export const WIDGET_CSS_PART1 = `
     .agent-widget__new-chat-icon {
       display: block;
     }
+    .agent-widget__header {
+      position: relative;
+    }
+    .agent-widget__history-btn {
+      border: none;
+      background: transparent;
+      color: #5c6470;
+      cursor: pointer;
+      padding: 0;
+      width: 28px;
+      height: 28px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      transition: background 0.12s ease, color 0.12s ease;
+    }
+    .agent-widget__history-btn:hover {
+      background: rgba(11, 13, 23, 0.06);
+      color: #0b0d17;
+    }
+    .agent-widget__history-btn:focus-visible {
+      outline: 2px solid #3d7aff;
+      outline-offset: 2px;
+    }
+    .agent-widget__history-icon {
+      display: block;
+    }
+    .agent-widget__history-dropdown {
+      position: absolute;
+      top: 100%;
+      right: 0;
+      margin-top: 4px;
+      min-width: 220px;
+      max-width: 320px;
+      max-height: 260px;
+      overflow-y: auto;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 12px 32px rgba(11, 13, 23, 0.15), 0 0 0 1px rgba(11, 13, 23, 0.06);
+      z-index: 10;
+      padding: 6px 0;
+    }
+    .agent-widget__history-dropdown[hidden] {
+      display: none;
+    }
+    .agent-widget__history-loading,
+    .agent-widget__history-empty {
+      padding: 12px 14px;
+      font-size: 12px;
+      color: #5c6470;
+      text-align: center;
+    }
+    .agent-widget__history-item {
+      display: block;
+      width: 100%;
+      padding: 10px 14px;
+      border: none;
+      background: none;
+      color: #0b0d17;
+      font-size: 12px;
+      text-align: left;
+      cursor: pointer;
+      transition: background 0.12s ease;
+      line-height: 1.3;
+    }
+    .agent-widget__history-item:hover {
+      background: rgba(61, 122, 255, 0.08);
+    }
+    .agent-widget__history-item:not(:last-child) {
+      border-bottom: 1px solid rgba(11, 13, 23, 0.06);
+    }
+    .agent-widget__history-item-title {
+      display: block;
+    }
+    .agent-widget__history-item-date {
+      display: block;
+      font-size: 10px;
+      color: #7d8592;
+      margin-top: 2px;
+    }
     .agent-widget__form-wrap--hidden {
       display: none;
     }

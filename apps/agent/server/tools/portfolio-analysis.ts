@@ -54,7 +54,7 @@ function logPortfolioPerformanceFetch(data: Record<string, unknown>) {
     hasErrors: asBoolean(data.hasErrors),
     hasErrorsArray: Array.isArray(data.errors) ? data.errors.length : undefined,
     performance: {
-      currentNetWorth: asNumber(performance.currentNetWorth),
+      balance: asNumber(performance.currentNetWorth),
       netPerformance: asNumber(performance.netPerformance),
       netPerformancePercentage: asNumber(performance.netPerformancePercentage)
     },
@@ -66,10 +66,14 @@ function logPortfolioPerformanceFetch(data: Record<string, unknown>) {
 function normalizePerformancePayload(data: Record<string, unknown>) {
   const performance = isObject(data.performance) ? data.performance : {};
   return {
-    currentNetWorth: asNumber(performance.currentNetWorth) ?? 0,
+    /** Current net worth (display as Balance after synthesis) */
+    balance: asNumber(performance.currentNetWorth) ?? 0,
     netPerformance: asNumber(performance.netPerformance) ?? 0,
     netPerformancePercentage: asNumber(performance.netPerformancePercentage) ?? 0,
-    totalValueInBaseCurrency: asNumber(performance.currentValueInBaseCurrency) ?? 0
+    /** Current portfolio value in base currency (display as Portfolio after synthesis) */
+    portfolio: asNumber(performance.currentValueInBaseCurrency) ?? 0,
+    /** Total amount invested (cost basis) in base currency */
+    totalInvestment: asNumber(performance.totalInvestment) ?? 0
   };
 }
 

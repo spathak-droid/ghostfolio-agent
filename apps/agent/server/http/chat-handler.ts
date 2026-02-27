@@ -11,12 +11,20 @@ import { GhostfolioClient } from '../clients';
 import { logger } from '../utils';
 import { resolveRequestToken } from '../auth';
 import type { AgentChatResponse, AgentTraceStep } from '../types';
+import type { ConversationHistoryStore } from '../stores';
 import type { CreateAgentWithClient } from './types';
 import {
   sendAgentFailed,
   sendConfigError,
   sendValidationError
 } from './response-helpers';
+
+function deriveTitleFromConversation(conversation: { content: string; role: string }[]): string | null {
+  const firstUser = conversation.find((m) => m.role === 'user');
+  if (!firstUser?.content?.trim()) return null;
+  const trimmed = firstUser.content.trim();
+  return trimmed.length <= 512 ? trimmed : trimmed.slice(0, 509) + '...';
+}
 
 function summarizeTraceLatency(trace: AgentTraceStep[] | undefined): {
   llmMs: number;
@@ -40,12 +48,14 @@ function summarizeTraceLatency(trace: AgentTraceStep[] | undefined): {
 export function createChatHandler({
   allowBodyAccessToken,
   allowInsecureGhostfolioHttp,
+  conversationHistoryStore,
   createAgentWithClient,
   ghostfolioAllowedHosts,
   ghostfolioBaseUrl
 }: {
   allowBodyAccessToken: boolean;
   allowInsecureGhostfolioHttp: boolean;
+  conversationHistoryStore: ConversationHistoryStore;
   createAgentWithClient: CreateAgentWithClient;
   ghostfolioAllowedHosts: string[];
   ghostfolioBaseUrl: string;
@@ -144,6 +154,28 @@ export function createChatHandler({
         toolMs: breakdown.toolMs,
         totalMs
       };
+
+      await (async () => {
+        try {
+          const client = new GhostfolioClient(resolvedGhostfolioBaseUrl);
+          const user = await client.getUser({ impersonationId, token });
+          const userId = user && typeof user === 'object' && typeof (user as { id?: string }).id === 'string'
+            ? (user as { id: string }).id
+            : null;
+          if (!userId || !chatResponse.conversation?.length) return;
+          const title = deriveTitleFromConversation(chatResponse.conversation);
+          await conversationHistoryStore.save({
+            conversationId: validation.params.conversationId,
+            userId,
+            messages: chatResponse.conversation,
+            title
+          });
+        } catch (err) {
+          logger.debug('[agent.chat] history_save_skipped', {
+            message: err instanceof Error ? err.message : String(err)
+          });
+        }
+      })();
 
       response.status(200).json(chatResponse);
     } catch (error) {

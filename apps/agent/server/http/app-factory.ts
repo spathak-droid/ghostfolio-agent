@@ -11,6 +11,9 @@ export function createAgentApp({
   clearRateLimiter,
   feedbackHandler,
   feedbackRateLimiter,
+  historyGetHandler,
+  historyListHandler,
+  historyRateLimiter,
   widgetCorsOrigin,
   widgetDistPath
 }: {
@@ -20,6 +23,9 @@ export function createAgentApp({
   clearRateLimiter?: RequestHandler;
   feedbackHandler: RequestHandler;
   feedbackRateLimiter?: RequestHandler;
+  historyGetHandler: RequestHandler;
+  historyListHandler: RequestHandler;
+  historyRateLimiter?: RequestHandler;
   widgetCorsOrigin: string;
   widgetDistPath: string;
 }) {
@@ -50,6 +56,8 @@ export function createAgentApp({
 
   app.post('/chat/clear', clearRateLimiter ?? ((_req, _res, next) => next()), clearHandler);
   app.post('/chat', chatRateLimiter ?? ((_req, _res, next) => next()), chatHandler);
+  app.get('/chat/history', historyRateLimiter ?? ((_req, _res, next) => next()), historyListHandler);
+  app.get('/chat/history/:conversationId', historyRateLimiter ?? ((_req, _res, next) => next()), historyGetHandler);
   app.post('/feedback', feedbackRateLimiter ?? ((_req, _res, next) => next()), feedbackHandler);
 
   return app;

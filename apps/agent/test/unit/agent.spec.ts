@@ -290,7 +290,7 @@ describe('standalone agent orchestrator', () => {
 
     expect(answerFinanceQuestion).toHaveBeenCalled();
     expect(answerFinanceQuestion.mock.calls[0]?.[0]).toContain(
-      'use totalValueInBaseCurrency as portfolio worth'
+      'portfolio balance'
     );
     expect(response.answer).toBe('Your portfolio is worth 352394.34 USD.');
   });
@@ -1031,7 +1031,8 @@ describe('standalone agent orchestrator', () => {
       allocation: [],
       data_as_of: '2026-02-27T00:00:00.000Z',
       performance: {
-        currentNetWorth: 351101.8,
+        balance: 351101.8,
+        portfolio: 351101.8,
         netPerformance: 13521.8,
         netPerformancePercentage: 0.0006
       },

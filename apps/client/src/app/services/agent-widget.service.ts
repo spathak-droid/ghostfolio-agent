@@ -53,6 +53,11 @@ export class AgentWidgetService {
     script.src = this.scriptUrl;
     script.async = true;
     script.setAttribute('data-agent-widget-script', 'true');
+    // So the widget sends chat/auth/feedback to this app's origin (API), not the script origin.
+    const origin = this.document.defaultView?.location?.origin ?? '';
+    if (origin) {
+      script.setAttribute('data-api-base', origin);
+    }
 
     this.document.body.appendChild(script);
     this.hasMounted = true;

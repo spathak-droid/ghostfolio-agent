@@ -4,6 +4,14 @@ export {
   createRedisConversationStore
 } from './conversation-store';
 export type { AgentConversationStore, AgentWorkflowState } from './conversation-store';
+export {
+  createConversationHistoryStoreFromEnv
+} from './conversation-history-store';
+export type {
+  ConversationHistoryEntry,
+  ConversationHistoryItem,
+  ConversationHistoryStore
+} from './conversation-history-store';
 export { buildMemoryFromFeedbackRows, toFeedbackMemoryContext } from './feedback-memory';
 export {
   createFeedbackStoreFromEnv,

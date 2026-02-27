@@ -130,12 +130,12 @@ export async function synthesizeAndFinalizeResponse({
     try {
       const worthInstruction = isPortfolioWorthQuestion(message)
         ? [
-            'For portfolio worth questions: use totalValueInBaseCurrency as portfolio worth.'
+            'For portfolio worth questions: state portfolio balance (portfolio field) explicitly, e.g. "Portfolio balance $X". Use balance only when it differs from portfolio. Use totalInvestment for total invested when comparing.'
           ]
         : [];
       const analysisWorthInstruction = shouldLeadWithPortfolioWorth(message)
         ? [
-            'For portfolio analysis responses, start with portfolio worth using totalValueInBaseCurrency when available.'
+            'For portfolio analysis: the main number to report is from the line "Portfolio balance: N" in the findings—say "Portfolio balance $N" (use that exact N). Do NOT use the number from "Balance:" for the portfolio value; Balance is net worth and may differ. Then net performance, peak net worth, drawdown.'
           ]
         : [];
       const groundedPrompt = [

@@ -55,6 +55,10 @@ describe('AgentWidgetService', () => {
     expect(injectedScript.getAttribute('src')).toBe(
       'https://agent.local/widget/index.js'
     );
+    // Chat/auth/feedback should target the page origin (API), not the script origin.
+    expect(injectedScript.getAttribute('data-api-base')).toBe(
+      document.location.origin
+    );
   });
 
   it('removes injected widget script on unmount', () => {

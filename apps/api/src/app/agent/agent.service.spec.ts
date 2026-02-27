@@ -168,4 +168,29 @@ describe('AgentService', () => {
       status: 503
     });
   });
+
+  it('uses http for *.railway.internal so internal TLS does not fail', async () => {
+    process.env.AGENT_SERVICE_URL = 'https://confident-acceptance.railway.internal:4444';
+    fetchMock.mockResolvedValue({
+      json: async () => ({
+        answer: 'ok',
+        conversation: [],
+        errors: [],
+        toolCalls: [],
+        verification: { confidence: 0, isValid: true }
+      }),
+      ok: true
+    });
+
+    const service = new AgentService();
+    await service.chat({
+      conversationId: 'c',
+      message: 'hi'
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://confident-acceptance.railway.internal:4444/chat',
+      expect.any(Object)
+    );
+  });
 });

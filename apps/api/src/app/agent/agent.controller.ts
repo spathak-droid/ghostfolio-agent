@@ -60,6 +60,31 @@ export class AgentController {
     return this.agentService.feedback(body, authorizationHeader, impersonationId);
   }
 
+  @Get('chat/history')
+  public async getHistory(
+    @Headers('authorization') authorizationHeader?: string,
+    @Headers('impersonation-id') impersonationId?: string
+  ): Promise<{ conversations: { id: string; title: string | null; updatedAt: string; messageCount: number }[] }> {
+    return this.agentService.getHistory(authorizationHeader, impersonationId);
+  }
+
+  @Get('chat/history/:conversationId')
+  public async getHistoryById(
+    @Param('conversationId') conversationId: string,
+    @Headers('authorization') authorizationHeader?: string,
+    @Headers('impersonation-id') impersonationId?: string
+  ): Promise<{
+    id: string;
+    userId: string;
+    title: string | null;
+    messages: { content: string; role: 'user' | 'assistant' }[];
+    createdAt: string;
+    updatedAt: string;
+  }> {
+    const token = authorizationHeader;
+    return this.agentService.getHistoryById(conversationId, token, impersonationId);
+  }
+
   @Get('widget/:asset')
   public async widgetAssetSingle(
     @Param('asset') asset: string,

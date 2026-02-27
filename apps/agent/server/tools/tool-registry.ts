@@ -268,7 +268,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
         performance: {
           type: 'object',
           description:
-            'Normalized performance values: netPerformance, netPerformancePercentage, totalValueInBaseCurrency, currentNetWorth'
+            'Normalized performance: portfolio = current portfolio value; balance = current net worth; totalInvestment = total invested (cost basis); netPerformance, netPerformancePercentage'
         },
         data_as_of: { type: 'string', description: 'ISO timestamp of data' },
         summary: { type: 'string', description: 'Short human-readable summary' },
@@ -296,7 +296,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
         allocation: { type: 'object', description: 'Normalized holdings allocation by symbol' },
         performance: {
           type: 'object',
-          description: 'Normalized summary performance (netPerformance, totalValueInBaseCurrency, etc.)'
+          description: 'Normalized summary performance (portfolio, balance, netPerformance, etc.)'
         },
         data_as_of: { type: 'string', description: 'ISO timestamp of data' },
         summary: { type: 'string', description: 'Short human-readable summary' },
