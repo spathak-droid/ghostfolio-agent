@@ -2,7 +2,7 @@ import {
   buildToolCallFailureResult,
   sanitizeErrorMessageForClient,
   toOrchestrationErrorEntry
-} from '../../server/error-normalization';
+} from '../../server/utils';
 
 describe('toOrchestrationErrorEntry', () => {
   it('returns TOOL_EXECUTION_TIMEOUT and recoverable true when isTimeout is true', () => {

@@ -1,7 +1,7 @@
 import {
   createFeedbackStoreForTest,
   createFeedbackStoreFromEnv
-} from '../../server/feedback-store';
+} from '../../server/stores';
 
 describe('feedback-store', () => {
   it('persists feedback after creating table/indexes', async () => {

@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-import { logger } from './logger';
+import { logger } from './utils';
 
 // Process-level crash handlers so production stays up and failures are visible in logs.
 // Unhandled rejections are logged and do not exit; uncaught exceptions log and exit after a short delay.
@@ -22,13 +22,16 @@ function installCrashHandlers(): void {
 
 installCrashHandlers();
 
-import { createAgent } from './agent';
-import { createConversationStoreFromEnv } from './conversation-store';
-import { createDefaultContextManager } from './context-manager';
-import { createFeedbackStoreFromEnv } from './feedback-store';
-import { createRegulationStoreFromEnv } from './regulation-store';
-import { GhostfolioClient } from './ghostfolio-client';
-import { createOpenAiClientFromEnv } from './openai-client';
+import { createAgent, createDefaultContextManager } from './agent';
+import {
+  createConversationStoreFromEnv,
+  createFeedbackStoreFromEnv,
+  createRegulationStoreFromEnv,
+  createToolResponseCacheStoreFromEnv,
+  withToolResponseCache
+} from './stores';
+import { GhostfolioClient } from './clients';
+import { createOpenAiClientFromEnv } from './llm';
 import { createAgentApp, resolveWidgetRuntimeConfig } from './http/app-factory';
 import { createChatHandler } from './http/chat-handler';
 import { createClearHandler } from './http/clear-handler';
@@ -48,12 +51,9 @@ import { marketDataTool } from './tools/market-data';
 import { marketOverviewTool } from './tools/market-overview';
 import { portfolioAnalysisTool } from './tools/portfolio-analysis';
 import { staticAnalysisTool } from './tools/static-analysis';
+import { taxEstimateTool } from './tools/tax-estimate';
 import { transactionCategorizeTool } from './tools/transaction-categorize';
 import { transactionTimelineTool } from './tools/transaction-timeline';
-import {
-  createToolResponseCacheStoreFromEnv,
-  withToolResponseCache
-} from './tool-response-cache';
 
 const port = Number(process.env.PORT ?? process.env.AGENT_PORT ?? '4444');
 const host = process.env.HOST ?? '0.0.0.0';
@@ -387,6 +387,24 @@ function createAgentWithClient(ghostfolioClient: GhostfolioClient) {
               token
             }),
           toolName: 'static_analysis',
+          ttlMs: toolResponseCacheTtlMs
+        });
+      },
+      taxEstimate: (a, b) => {
+        const { impersonationId, message, range, take, token } = toolInput(a, b);
+        return withToolResponseCache({
+          cache: toolResponseCache,
+          input: { impersonationId, message, range, take, token },
+          task: () =>
+            taxEstimateTool({
+              client: ghostfolioClient,
+              impersonationId,
+              message,
+              range,
+              take,
+              token
+            }),
+          toolName: 'tax_estimate',
           ttlMs: toolResponseCacheTtlMs
         });
       },

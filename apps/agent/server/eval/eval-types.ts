@@ -107,7 +107,6 @@ export interface EvalStaticDimensionInput {
   comparableText: string;
   captures: ToolCapture[];
   dimension: Exclude<EvalDimension, 'consistency'>;
-  durationMs: number;
   llmTrace: LlmTrace;
   response: AgentChatResponse;
   testCase: EvalCase;

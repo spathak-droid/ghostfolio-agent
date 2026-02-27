@@ -1,4 +1,4 @@
-import { GhostfolioClient } from '../ghostfolio-client';
+import { GhostfolioClient } from '../clients';
 import { resolveSymbol } from './symbol-resolver';
 import { toToolErrorPayload, type ToolErrorPayload } from './tool-error';
 

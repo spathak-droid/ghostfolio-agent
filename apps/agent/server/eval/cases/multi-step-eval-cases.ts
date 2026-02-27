@@ -246,5 +246,154 @@ export const MULTI_STEP_EVAL_CASES: EvalCase[] = [
     "mustNotContain": [
       "I executed a buy order"
     ]
+  },
+  {
+    "id": "fact_compliance_check-multi-step-1",
+    "query": "fact-check this trade and run a compliance check for wash sale and disclosures",
+    "checkDoc": "docs/agent/compliance-regulations-us.md",
+    "expectedTools": [
+      "fact_compliance_check"
+    ],
+    "difficulty": "multi",
+    "expectedOutput": [],
+    "passFailCriteria": [
+      "must satisfy expected route",
+      "must invoke expected tools",
+      "must handle combined fact+compliance intent"
+    ],
+    "dimensions": [
+      "tool_execution",
+      "correctness"
+    ],
+    "expectedRoute": "llm_tools_llm_user",
+    "expectedToolCountAtLeast": 1,
+    "requireSuccessfulToolCalls": true,
+    "mustContain": [],
+    "mustNotContain": []
+  },
+  {
+    "id": "portfolio_and_holdings-multi-step-1",
+    "query": "analyze my portfolio allocation and also show holdings analysis",
+    "expectedTools": [
+      "portfolio_analysis",
+      "holdings_analysis"
+    ],
+    "difficulty": "multi",
+    "expectedOutput": [
+      "Portfolio analysis from Ghostfolio data"
+    ],
+    "passFailCriteria": [
+      "must satisfy expected route",
+      "must invoke expected tools",
+      "must include expected output fragment"
+    ],
+    "dimensions": [
+      "tool_execution",
+      "correctness"
+    ],
+    "expectedRoute": "llm_tools_llm_user",
+    "expectedToolCountAtLeast": 2,
+    "requireSuccessfulToolCalls": true,
+    "mustContain": [],
+    "mustNotContain": []
+  },
+  {
+    "id": "market_and_fact_check-multi-step-1",
+    "query": "get market data for btc and then fact check btc price",
+    "expectedTools": [
+      "market_data",
+      "fact_check"
+    ],
+    "difficulty": "multi",
+    "expectedOutput": [],
+    "passFailCriteria": [
+      "must satisfy expected route",
+      "must invoke expected tools",
+      "must include both market and fact verification steps"
+    ],
+    "dimensions": [
+      "tool_execution",
+      "correctness"
+    ],
+    "expectedRoute": "llm_tools_llm_user",
+    "expectedToolCountAtLeast": 2,
+    "requireSuccessfulToolCalls": true,
+    "mustContain": [],
+    "mustNotContain": []
+  },
+  {
+    "id": "transactions_and_orders-multi-step-1",
+    "query": "show my recent transactions and also list my orders",
+    "expectedTools": [
+      "get_transactions",
+      "get_orders"
+    ],
+    "difficulty": "multi",
+    "expectedOutput": [],
+    "passFailCriteria": [
+      "must satisfy expected route",
+      "must invoke expected tools",
+      "must combine transaction and order retrieval"
+    ],
+    "dimensions": [
+      "tool_execution",
+      "correctness"
+    ],
+    "expectedRoute": "llm_tools_llm_user",
+    "expectedToolCountAtLeast": 2,
+    "requireSuccessfulToolCalls": true,
+    "mustContain": [],
+    "mustNotContain": []
+  },
+  {
+    "id": "categorize_and_timeline-multi-step-1",
+    "query": "categorize my transactions and tell me when i bought tsla and at what price",
+    "expectedTools": [
+      "get_transactions",
+      "transaction_categorize",
+      "transaction_timeline"
+    ],
+    "difficulty": "multi",
+    "expectedOutput": [],
+    "passFailCriteria": [
+      "must satisfy expected route",
+      "must invoke expected tools",
+      "must combine categorization and timeline analysis"
+    ],
+    "dimensions": [
+      "tool_execution",
+      "correctness"
+    ],
+    "expectedRoute": "llm_tools_llm_user",
+    "expectedToolCountAtLeast": 2,
+    "requireSuccessfulToolCalls": true,
+    "mustContain": [],
+    "mustNotContain": []
+  },
+  {
+    "id": "market_lookup_plus_overview_plus_static-multi-step-1",
+    "query": "run market data lookup for aapl, give market overview, and run static portfolio analysis",
+    "expectedTools": [
+      "market_data_lookup",
+      "market_overview"
+    ],
+    "difficulty": "multi",
+    "expectedOutput": [],
+    "passFailCriteria": [
+      "must satisfy expected route",
+      "must invoke expected tools",
+      "must orchestrate at least three steps"
+    ],
+    "dimensions": [
+      "tool_execution",
+      "correctness",
+      "consistency"
+    ],
+    "expectedRoute": "llm_tools_llm_user",
+    "expectedToolCountAtLeast": 2,
+    "repeatRuns": 2,
+    "requireSuccessfulToolCalls": true,
+    "mustContain": [],
+    "mustNotContain": []
   }
 ];

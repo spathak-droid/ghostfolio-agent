@@ -1,4 +1,4 @@
-import { createDefaultContextManager } from '../../server/context-manager';
+import { createDefaultContextManager } from '../../server/agent';
 import type { AgentConversationMessage } from '../../server/types';
 
 describe('context manager', () => {

@@ -3,7 +3,7 @@ import 'dotenv/config';
 import { DEFAULT_EVAL_CASES } from './default-eval-cases';
 import { createLiveEvalTools } from './live-tools';
 import { runEvalCases } from './eval-runner';
-import { createOpenAiClientFromEnv } from '../openai-client';
+import { createOpenAiClientFromEnv } from '../llm';
 
 type EvalCategory = 'happy_path' | 'edge_case' | 'adversarial' | 'multi_step' | 'uncategorized';
 

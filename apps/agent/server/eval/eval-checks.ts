@@ -53,13 +53,18 @@ export async function evaluateCase({
         comparableText,
         captures,
         dimension,
-        durationMs,
         llmTrace,
         response,
         testCase
       })
     );
   }
+
+  checks.push(buildLatencyCheck({
+    durationMs,
+    explicitBudgetMs: testCase.latencyMsMax,
+    toolCallCount: response.toolCalls.length
+  }));
 
   const routeCheck = checkExpectedRoute(testCase, response);
   if (routeCheck) {
@@ -150,7 +155,6 @@ function evaluateStaticDimension({
   comparableText,
   captures,
   dimension,
-  durationMs,
   llmTrace,
   response,
   testCase
@@ -173,15 +177,35 @@ function evaluateStaticDimension({
     checks.push(...checkSafetyAndEdge(testCase, response, llmTrace, dimension));
   }
 
-  if (dimension === 'latency') {
-    checks.push({
-      dimension,
-      message: `latency observed ${durationMs}ms (informational only, not scored)`,
-      passed: true
-    });
+  return checks;
+}
+
+function resolveLatencyBudgetMs(toolCallCount: number, explicitBudgetMs?: number): number {
+  if (typeof explicitBudgetMs === 'number' && Number.isFinite(explicitBudgetMs) && explicitBudgetMs >= 0) {
+    return explicitBudgetMs;
   }
 
-  return checks;
+  if (toolCallCount <= 1) return 5_000;
+  if (toolCallCount === 2) return 8_000;
+  if (toolCallCount === 3) return 12_000;
+  return 15_000;
+}
+
+function buildLatencyCheck({
+  durationMs,
+  explicitBudgetMs,
+  toolCallCount
+}: {
+  durationMs: number;
+  explicitBudgetMs?: number;
+  toolCallCount: number;
+}): EvalCheckResult {
+  const latencyBudgetMs = resolveLatencyBudgetMs(toolCallCount, explicitBudgetMs);
+  return {
+    dimension: 'latency',
+    message: `latency observed ${durationMs}ms with ${toolCallCount} tool call(s); budget ${latencyBudgetMs}ms`,
+    passed: durationMs < latencyBudgetMs
+  };
 }
 
 async function runConsistencyCheck({

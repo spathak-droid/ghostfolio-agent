@@ -13,8 +13,8 @@ import {
   symbolToCoinGeckoId,
   type CoinGeckoClientError,
   type CoinGeckoClientResponse
-} from '../coingecko-client';
-import type { GhostfolioClient } from '../ghostfolio-client';
+} from '../clients';
+import type { GhostfolioClient } from '../clients';
 import { toToolErrorPayload } from './tool-error';
 import { marketDataTool } from './market-data';
 

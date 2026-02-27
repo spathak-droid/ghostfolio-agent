@@ -1,4 +1,4 @@
-import { logger } from '../logger';
+import { logger } from '../utils';
 import type { AgentFeedbackMemory, AgentToolName } from '../types';
 import {
   buildDeterministicToolSummary,

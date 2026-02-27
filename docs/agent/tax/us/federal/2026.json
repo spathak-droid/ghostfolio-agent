@@ -1,0 +1,101 @@
+{
+  "taxYear": 2026,
+  "standardDeduction": {
+    "single": 16100,
+    "marriedFilingJointly": 32200,
+    "marriedFilingSeparately": 16100,
+    "headOfHousehold": 24150
+  },
+  "ordinaryBrackets": {
+    "single": [
+      { "upTo": 12400, "rate": 0.10 },
+      { "upTo": 50400, "rate": 0.12 },
+      { "upTo": 105700, "rate": 0.22 },
+      { "upTo": 201775, "rate": 0.24 },
+      { "upTo": 256225, "rate": 0.32 },
+      { "upTo": 640600, "rate": 0.35 },
+      { "upTo": null, "rate": 0.37 }
+    ],
+    "marriedFilingJointly": [
+      { "upTo": 24800, "rate": 0.10 },
+      { "upTo": 100800, "rate": 0.12 },
+      { "upTo": 211400, "rate": 0.22 },
+      { "upTo": 403550, "rate": 0.24 },
+      { "upTo": 512450, "rate": 0.32 },
+      { "upTo": 768700, "rate": 0.35 },
+      { "upTo": null, "rate": 0.37 }
+    ],
+    "marriedFilingSeparately": [
+      { "upTo": 12400, "rate": 0.10 },
+      { "upTo": 50400, "rate": 0.12 },
+      { "upTo": 105700, "rate": 0.22 },
+      { "upTo": 201775, "rate": 0.24 },
+      { "upTo": 256225, "rate": 0.32 },
+      { "upTo": 384350, "rate": 0.35 },
+      { "upTo": null, "rate": 0.37 }
+    ],
+    "headOfHousehold": [
+      { "upTo": 17700, "rate": 0.10 },
+      { "upTo": 67750, "rate": 0.12 },
+      { "upTo": 114950, "rate": 0.22 },
+      { "upTo": 202450, "rate": 0.24 },
+      { "upTo": 266450, "rate": 0.32 },
+      { "upTo": 640600, "rate": 0.35 },
+      { "upTo": null, "rate": 0.37 }
+    ]
+  },
+  "longTermCapitalGainsBrackets": {
+    "single": [
+      { "upTo": 49450, "rate": 0.00 },
+      { "upTo": 545500, "rate": 0.15 },
+      { "upTo": null, "rate": 0.20 }
+    ],
+    "marriedFilingJointly": [
+      { "upTo": 98900, "rate": 0.00 },
+      { "upTo": 613700, "rate": 0.15 },
+      { "upTo": null, "rate": 0.20 }
+    ],
+    "marriedFilingSeparately": [
+      { "upTo": 49450, "rate": 0.00 },
+      { "upTo": 306850, "rate": 0.15 },
+      { "upTo": null, "rate": 0.20 }
+    ],
+    "headOfHousehold": [
+      { "upTo": 66200, "rate": 0.00 },
+      { "upTo": 579600, "rate": 0.15 },
+      { "upTo": null, "rate": 0.20 }
+    ]
+  },
+  "niit": {
+    "threshold": {
+      "single": 200000,
+      "marriedFilingJointly": 250000,
+      "marriedFilingSeparately": 125000,
+      "headOfHousehold": 200000
+    },
+    "rate": 0.038
+  },
+  "capitalLossRules": {
+    "maxOrdinaryOffset": 3000
+  },
+  "optional": {
+    "AMT": {
+      "exemptionAmount": {
+        "single": 90100,
+        "marriedFilingJointly": 140200,
+        "marriedFilingSeparately": 70100,
+        "headOfHousehold": 90100
+      },
+      "phaseoutStartsAt": {
+        "single": 500000,
+        "marriedFilingJointly": 1000000,
+        "marriedFilingSeparately": 500000,
+        "headOfHousehold": 500000
+      },
+      "rates": [
+        { "upTo": null, "rate": 0.26 },
+        { "upTo": null, "rate": 0.28 }
+      ]
+    }
+  }
+}

@@ -5,8 +5,8 @@
  */
 
 import type { CreateOrderParams, OrderType } from '../types';
-import type { GhostfolioClient } from '../ghostfolio-client';
-import type { CreateOrderDtoBody } from '../ghostfolio-client';
+import type { GhostfolioClient } from '../clients';
+import type { CreateOrderDtoBody } from '../clients';
 import { isUsdTransactionCapExceeded, MAX_USD_TRANSACTION_AMOUNT } from './order-limits';
 import { resolveSymbolWithCandidates } from './symbol-resolver';
 import { toToolErrorPayload } from './tool-error';

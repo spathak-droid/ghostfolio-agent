@@ -1,4 +1,4 @@
-import type { CreateOrderDtoBody, GhostfolioClient } from '../ghostfolio-client';
+import type { CreateOrderDtoBody, GhostfolioClient } from '../clients';
 import type { CreateOrderParams, OrderType } from '../types';
 import { toToolErrorPayload } from './tool-error';
 

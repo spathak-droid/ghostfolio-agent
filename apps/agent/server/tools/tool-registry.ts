@@ -6,7 +6,7 @@
  * Output schemas align with Ghostfolio API responses; see docs/agent/ghostfolio-api-response-schemas.md.
  *
  * Used by:
- * - openai-client.ts: getSelectableToolDefinitions(), formatToolsForLlm(), SELECTABLE_TOOL_NAMES (LLM prompts + parse)
+ * - llm/openai-client.ts: getSelectableToolDefinitions(), formatToolsForLlm(), SELECTABLE_TOOL_NAMES (LLM prompts + parse)
  * - agent.ts: isTransactionDependentTool(), SELECTABLE_TOOL_NAMES, TRANSACTION_DEPENDENT_TOOL_NAMES (routing + keyword fallback)
  * - synthesis/tool-result-synthesizer.ts: getToolDefinition() (prefer tool answer/summary per output_schema)
  * - eval-runner.ts: SELECTABLE_TOOL_NAMES (EvalCase.expectedTool type)
@@ -167,6 +167,47 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
         sources: { type: 'array', description: 'Source identifiers (ghostfolio_api, coingecko)' },
         data_as_of: { type: 'string', description: 'ISO timestamp' },
         summary: { type: 'string', description: 'Short summary' }
+      }
+    },
+    error_model: TOOL_ERROR,
+    idempotent: true
+  },
+  {
+    name: 'tax_estimate',
+    description:
+      'Use when the user asks to estimate taxes from portfolio activities, realized gains/losses, dividends, or interest. ' +
+      'Computes a deterministic estimate from recorded transactions (FIFO lots) using local federal tax tables. ' +
+      'When filing status, tax year, or ordinary income are not provided, the tool returns missing_params and an answer that asks the user for those details; surface that answer so the user can supply the information. ' +
+      'Good for: "estimate my taxes", "capital gains tax estimate", "tax on my trades and dividends".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        ...COMMON_INPUT.properties,
+        range: { type: 'string', description: 'Optional Ghostfolio range (e.g. max, ytd, 1y)' },
+        take: { type: 'number', description: 'Optional max activities to load (default 200)' }
+      },
+      required: ['message']
+    },
+    output_schema: {
+      type: 'object',
+      description: 'Tax estimate with realized gains/losses, income totals, and federal tax breakdown',
+      properties: {
+        success: { type: 'boolean', description: 'Whether estimate execution succeeded' },
+        tax_year: { type: 'number', description: 'Tax year used for table lookup' },
+        filing_status: { type: 'string', description: 'Filing status used in calculation' },
+        missing_params: {
+          type: 'array',
+          description:
+            'When present, parameters were not provided by the user; the answer asks for these. Each item has param (e.g. tax_year, filing_status, ordinary_income) and question (string to ask the user).'
+        },
+        realized: { type: 'object', description: 'Short/long-term gains and losses with net capital result' },
+        income: { type: 'object', description: 'Dividend and interest totals from activities' },
+        estimate: { type: 'object', description: 'Federal tax components and total estimate' },
+        assumptions: { type: 'array', description: 'Assumptions and data-quality notes' },
+        summary: { type: 'string', description: 'Short summary' },
+        answer: { type: 'string', description: 'Natural-language result; when missing_params is present, includes questions for the user' },
+        data_as_of: { type: 'string', description: 'ISO timestamp' },
+        sources: { type: 'array', description: 'Source identifiers and tax table path' }
       }
     },
     error_model: TOOL_ERROR,
@@ -677,6 +718,7 @@ export const SELECTABLE_TOOL_NAMES: readonly AgentToolName[] = [
   'compliance_check',
   'fact_compliance_check',
   'fact_check',
+  'tax_estimate',
   'portfolio_analysis',
   'holdings_analysis',
   'static_analysis',

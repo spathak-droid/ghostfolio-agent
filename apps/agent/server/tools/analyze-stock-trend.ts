@@ -1,4 +1,4 @@
-import type { GhostfolioClient } from '../ghostfolio-client';
+import type { GhostfolioClient } from '../clients';
 import { resolveSymbolWithCandidates } from './symbol-resolver';
 import { toToolErrorPayload } from './tool-error';
 

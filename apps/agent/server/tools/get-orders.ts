@@ -8,7 +8,7 @@
  * Failure modes: API error → error payload; no match → success with empty orders and "I didn't find that" answer.
  */
 
-import type { GhostfolioClient } from '../ghostfolio-client';
+import type { GhostfolioClient } from '../clients';
 import { toToolErrorPayload } from './tool-error';
 
 export interface GetOrdersToolInput {

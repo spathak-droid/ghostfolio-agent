@@ -10,5 +10,7 @@ describe('tool registry', () => {
     expect(SELECTABLE_TOOL_NAMES).toContain('compliance_check');
     expect(names).toContain('fact_compliance_check');
     expect(SELECTABLE_TOOL_NAMES).toContain('fact_compliance_check');
+    expect(names).toContain('tax_estimate');
+    expect(SELECTABLE_TOOL_NAMES).toContain('tax_estimate');
   });
 });

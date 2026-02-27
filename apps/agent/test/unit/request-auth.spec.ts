@@ -1,4 +1,4 @@
-import { resolveRequestToken } from '../../server/request-auth';
+import { resolveRequestToken } from '../../server/auth';
 
 describe('resolveRequestToken', () => {
   it('uses Authorization header token when present', () => {

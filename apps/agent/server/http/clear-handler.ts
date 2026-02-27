@@ -4,9 +4,10 @@ import {
   validateClearChatBody,
   validateTokenLength
 } from '../chat-request-validation';
-import { logger } from '../logger';
-import { resolveRequestToken } from '../request-auth';
+import { logger } from '../utils';
+import { resolveRequestToken } from '../auth';
 import type { ConversationStoreLike } from './types';
+import { sendAgentFailed, sendValidationError } from './response-helpers';
 
 export function createClearHandler({
   allowBodyAccessToken,
@@ -29,21 +30,21 @@ export function createClearHandler({
     });
     if (!tokenResolution.ok) {
       const err = tokenResolution as { error: string; status: 400 };
-      response.status(err.status).json({ code: 'VALIDATION_ERROR', error: err.error });
+      sendValidationError(response, err.error, err.status);
       return;
     }
 
     const tokenCheck = validateTokenLength(tokenResolution.token);
     if (!tokenCheck.ok) {
       const err = tokenCheck as { error: string; status: 400 };
-      response.status(err.status).json({ code: 'VALIDATION_ERROR', error: err.error });
+      sendValidationError(response, err.error, err.status);
       return;
     }
 
     const validation = validateClearChatBody(requestBody);
     if (!validation.ok) {
       const err = validation as { error: string; status: 400 };
-      response.status(err.status).json({ code: 'VALIDATION_ERROR', error: err.error });
+      sendValidationError(response, err.error, err.status);
       return;
     }
 
@@ -54,9 +55,7 @@ export function createClearHandler({
       logger.error('[agent.chat.clear] UNHANDLED_ERROR', {
         message: error instanceof Error ? error.message : 'clearConversation failed'
       });
-      response
-        .status(500)
-        .json({ code: 'AGENT_CHAT_CLEAR_FAILED', error: 'AGENT_CHAT_CLEAR_FAILED' });
+      sendAgentFailed(response, 'AGENT_CHAT_CLEAR_FAILED');
     }
   };
 }

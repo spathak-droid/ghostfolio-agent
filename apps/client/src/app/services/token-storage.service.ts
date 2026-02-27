@@ -26,6 +26,7 @@ export class TokenStorageService {
       window.localStorage.setItem(KEY_TOKEN, token);
     }
     window.sessionStorage.setItem(KEY_TOKEN, token);
+    this.dispatchAuthChanged();
   }
 
   public signOut() {
@@ -42,6 +43,16 @@ export class TokenStorageService {
 
     if (utmSource) {
       window.localStorage.setItem('utm_source', utmSource);
+    }
+    this.dispatchAuthChanged();
+  }
+
+  /** Notify the agent widget (and any other listeners) that auth state changed. */
+  private dispatchAuthChanged() {
+    try {
+      window.dispatchEvent(new CustomEvent('ghostfolio-auth-changed'));
+    } catch {
+      // ignore in unsupported environments
     }
   }
 }

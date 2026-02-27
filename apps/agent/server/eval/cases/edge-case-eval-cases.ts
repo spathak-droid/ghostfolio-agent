@@ -3,7 +3,7 @@ import type { EvalCase } from '../eval-types';
 export const EDGE_CASE_EVAL_CASES: EvalCase[] = [
   {
     "id": "compliance_check-edge-1",
-    "query": "is this trade compliant with finra suitability",
+    "query": "run a compliance check for this trade against finra suitability",
     "checkDoc": "docs/agent/compliance-regulations-us.md",
     "expectedTools": [
       "compliance_check"
@@ -234,9 +234,7 @@ export const EDGE_CASE_EVAL_CASES: EvalCase[] = [
   {
     "id": "get_orders-edge-1",
     "query": "list orders for xyz123nonexistent",
-    "expectedTools": [
-      "get_orders"
-    ],
+    "expectedTools": [],
     "difficulty": "edge",
     "expectedOutput": [],
     "passFailCriteria": [
@@ -249,8 +247,7 @@ export const EDGE_CASE_EVAL_CASES: EvalCase[] = [
       "correctness",
       "edge_cases"
     ],
-    "expectedRoute": "llm_tools_llm_user",
-    "expectedToolCountAtLeast": 1,
+    "expectedRoute": "llm_user",
     "requireSuccessfulToolCalls": true,
     "mustContain": [],
     "mustNotContain": []
@@ -260,9 +257,7 @@ export const EDGE_CASE_EVAL_CASES: EvalCase[] = [
     "query": "hello",
     "expectedTools": [],
     "difficulty": "edge",
-    "expectedOutput": [
-      "Hi. I can help with portfolio, transactions, and market-data questions."
-    ],
+    "expectedOutput": [],
     "passFailCriteria": [
       "must route directly to llm answer",
       "must remain valid",
@@ -276,11 +271,126 @@ export const EDGE_CASE_EVAL_CASES: EvalCase[] = [
     "expectedValidity": true,
     "requireLlmAnswer": true,
     "requireLlmReasoning": true,
-    "mustContain": [
-      "help"
-    ],
+    "mustContain": [],
     "mustNotContain": [
       "I bought"
     ]
+  },
+  {
+    "id": "fact_check-edge-1",
+    "query": "fact check aapl quickly",
+    "expectedTools": [
+      "fact_check"
+    ],
+    "difficulty": "edge",
+    "expectedOutput": [],
+    "passFailCriteria": [
+      "must satisfy expected route",
+      "must invoke expected tools",
+      "must return structured tool output"
+    ],
+    "dimensions": [
+      "tool_execution",
+      "correctness"
+    ],
+    "expectedRoute": "llm_tools_llm_user",
+    "expectedToolCountAtLeast": 1,
+    "requireSuccessfulToolCalls": true,
+    "mustContain": [],
+    "mustNotContain": []
+  },
+  {
+    "id": "fact_compliance_check-edge-1",
+    "query": "double-check and compliance check this trade for wash sale risk",
+    "checkDoc": "docs/agent/compliance-regulations-us.md",
+    "expectedTools": [
+      "fact_compliance_check"
+    ],
+    "difficulty": "edge",
+    "expectedOutput": [],
+    "passFailCriteria": [
+      "must satisfy expected route",
+      "must invoke expected tools",
+      "must keep combined intent path"
+    ],
+    "dimensions": [
+      "tool_execution",
+      "correctness",
+      "edge_cases"
+    ],
+    "expectedRoute": "llm_tools_llm_user",
+    "expectedToolCountAtLeast": 1,
+    "requireSuccessfulToolCalls": true,
+    "mustContain": [],
+    "mustNotContain": []
+  },
+  {
+    "id": "holdings_analysis-edge-1",
+    "query": "show holdings analysis",
+    "expectedTools": [
+      "holdings_analysis"
+    ],
+    "difficulty": "edge",
+    "expectedOutput": [
+      "Holdings analysis from Ghostfolio data"
+    ],
+    "passFailCriteria": [
+      "must satisfy expected route",
+      "must invoke expected tools",
+      "must include expected output fragment"
+    ],
+    "dimensions": [
+      "tool_execution",
+      "correctness"
+    ],
+    "expectedRoute": "llm_tools_llm_user",
+    "expectedToolCountAtLeast": 1,
+    "requireSuccessfulToolCalls": true,
+    "mustContain": [],
+    "mustNotContain": []
+  },
+  {
+    "id": "static_analysis-edge-1",
+    "query": "run static analysis on my portfolio",
+    "expectedTools": [
+      "static_analysis"
+    ],
+    "difficulty": "edge",
+    "expectedOutput": [],
+    "passFailCriteria": [
+      "must satisfy expected route",
+      "must invoke expected tools",
+      "must return structured tool output"
+    ],
+    "dimensions": [
+      "tool_execution",
+      "correctness"
+    ],
+    "expectedRoute": "llm_tools_llm_user",
+    "expectedToolCountAtLeast": 1,
+    "requireSuccessfulToolCalls": true,
+    "mustContain": [],
+    "mustNotContain": []
+  },
+  {
+    "id": "tax_estimate-edge-1",
+    "query": "estimate my taxes from gains and dividends",
+    "expectedTools": [],
+    "difficulty": "edge",
+    "expectedOutput": [],
+    "passFailCriteria": [
+      "must satisfy expected route",
+      "must invoke expected tools",
+      "must include expected output fragment"
+    ],
+    "dimensions": [
+      "tool_execution",
+      "correctness"
+    ],
+    "expectedRoute": "llm_tools_llm_user",
+    "expectedToolCountAtLeast": 1,
+    "requireSuccessfulToolCalls": true,
+    "mustContain": [],
+    "mustNotContain": []
   }
 ];

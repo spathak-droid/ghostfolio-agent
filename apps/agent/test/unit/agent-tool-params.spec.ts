@@ -1,5 +1,5 @@
 import { createAgent } from '../../server/agent';
-import { createInMemoryConversationStore } from '../../server/conversation-store';
+import { createInMemoryConversationStore } from '../../server/stores';
 import type { AgentTools } from '../../server/types';
 
 function createTools(overrides: Partial<AgentTools> = {}): AgentTools {

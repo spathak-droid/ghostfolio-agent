@@ -1,4 +1,4 @@
-import { normalizeAuthToken } from '../../server/auth-token';
+import { normalizeAuthToken } from '../../server/auth';
 
 describe('normalizeAuthToken', () => {
   it('returns undefined for empty input', () => {

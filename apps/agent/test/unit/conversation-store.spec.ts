@@ -2,7 +2,7 @@ import {
   createInMemoryConversationStore,
   type AgentConversationStore,
   type AgentWorkflowState
-} from '../../server/conversation-store';
+} from '../../server/stores';
 import type { AgentConversationMessage } from '../../server/types';
 
 describe('conversation store', () => {

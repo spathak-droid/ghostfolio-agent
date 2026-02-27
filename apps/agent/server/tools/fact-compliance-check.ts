@@ -5,8 +5,8 @@
  * Failure modes: one sub-check failure => partial success; both failures => success false with normalized error payload.
  */
 
-import type { GhostfolioClient } from '../ghostfolio-client';
-import type { RegulationStore } from '../regulation-store';
+import type { GhostfolioClient } from '../clients';
+import type { RegulationStore } from '../stores';
 import type { ComplianceFacts, CreateOrderParams } from '../types';
 import { toToolErrorPayload } from './tool-error';
 import { complianceCheckTool } from './compliance-check';

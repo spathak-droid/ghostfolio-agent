@@ -1,4 +1,4 @@
-import { GhostfolioClient } from '../ghostfolio-client';
+import { GhostfolioClient } from '../clients';
 import { AgentLlm, AgentTools, CreateOrderParams } from '../types';
 import { createOrderTool } from '../tools/create-order';
 import { getOrdersTool } from '../tools/get-orders';

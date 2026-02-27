@@ -4,6 +4,7 @@ const FACTUAL_TOOLS = new Set([
   'market_data',
   'market_data_lookup',
   'fact_check',
+  'tax_estimate',
   'fact_compliance_check',
   'compliance_check',
   'portfolio_analysis',

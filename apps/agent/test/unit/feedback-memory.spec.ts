@@ -1,7 +1,7 @@
 import {
   buildMemoryFromFeedbackRows,
   toFeedbackMemoryContext
-} from '../../server/feedback-memory';
+} from '../../server/stores';
 
 describe('feedback-memory', () => {
   it('builds structured memory from downvoted rows', () => {

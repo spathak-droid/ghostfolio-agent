@@ -1,4 +1,4 @@
-import { GhostfolioApiError } from '../ghostfolio-api-error';
+import { GhostfolioApiError } from '../clients';
 
 export interface ToolErrorPayload {
   error_code: string;

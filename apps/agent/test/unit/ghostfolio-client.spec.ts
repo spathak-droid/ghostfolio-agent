@@ -1,6 +1,6 @@
-import { GhostfolioClient } from '../../server/ghostfolio-client';
-import { GhostfolioApiError } from '../../server/ghostfolio-api-error';
-import { logger } from '../../server/logger';
+import { GhostfolioClient } from '../../server/clients';
+import { GhostfolioApiError } from '../../server/clients';
+import { logger } from '../../server/utils';
 
 describe('GhostfolioClient', () => {
   const originalFetch = global.fetch;

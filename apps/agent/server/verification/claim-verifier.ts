@@ -1,4 +1,4 @@
-import { symbolToCoinGeckoId } from '../coingecko-client';
+import { symbolToCoinGeckoId } from '../clients';
 import type { AgentToolCall } from '../types';
 
 const PRICE_QUERY_PATTERN =

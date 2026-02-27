@@ -2,7 +2,7 @@ import {
   createRegulationStoreForTest,
   createRegulationStoreFromEnv,
   DEFAULT_TOPICS
-} from '../../server/regulation-store';
+} from '../../server/stores';
 
 describe('regulation-store', () => {
   it('creates schema and seeds default topics', async () => {

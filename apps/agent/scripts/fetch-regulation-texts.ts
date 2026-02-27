@@ -7,7 +7,7 @@
  * Run: npx dotenv-cli -e .env -- ts-node apps/agent/scripts/fetch-regulation-texts.ts
  */
 import 'dotenv/config';
-import { createRegulationStoreFromEnv } from '../server/regulation-store';
+import { createRegulationStoreFromEnv } from '../server/stores';
 import { fetchRegulationTexts } from '../server/regulation-fetcher';
 
 async function main(): Promise<void> {

@@ -7,8 +7,8 @@
  * Rule semantics: value === true means good/ok; value === false means potential issue or risk.
  */
 
-import { GhostfolioClient } from '../ghostfolio-client';
-import { logger } from '../logger';
+import { GhostfolioClient } from '../clients';
+import { logger } from '../utils';
 import { toToolErrorPayload } from './tool-error';
 
 interface XRayRule {

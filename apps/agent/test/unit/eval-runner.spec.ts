@@ -89,9 +89,9 @@ describe('eval runner', () => {
     }, {});
 
     expect(categoryCounts.happy ?? 0).toBeGreaterThanOrEqual(20);
-    expect(categoryCounts.edge ?? 0).toBeGreaterThanOrEqual(10);
-    expect(categoryCounts.adversarial ?? 0).toBeGreaterThanOrEqual(10);
-    expect(categoryCounts.multi ?? 0).toBeGreaterThanOrEqual(9);
+    expect(categoryCounts.edge ?? 0).toBeGreaterThanOrEqual(15);
+    expect(categoryCounts.adversarial ?? 0).toBeGreaterThanOrEqual(15);
+    expect(categoryCounts.multi ?? 0).toBeGreaterThanOrEqual(15);
 
     for (const tool of TOOL_DEFINITIONS.map((definition) => definition.name)) {
       const matched = DEFAULT_EVAL_CASES.filter((testCase) => testCase.id.startsWith(`${tool}-`)).length;
@@ -162,7 +162,7 @@ describe('eval runner', () => {
     ).rejects.toThrow('missing required fields');
   });
 
-  it('treats latency as informational and not a failing measurement', async () => {
+  it('fails latency dimension when observed runtime exceeds explicit latencyMsMax', async () => {
     const result = await runEvalCases([
       {
         difficulty: 'edge',
@@ -172,15 +172,15 @@ describe('eval runner', () => {
         mustContain: [],
         mustNotContain: [],
         expectedOutput: ['Hi. I can help with portfolio, transactions, and market-data questions.'],
-        id: 'latency-informational',
-        passFailCriteria: ['show latency but do not score against threshold'],
+        id: 'latency-enforced',
+        passFailCriteria: ['latency dimension should fail when over budget'],
         query: 'hello'
       }
     ]);
 
     expect(result.total).toBe(1);
-    expect(result.passed).toBe(1);
-    expect(result.perDimension.latency.passRate).toBe(1);
+    expect(result.passed).toBe(0);
+    expect(result.perDimension.latency.passRate).toBe(0);
   });
 
   it('forwards requestToken into tool inputs when using custom tool set', async () => {

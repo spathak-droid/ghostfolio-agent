@@ -109,6 +109,17 @@ export function createEvalTools(captures: ToolCapture[]): AgentTools {
         summary: 'Fact check: 1 symbol(s) verified; prices match.'
       });
     },
+    taxEstimate: async (inputOrRun, input) => {
+      track('tax_estimate', inputOrRun, input);
+      return buildResult({
+        filing_status: 'single',
+        tax_year: 2026,
+        estimate: {
+          total_estimated_federal_tax: 1234.56
+        },
+        summary: 'Tax estimate computed from realized gains/losses and income.'
+      });
+    },
     factComplianceCheck: async (inputOrRun, input) => {
       track('fact_compliance_check', inputOrRun, input);
       return buildResult({
@@ -234,6 +245,12 @@ export function createTrackedTools(baseTools: AgentTools, captures: ToolCapture[
       if (baseTools.factCheck) return baseTools.factCheck(inputOrRun, input);
       return { match: true, answer: 'Fact check not available.', summary: 'Fact check skipped.', sources: [] };
     },
+    taxEstimate: baseTools.taxEstimate
+      ? async (inputOrRun, input) => {
+          track('tax_estimate', inputOrRun, input);
+          return baseTools.taxEstimate!(inputOrRun, input);
+        }
+      : undefined,
     factComplianceCheck: async (inputOrRun, input) => {
       track('fact_compliance_check', inputOrRun, input);
       return baseTools.factComplianceCheck(inputOrRun, input);

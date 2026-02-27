@@ -1,5 +1,5 @@
 import type { AgentChatResponse } from '../types';
-import type { GhostfolioClient } from '../ghostfolio-client';
+import type { GhostfolioClient } from '../clients';
 
 export interface ConversationStoreLike {
   clearConversation(conversationId: string): Promise<void>;

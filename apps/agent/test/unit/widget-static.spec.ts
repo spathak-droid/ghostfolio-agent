@@ -1,7 +1,7 @@
 import {
   resolveWidgetCorsOrigin,
   resolveWidgetDistPath
-} from '../../server/widget-static';
+} from '../../server/utils';
 
 describe('widget static assets', () => {
   it('uses default dist path when env override is absent', () => {

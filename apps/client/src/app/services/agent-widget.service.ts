@@ -28,16 +28,20 @@ export class AgentWidgetService {
     return Boolean(this.scriptUrl);
   }
 
+  /**
+   * Mount the agent widget when the container is available.
+   * Widget is shown whenever the agent is enabled, so users can sign in from the widget
+   * without being logged into the main dashboard.
+   */
   public mount({ isAuthenticated }: { isAuthenticated: boolean }) {
-    if (!isAuthenticated || !this.scriptUrl || this.hasMounted) {
+    if (!this.scriptUrl || this.hasMounted) {
       return;
     }
 
     const container = this.document.getElementById(AGENT_WIDGET_ROOT_ID);
 
     if (!container) {
-      // The container is rendered conditionally after user state updates.
-      // Retry once on the next tick to avoid a mount race.
+      // The container is rendered conditionally; retry once on the next tick.
       setTimeout(() => {
         this.mount({ isAuthenticated });
       }, 0);

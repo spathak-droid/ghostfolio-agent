@@ -1,5 +1,5 @@
 import { fetchRegulationTexts, fetchUrlAsText } from '../../server/regulation-fetcher';
-import type { RegulationStore, RegulationTopicRow } from '../../server/regulation-store';
+import type { RegulationStore, RegulationTopicRow } from '../../server/stores';
 
 describe('regulation-fetcher', () => {
   describe('fetchUrlAsText', () => {

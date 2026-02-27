@@ -2,7 +2,7 @@ import express from 'express';
 import { existsSync } from 'fs';
 import type { RequestHandler } from 'express';
 
-import { resolveWidgetCorsOrigin, resolveWidgetDistPath } from '../widget-static';
+import { resolveWidgetCorsOrigin, resolveWidgetDistPath } from '../utils';
 
 export function createAgentApp({
   chatHandler,

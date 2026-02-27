@@ -1,4 +1,4 @@
-import { GhostfolioClient } from '../ghostfolio-client';
+import { GhostfolioClient } from '../clients';
 import { toToolErrorPayload } from './tool-error';
 
 /**

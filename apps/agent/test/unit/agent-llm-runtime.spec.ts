@@ -1,4 +1,4 @@
-import { decideRoute } from '../../server/agent-llm-runtime';
+import { decideRoute, getPreferredSingleToolAnswerFromToolCalls } from '../../server/agent';
 import type { AgentConversationMessage, AgentLlm, AgentTraceContext } from '../../server/types';
 
 const TRACE_CONTEXT: AgentTraceContext = {
@@ -157,6 +157,44 @@ describe('agent llm runtime routing', () => {
     expect(result.tools).not.toContain('compliance_check');
   });
 
+  it('routes hyphenated fact-check + compliance-check phrasing to fact_compliance_check', async () => {
+    const reasonAboutQuery = jest.fn().mockResolvedValue({
+      intent: 'finance',
+      mode: 'tool_call',
+      tool: 'none'
+    });
+    const llm = createLlmMock({ reasonAboutQuery });
+
+    const result = await decideRoute({
+      conversation: [] as AgentConversationMessage[],
+      llm,
+      message: 'fact-check this trade and run a compliance check for wash sale risk',
+      traceContext: TRACE_CONTEXT
+    });
+
+    expect(result.tools).toContain('fact_compliance_check');
+    expect(result.tools).not.toContain('compliance_check');
+    expect(result.tools).not.toContain('fact_check');
+  });
+
+  it('routes tax estimation prompts to tax_estimate', async () => {
+    const reasonAboutQuery = jest.fn().mockResolvedValue({
+      intent: 'finance',
+      mode: 'tool_call',
+      tool: 'none'
+    });
+    const llm = createLlmMock({ reasonAboutQuery });
+
+    const result = await decideRoute({
+      conversation: [] as AgentConversationMessage[],
+      llm,
+      message: 'estimate my capital gains tax and dividend tax for 2026',
+      traceContext: TRACE_CONTEXT
+    });
+
+    expect(result.tools).toContain('tax_estimate');
+  });
+
   it('bypasses reasonAboutQuery for clear portfolio retrieval prompts', async () => {
     const reasonAboutQuery = jest.fn().mockResolvedValue({
       intent: 'general',
@@ -193,5 +231,22 @@ describe('agent llm runtime routing', () => {
 
     expect(reasonAboutQuery).not.toHaveBeenCalled();
     expect(result.tools).toEqual(expect.arrayContaining(['transaction_timeline']));
+  });
+
+  it('prefers direct tax_estimate tool answer for single-tool responses', () => {
+    const answer = getPreferredSingleToolAnswerFromToolCalls([
+      {
+        success: true,
+        toolName: 'tax_estimate',
+        result: {
+          success: true,
+          answer:
+            'Estimated federal tax for 2026 is USD 1234.\n\nNot financial advice.\n\nPlease still contact a qualified financial advisor and tax professional.'
+        }
+      }
+    ]);
+
+    expect(answer).toContain('Estimated federal tax for 2026 is USD 1234.');
+    expect(answer).toContain('Not financial advice.');
   });
 });

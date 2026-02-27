@@ -6,12 +6,17 @@ import {
   validateImpersonationId,
   validateTokenLength
 } from '../chat-request-validation';
-import { resolveGhostfolioBaseUrl } from '../ghostfolio-base-url';
-import { GhostfolioClient } from '../ghostfolio-client';
-import { logger } from '../logger';
-import { resolveRequestToken } from '../request-auth';
+import { resolveGhostfolioBaseUrl } from '../clients';
+import { GhostfolioClient } from '../clients';
+import { logger } from '../utils';
+import { resolveRequestToken } from '../auth';
 import type { AgentChatResponse, AgentTraceStep } from '../types';
 import type { CreateAgentWithClient } from './types';
+import {
+  sendAgentFailed,
+  sendConfigError,
+  sendValidationError
+} from './response-helpers';
 
 function summarizeTraceLatency(trace: AgentTraceStep[] | undefined): {
   llmMs: number;
@@ -65,7 +70,7 @@ export function createChatHandler({
     });
     if (!tokenResolution.ok) {
       const err = tokenResolution as { error: string; status: 400 };
-      response.status(err.status).json({ code: 'VALIDATION_ERROR', error: err.error });
+      sendValidationError(response, err.error, err.status);
       return;
     }
 
@@ -78,21 +83,21 @@ export function createChatHandler({
     const impersonationValidation = validateImpersonationId(impersonationId);
     if (!impersonationValidation.ok) {
       const err = impersonationValidation as { error: string; status: 400 };
-      response.status(err.status).json({ code: 'VALIDATION_ERROR', error: err.error });
+      sendValidationError(response, err.error, err.status);
       return;
     }
 
     const tokenCheck = validateTokenLength(token);
     if (!tokenCheck.ok) {
       const err = tokenCheck as { error: string; status: 400 };
-      response.status(err.status).json({ code: 'VALIDATION_ERROR', error: err.error });
+      sendValidationError(response, err.error, err.status);
       return;
     }
 
     const validation = validateChatBody(requestBody);
     if (!validation.ok) {
       const err = validation as { error: string; status: 400 };
-      response.status(err.status).json({ code: 'VALIDATION_ERROR', error: err.error });
+      sendValidationError(response, err.error, err.status);
       return;
     }
 
@@ -104,7 +109,7 @@ export function createChatHandler({
     });
     if (!ghostfolioBaseUrlResolution.ok) {
       const err = ghostfolioBaseUrlResolution as { error: string; status: 500 };
-      response.status(err.status).json({ code: 'CONFIGURATION_ERROR', error: err.error });
+      sendConfigError(response, err.error);
       return;
     }
 
@@ -121,7 +126,7 @@ export function createChatHandler({
       const createOrderParamsResult = parseCreateOrderParams(requestBody.createOrderParams);
       if (!createOrderParamsResult.ok) {
         const err = createOrderParamsResult as { error: string; status: 400 };
-        response.status(err.status).json({ code: 'VALIDATION_ERROR', error: err.error });
+        sendValidationError(response, err.error, err.status);
         return;
       }
 
@@ -145,9 +150,8 @@ export function createChatHandler({
       const message =
         error instanceof Error ? error.message : 'Unhandled agent.chat failure';
       logger.error('[agent.chat] UNHANDLED_ERROR', { message });
-      response.status(500).json({
-        answer: 'Something went wrong. Please try again.',
-        error: 'AGENT_CHAT_FAILED'
+      sendAgentFailed(response, 'AGENT_CHAT_FAILED', {
+        answer: 'Something went wrong. Please try again.'
       });
     }
   };

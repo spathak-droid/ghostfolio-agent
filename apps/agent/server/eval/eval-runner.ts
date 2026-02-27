@@ -90,7 +90,15 @@ export async function runEvalCases(
           console.log(`[eval]   expected_output=${JSON.stringify(expectedOutput)}`);
           console.log(`[eval]   criteria=${JSON.stringify(testCase.passFailCriteria.join(' | '))}`);
           console.log(`[eval] ${colorStatus} case=${last.caseId} duration_ms=${last.durationMs}`);
-          console.log(`[eval]   latency_ms=${last.durationMs} (informational, not scored)`);
+          const latencyCheck = last.checks.find((check) => check.dimension === 'latency');
+          if (latencyCheck) {
+            const latencyStatus = latencyCheck.passed ? 'PASS' : 'FAIL';
+            console.log(
+              `[eval]   latency=${colorizeStatus(latencyStatus, latencyCheck.passed)} ${latencyCheck.message}`
+            );
+          } else {
+            console.log(`[eval]   latency_ms=${last.durationMs} (no latency dimension in this case)`);
+          }
           console.log('[eval] --------------');
 
           for (const check of last.checks) {

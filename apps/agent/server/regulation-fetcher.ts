@@ -7,7 +7,7 @@
 
 import * as cheerio from 'cheerio';
 
-import type { RegulationStore } from './regulation-store';
+import type { RegulationStore } from './stores';
 
 const DEFAULT_FETCH_TIMEOUT_MS = 25_000;
 const USER_AGENT =

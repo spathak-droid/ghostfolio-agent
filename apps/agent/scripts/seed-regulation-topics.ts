@@ -5,7 +5,7 @@
  * Run: npx dotenv-cli -e .env -- ts-node apps/agent/scripts/seed-regulation-topics.ts
  */
 import 'dotenv/config';
-import { createRegulationStoreFromEnv } from '../server/regulation-store';
+import { createRegulationStoreFromEnv } from '../server/stores';
 
 async function main(): Promise<void> {
   const store = createRegulationStoreFromEnv();

@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 
 import { parseFeedbackBody } from '../chat-request-validation';
-import { logger } from '../logger';
+import { logger } from '../utils';
 import type { FeedbackStoreLike } from './types';
 
 export function createFeedbackHandler({

@@ -1,5 +1,5 @@
-import { GhostfolioClient } from '../ghostfolio-client';
-import { logger } from '../logger';
+import { GhostfolioClient } from '../clients';
+import { logger } from '../utils';
 import { toToolErrorPayload } from './tool-error';
 
 export async function getTransactionsTool({

@@ -1,6 +1,5 @@
-import { createAgent } from '../../server/agent';
-import type { AgentContextManager } from '../../server/context-manager';
-import type { AgentConversationStore, AgentWorkflowState } from '../../server/conversation-store';
+import { createAgent, type AgentContextManager } from '../../server/agent';
+import type { AgentConversationStore, AgentWorkflowState } from '../../server/stores';
 import type { AgentConversationMessage } from '../../server/types';
 
 function createNoopTools() {

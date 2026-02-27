@@ -1,7 +1,7 @@
 import { factCheckTool } from '../../server/tools/fact-check';
 import { complianceCheckTool } from '../../server/tools/compliance-check';
 import { factComplianceCheckTool } from '../../server/tools/fact-compliance-check';
-import type { RegulationStore } from '../../server/regulation-store';
+import type { RegulationStore } from '../../server/stores';
 
 jest.mock('../../server/tools/fact-check');
 jest.mock('../../server/tools/compliance-check');

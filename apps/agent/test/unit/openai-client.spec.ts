@@ -1,4 +1,4 @@
-import { createOpenAiClient, createOpenAiClientFromEnv } from '../../server/openai-client';
+import { createOpenAiClient, createOpenAiClientFromEnv } from '../../server/llm';
 
 describe('openai client', () => {
   const originalFetch = global.fetch;

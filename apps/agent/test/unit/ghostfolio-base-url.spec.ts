@@ -1,4 +1,4 @@
-import { resolveGhostfolioBaseUrl } from '../../server/ghostfolio-base-url';
+import { resolveGhostfolioBaseUrl } from '../../server/clients';
 
 describe('resolveGhostfolioBaseUrl', () => {
   it('uses configured base URL when provided', () => {

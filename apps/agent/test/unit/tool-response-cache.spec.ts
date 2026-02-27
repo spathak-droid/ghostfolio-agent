@@ -2,7 +2,7 @@ import {
   buildToolCacheKey,
   createToolResponseCacheStoreFromEnv,
   withToolResponseCache
-} from '../../server/tool-response-cache';
+} from '../../server/stores';
 
 describe('tool-response-cache', () => {
   it('returns cached value on second call', async () => {
