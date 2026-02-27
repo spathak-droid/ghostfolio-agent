@@ -150,22 +150,47 @@ function normalizeComplianceItems(items: unknown): string[] {
 export async function selectTools({
   conversation,
   message,
-  traceContext
+  traceContext,
+  llm
 }: {
   conversation: AgentConversationMessage[];
   message: string;
   traceContext: AgentTraceContext;
+  llm?: AgentLlm;
 }): Promise<AgentToolName[]> {
-  void conversation;
-  void traceContext;
+  // Classify intent first - if general, no tools needed
+  if (classifyIntent(message) === 'general') {
+    return [];
+  }
+
+  // Use LLM-based tool selection for accuracy (cached for performance)
+  if (llm?.selectTool) {
+    try {
+      const selection = await withOperationTimeout({
+        operation: 'llm.select_tool',
+        task: () => llm.selectTool!(message, conversation, traceContext)
+      });
+
+      // Convert LLM selection to tool array
+      const selectedTool = selection.tool === 'none' ? [] : [selection.tool];
+
+      // Apply intent-based filtering for order tools
+      const allowOrderTools = isExplicitOrderExecutionIntent(message);
+      return allowOrderTools ? selectedTool : removeOrderTools(selectedTool);
+    } catch (error) {
+      // Fallback to keyword matching if LLM selection fails
+      const inferred = selectToolsByKeyword(message);
+      const allowOrderTools = isExplicitOrderExecutionIntent(message);
+      return allowOrderTools ? inferred : removeOrderTools(inferred);
+    }
+  }
+
+  // Fallback to keyword matching if LLM not available
   const inferred = selectToolsByKeyword(message);
   const allowOrderTools = isExplicitOrderExecutionIntent(message);
   const inferredWithoutNonExplicitOrders = allowOrderTools
     ? inferred
     : removeOrderTools(inferred);
-  if (classifyIntent(message) === 'general') {
-    return [];
-  }
   return inferredWithoutNonExplicitOrders;
 }
 
@@ -189,7 +214,8 @@ export async function decideRoute({
   const inferredTools = await selectTools({
     conversation,
     message,
-    traceContext
+    traceContext,
+    llm
   });
   const shouldBypassReasoning = shouldBypassReasoningForPortfolioRetrieval({
     message,
