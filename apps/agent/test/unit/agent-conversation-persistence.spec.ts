@@ -7,6 +7,7 @@ function createNoopTools() {
   return {
     complianceCheck: jest.fn().mockResolvedValue({}),
     createOrder: jest.fn().mockResolvedValue({}),
+    factCheck: jest.fn().mockResolvedValue({}),
     getOrders: jest.fn().mockResolvedValue({}),
     getTransactions: jest.fn().mockResolvedValue({}),
     marketData: jest.fn().mockResolvedValue({}),
@@ -32,6 +33,7 @@ describe('agent conversation persistence', () => {
     };
 
     const store: AgentConversationStore = {
+      clearConversation: jest.fn().mockResolvedValue(undefined),
       getConversation: jest.fn().mockResolvedValue(existingConversation),
       getState: jest.fn().mockResolvedValue(existingState),
       setConversation: jest.fn().mockResolvedValue(undefined),

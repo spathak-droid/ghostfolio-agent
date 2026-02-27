@@ -113,7 +113,7 @@ export function createEvalTools(captures: ToolCapture[]): AgentTools {
           netPerformancePercentage: 0.025,
           totalValueInBaseCurrency: 95000
         },
-        summary: 'Portfolio analysis from Ghostfolio performance data'
+        summary: 'Portfolio analysis from Ghostfolio data'
       });
     },
     holdingsAnalysis: async (inputOrRun, input) => {

@@ -819,7 +819,7 @@ describe('standalone agent orchestrator', () => {
     expect(portfolioAnalysis).not.toHaveBeenCalled();
   });
 
-  it('uses only holdings_analysis for portfolio allocation questions', async () => {
+  it('uses both portfolio and holdings analysis for portfolio allocation questions', async () => {
     const portfolioAnalysis = jest.fn().mockResolvedValue({
       allocation: [],
       data_as_of: '2026-02-27T00:00:00.000Z',
@@ -861,7 +861,7 @@ describe('standalone agent orchestrator', () => {
     });
 
     expect(holdingsAnalysis).toHaveBeenCalled();
-    expect(portfolioAnalysis).not.toHaveBeenCalled();
+    expect(portfolioAnalysis).toHaveBeenCalled();
   });
 
   it('synthesizes multiple tools in one coherent response', async () => {

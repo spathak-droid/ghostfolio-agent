@@ -14,17 +14,17 @@ const SELECTABLE_KEYWORD_HINTS: Readonly<Record<string, string[]>> = {
   ],
   compliance_check: [
     'compliance',
+    'compliant',
     'regulation',
     'regulatory',
+    'suitability',
+    'finra',
     'policy check',
     'is this compliant',
     'should i buy',
     'should i sell',
     'what should i buy',
-    'what should i sell',
-    'invest all your money',
-    'buy now',
-    'sell now'
+    'what should i sell'
   ],
   portfolio_analysis: [
     'portfolio',
@@ -32,7 +32,8 @@ const SELECTABLE_KEYWORD_HINTS: Readonly<Record<string, string[]>> = {
     'return',
     'net performance',
     'net worth',
-    'p&l'
+    'p&l',
+    'cash balance'
   ],
   holdings_analysis: [
     'allocation',
@@ -122,6 +123,7 @@ const SELECTABLE_KEYWORD_HINTS: Readonly<Record<string, string[]>> = {
   ],
   get_orders: [
     'list orders',
+    'list my orders',
     'find my orders',
     'orders for',
     'which orders',
@@ -240,6 +242,7 @@ export function isExplicitOrderExecutionIntent(message: string): boolean {
   }
 
   return [
+    /\bcan you\s+(buy|sell)\b/,
     /\b(i want to|i'd like to|please)\s+(buy|sell)\b/,
     /\b(add|record)\s+(a\s+)?(buy|sell)\b/,
     /\b(add|record)\s+(a\s+)?(dividend|divident|fee|interest|liability|liabilty|liablity|mortgage|loan|debt)\b/,
@@ -423,6 +426,13 @@ export function ensurePendingClarificationTool({
     return selectedTools;
   }
 
+  if (isOrderConfirmationMessage(message)) {
+    if (selectedTools.includes(pendingState.pendingTool)) {
+      return selectedTools;
+    }
+    return [pendingState.pendingTool, ...selectedTools];
+  }
+
   if (!looksLikeOrderClarificationInput(normalized)) {
     return selectedTools;
   }
@@ -448,6 +458,10 @@ export function preventOrderReplayWithoutPending({
   }
 
   if (!isOrderConfirmationMessage(message)) {
+    return selectedTools;
+  }
+
+  if (isExplicitOrderExecutionIntent(message)) {
     return selectedTools;
   }
 
@@ -525,7 +539,12 @@ export function sanitizePortfolioHoldingsToolScope({
   const mentionsHoldings = /\bholding(s)?\b/.test(normalized);
   const mentionsPortfolio = /\bportfolio\b/.test(normalized);
 
-  if (mentionsHoldings || mentionsAllocation) {
+  // Keep both tools when users ask portfolio + allocation together.
+  if (mentionsPortfolio && mentionsAllocation) {
+    return selectedTools;
+  }
+
+  if (mentionsHoldings) {
     return selectedTools.filter((tool) => tool !== 'portfolio_analysis');
   }
 
@@ -568,7 +587,7 @@ function looksLikeOrderClarificationInput(normalizedMessage: string): boolean {
   const compact = normalizedMessage.replace(/\s+/g, '');
 
   if (
-    /\b(buy|sell|purchase|long|short|quantity|qty|shares?|units?|price|amount|currency|usd|eur|gbp|account|name|date|today|tomorrow|yesterday|due|dividend|divident|fee|interest|liability|liabilty|liablity|mortgage|loan)\b/.test(
+    /\b(buy|sell|purchase|long|short|quantity|qty|shares?|units?|price|amount|currency|usd|eur|gbp|account|date|today|tomorrow|yesterday|due|dividend|divident|fee|interest|liability|liabilty|liablity|mortgage|loan)\b/.test(
       normalizedMessage
     )
   ) {

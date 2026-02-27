@@ -3,9 +3,11 @@
  * Inputs: validated feedback payload and optional metadata.
  * Outputs: insert acknowledgement with feedback id.
  * Failure modes: DB disabled/misconfigured, schema init failure, insert failure.
+ *
+ * Prisma is loaded only when a feedback database URL is set, so the agent can start
+ * in environments where prisma generate is not run (e.g. agent-only Docker image).
  */
 
-import { PrismaClient } from '@prisma/client';
 import { buildMemoryFromFeedbackRows } from './feedback-memory';
 import type { AgentFeedbackMemory, AgentFeedbackMemoryProvider } from './types';
 
@@ -151,12 +153,21 @@ export function createFeedbackStoreFromEnv(): FeedbackStore {
   if (!databaseUrl) {
     return new DisabledFeedbackStore('feedback database url is not configured');
   }
-  const prisma = new PrismaClient({
-    datasources: {
-      db: { url: databaseUrl }
-    }
-  }) as unknown as PrismaExecutor;
-  return new PostgresFeedbackStore(prisma);
+  try {
+    // Lazy load so agent starts when prisma generate was not run (e.g. agent-only Docker)
+    const { PrismaClient } = require('@prisma/client');
+    const prisma = new PrismaClient({
+      datasources: {
+        db: { url: databaseUrl }
+      }
+    }) as unknown as PrismaExecutor;
+    return new PostgresFeedbackStore(prisma);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return new DisabledFeedbackStore(
+      `feedback database configured but Prisma unavailable: ${message}. Run prisma generate if using Postgres feedback.`
+    );
+  }
 }
 
 export function createFeedbackStoreForTest(prisma: PrismaExecutor): FeedbackStore {

@@ -13,6 +13,7 @@ function createStubTools(overrides: Partial<AgentTools> = {}): AgentTools {
   return {
     complianceCheck: jest.fn().mockResolvedValue({ answer: 'ok', data_as_of: '2026-02-24T00:00:00Z', sources: ['test'] }),
     createOrder: jest.fn().mockResolvedValue({ answer: 'ok', data_as_of: '2026-02-24T00:00:00Z', sources: ['test'] }),
+    factCheck: jest.fn().mockResolvedValue({ answer: 'ok', data_as_of: '2026-02-24T00:00:00Z', sources: ['test'] }),
     getOrders: jest.fn().mockResolvedValue({ answer: 'ok', data_as_of: '2026-02-24T00:00:00Z', sources: ['test'] }),
     getTransactions: jest.fn().mockResolvedValue({ data: { activities: [] }, data_as_of: '2026-02-24T00:00:00Z', sources: ['test'], summary: 'ok', transactions: [] }),
     marketData: jest.fn().mockResolvedValue({ data_as_of: '2026-02-24T00:00:00Z', sources: ['test'], summary: 'ok', symbols: [] }),

@@ -10,7 +10,4 @@ if [ -n "$PROJECTS" ] && [ -x "$NX" ]; then
   "$NX" run-many --target=lint --projects="$PROJECTS" --parallel=2 --quiet || exit 1
 fi
 
-# Format check (skip if nx not found, e.g. fresh clone)
-if [ -x "$NX" ]; then
-  "$NX" format:check --uncommitted || exit 1
-fi
+# Format check skipped in pre-commit (slow on large repos). Run `npm run format:write` before pushing, or rely on CI.
