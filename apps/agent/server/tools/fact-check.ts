@@ -51,31 +51,19 @@ export async function factCheckTool({
   symbols: inputSymbols
 }: FactCheckToolInput): Promise<Record<string, unknown>> {
   try {
-    const symbols =
-      Array.isArray(inputSymbols) && inputSymbols.length > 0
-        ? inputSymbols.filter(Boolean).slice(0, MAX_SYMBOLS)
-        : [];
-
-    if (symbols.length === 0) {
-      return {
-        match: true,
-        primary: { symbols: [], summary: 'No symbols to verify' },
-        secondary: null,
-        answer: 'No symbols to verify. Please specify the symbol(s) to fact-check (e.g. AAPL, BTC-USD).',
-        sources: ['ghostfolio_api'],
-        data_as_of: new Date().toISOString(),
-        summary: 'Fact check: no symbols provided'
-      };
-    }
-
-    const primaryResult = await marketDataTool({
+    // Use explicit symbols if provided, otherwise pass message to market_data for resolution
+    const marketDataParams = {
       client,
       impersonationId,
       message: message ?? '',
       token,
-      symbols,
+      ...(Array.isArray(inputSymbols) && inputSymbols.length > 0
+        ? { symbols: inputSymbols.filter(Boolean).slice(0, MAX_SYMBOLS) }
+        : {}),
       metrics: ['price']
-    });
+    };
+
+    const primaryResult = await marketDataTool(marketDataParams);
 
     const primarySymbols = Array.isArray(primaryResult.symbols) ? primaryResult.symbols : [];
     const primaryItems = primarySymbols as PrimarySymbolItem[];
