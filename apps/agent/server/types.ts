@@ -35,6 +35,7 @@ export type AgentToolName =
   | 'get_orders'
   | 'get_transactions'
   | 'compliance_check'
+  | 'fact_compliance_check'
   | 'fact_check'
   | 'market_data'
   | 'analyze_stock_trend'
@@ -42,6 +43,7 @@ export type AgentToolName =
   | 'market_overview'
   | 'portfolio_analysis'
   | 'holdings_analysis'
+  | 'static_analysis'
   | 'transaction_categorize'
   | 'transaction_timeline'
   | 'create_order'
@@ -144,6 +146,7 @@ export interface AgentToolInput {
 
 export interface AgentTools {
   complianceCheck: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
+  factComplianceCheck: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   factCheck: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   getOrders: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   getTransactions: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
@@ -153,6 +156,7 @@ export interface AgentTools {
   marketOverview?: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   portfolioAnalysis: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   holdingsAnalysis: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
+  staticAnalysis: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   transactionCategorize: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   transactionTimeline: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   createOrder: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;

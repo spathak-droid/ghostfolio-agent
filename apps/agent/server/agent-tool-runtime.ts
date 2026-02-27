@@ -1,6 +1,11 @@
 import { traceable } from 'langsmith/traceable';
 
 import {
+  buildToolCallFailureResult,
+  sanitizeErrorMessageForClient,
+  toOrchestrationErrorEntry
+} from './error-normalization';
+import {
   AgentChatResponse,
   AgentConversationMessage,
   AgentTraceContext,
@@ -9,6 +14,7 @@ import {
   AgentTools
 } from './types';
 import { TRANSACTION_DEPENDENT_TOOL_NAMES } from './tools/tool-registry';
+import { validateToolArgs } from './validation/tool-args-validator';
 import { logger } from './logger';
 
 export const AGENT_OPERATION_TIMEOUT_MS = 25_000;
@@ -173,6 +179,31 @@ export async function executeTool({
       task
     });
 
+  const toolArgsValidation = validateToolArgs(tool, {
+    dateFrom,
+    dateTo,
+    range,
+    regulations,
+    symbol,
+    symbols,
+    take
+  });
+  if (!toolArgsValidation.ok) {
+    const validationError =
+      'error' in toolArgsValidation
+        ? toolArgsValidation.error
+        : 'Tool argument validation failed.';
+    return Promise.resolve({
+      success: false,
+      error: {
+        error_code: 'TOOL_ARGUMENT_VALIDATION_FAILED',
+        message: validationError,
+        retryable: false
+      },
+      summary: validationError
+    });
+  }
+
   if (tool === 'portfolio_analysis') {
     return runToolWithTimeout(() =>
       traceable(tools.portfolioAnalysis, {
@@ -186,6 +217,15 @@ export async function executeTool({
     return runToolWithTimeout(() =>
       traceable(tools.holdingsAnalysis, {
         name: `tool.holdings_analysis.turn_${traceContext.turnId}`,
+        run_type: 'tool'
+      })(runtimeTrace, { impersonationId, message, token })
+    );
+  }
+
+  if (tool === 'static_analysis') {
+    return runToolWithTimeout(() =>
+      traceable(tools.staticAnalysis, {
+        name: `tool.static_analysis.turn_${traceContext.turnId}`,
         run_type: 'tool'
       })(runtimeTrace, { impersonationId, message, token })
     );
@@ -250,6 +290,15 @@ export async function executeTool({
         name: `tool.compliance_check.turn_${traceContext.turnId}`,
         run_type: 'tool'
       })(runtimeTrace, { impersonationId, message, token, regulations, createOrderParams, type })
+    );
+  }
+
+  if (tool === 'fact_compliance_check') {
+    return runToolWithTimeout(() =>
+      traceable(tools.factComplianceCheck, {
+        name: `tool.fact_compliance_check.turn_${traceContext.turnId}`,
+        run_type: 'tool'
+      })(runtimeTrace, { impersonationId, message, token, symbols, regulations, createOrderParams, type })
     );
   }
 
@@ -396,13 +445,20 @@ export async function runTransactionsDependentFlow({
     });
     const transactionFlowFailure = getReportedToolFailure(transactionResult);
     if (transactionFlowFailure) {
-      errors.push({
-        code: 'TOOL_EXECUTION_FAILED',
-        message: transactionFlowFailure.message,
+      const normalizedMessage = sanitizeErrorMessageForClient(transactionFlowFailure.message);
+      const entry = toOrchestrationErrorEntry({
+        isTimeout: false,
+        message: normalizedMessage,
         recoverable: transactionFlowFailure.recoverable
       });
+      errors.push(entry);
       toolCalls.push({
-        result: { reason: 'tool_failure' },
+        result: buildToolCallFailureResult({
+          errorCode: entry.code,
+          message: entry.message,
+          reason: 'tool_failure',
+          retryable: entry.recoverable
+        }),
         success: false,
         toolName: 'get_transactions'
       });
@@ -410,7 +466,7 @@ export async function runTransactionsDependentFlow({
         type: 'tool',
         name: 'get_transactions',
         input: { messagePreview: message.slice(0, 200) },
-        output: { reason: 'tool_failure', error: transactionFlowFailure.message }
+        output: { reason: 'tool_failure', error: normalizedMessage }
       });
     } else {
       transactions = extractTransactions(transactionResult);
@@ -437,17 +493,28 @@ export async function runTransactionsDependentFlow({
     }
   } catch (error) {
     const isTimedOut = isTimeoutError(error);
-    errors.push({
-      code: isTimedOut ? 'TOOL_EXECUTION_TIMEOUT' : 'TOOL_EXECUTION_FAILED',
-      message: isTimedOut
-        ? 'get_transactions timed out after 25 seconds'
-        : error instanceof Error
-          ? error.message
-          : 'failed to fetch transactions',
+    const rawErrorMessage = isTimedOut
+      ? 'get_transactions timed out after 25 seconds'
+      : error instanceof Error
+        ? error.message
+        : 'failed to fetch transactions';
+    const normalizedMessage = sanitizeErrorMessageForClient(
+      rawErrorMessage,
+      'failed to fetch transactions'
+    );
+    const entry = toOrchestrationErrorEntry({
+      isTimeout: isTimedOut,
+      message: normalizedMessage,
       recoverable: isTimedOut ? true : inferToolRecoverableFromThrownError(error)
     });
+    errors.push(entry);
     toolCalls.push({
-      result: { reason: isTimedOut ? 'tool_timeout' : 'tool_failure' },
+      result: buildToolCallFailureResult({
+        errorCode: entry.code,
+        message: entry.message,
+        reason: isTimedOut ? 'tool_timeout' : 'tool_failure',
+        retryable: entry.recoverable
+      }),
       success: false,
       toolName: 'get_transactions'
     });
@@ -491,13 +558,20 @@ export async function runTransactionsDependentFlow({
     });
     const dependentFailure = getReportedToolFailure(result);
     if (dependentFailure) {
-      errors.push({
-        code: 'TOOL_EXECUTION_FAILED',
-        message: dependentFailure.message,
+      const normalizedMessage = sanitizeErrorMessageForClient(dependentFailure.message);
+      const entry = toOrchestrationErrorEntry({
+        isTimeout: false,
+        message: normalizedMessage,
         recoverable: dependentFailure.recoverable
       });
+      errors.push(entry);
       toolCalls.push({
-        result: { reason: 'tool_failure' },
+        result: buildToolCallFailureResult({
+          errorCode: entry.code,
+          message: entry.message,
+          reason: 'tool_failure',
+          retryable: entry.recoverable
+        }),
         success: false,
         toolName: dependentTool
       });
@@ -505,7 +579,7 @@ export async function runTransactionsDependentFlow({
         type: 'tool',
         name: dependentTool,
         input: { messagePreview: message.slice(0, 200) },
-        output: { reason: 'tool_failure', error: dependentFailure.message }
+        output: { reason: 'tool_failure', error: normalizedMessage }
       });
       return;
     }
@@ -532,17 +606,25 @@ export async function runTransactionsDependentFlow({
     });
   } catch (error) {
     const isTimedOut = isTimeoutError(error);
-    errors.push({
-      code: isTimedOut ? 'TOOL_EXECUTION_TIMEOUT' : 'TOOL_EXECUTION_FAILED',
-      message: isTimedOut
-        ? `${dependentTool} timed out after 25 seconds`
-        : error instanceof Error
-          ? error.message
-          : 'unknown tool failure',
+    const rawErrorMessage = isTimedOut
+      ? `${dependentTool} timed out after 25 seconds`
+      : error instanceof Error
+        ? error.message
+        : 'unknown tool failure';
+    const normalizedMessage = sanitizeErrorMessageForClient(rawErrorMessage);
+    const entry = toOrchestrationErrorEntry({
+      isTimeout: isTimedOut,
+      message: normalizedMessage,
       recoverable: isTimedOut ? true : inferToolRecoverableFromThrownError(error)
     });
+    errors.push(entry);
     toolCalls.push({
-      result: { reason: isTimedOut ? 'tool_timeout' : 'tool_failure' },
+      result: buildToolCallFailureResult({
+        errorCode: entry.code,
+        message: entry.message,
+        reason: isTimedOut ? 'tool_timeout' : 'tool_failure',
+        retryable: entry.recoverable
+      }),
       success: false,
       toolName: dependentTool
     });
@@ -600,7 +682,7 @@ export function hasUsableToolData(toolCalls: AgentChatResponse['toolCalls']) {
 
 export function getReportedToolFailure(
   value: unknown
-): { message: string; recoverable: boolean } | undefined {
+): { errorCode: string; message: string; recoverable: boolean } | undefined {
   if (!isObject(value) || value.success !== false) {
     return undefined;
   }
@@ -615,8 +697,13 @@ export function getReportedToolFailure(
 
   const recoverable =
     typeof error?.retryable === 'boolean' ? error.retryable : true;
+  const errorCode =
+    typeof error?.error_code === 'string' && error.error_code.trim().length > 0
+      ? error.error_code
+      : 'TOOL_EXECUTION_FAILED';
 
   return {
+    errorCode,
     message: errorMessage,
     recoverable
   };

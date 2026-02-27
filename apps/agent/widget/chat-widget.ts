@@ -205,8 +205,7 @@ export function mountChatWidget(container: HTMLElement) {
   newChatButton.setAttribute('aria-label', 'New chat');
   newChatButton.innerHTML = `
     <svg class="agent-widget__new-chat-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M12 5v14"/>
-      <path d="M5 12h14"/>
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
     </svg>
   `;
 
@@ -288,6 +287,74 @@ export function mountChatWidget(container: HTMLElement) {
   input.autocomplete = 'off';
   input.className = 'agent-widget__input';
 
+  const plusTrigger = document.createElement('button');
+  plusTrigger.type = 'button';
+  plusTrigger.className = 'agent-widget__plus-trigger';
+  plusTrigger.setAttribute('aria-label', 'Suggested questions');
+  plusTrigger.setAttribute('aria-expanded', 'false');
+  plusTrigger.setAttribute('aria-haspopup', 'true');
+  plusTrigger.innerHTML = `
+    <svg class="agent-widget__plus-trigger-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 5v14"/><path d="M5 12h14"/>
+    </svg>
+  `;
+
+  const formRow = document.createElement('div');
+  formRow.className = 'agent-widget__form-row';
+
+  const quickSuggestions = [
+    'How is my Apple Stock doing?',
+    'Can you buy me Bitcoin Shares',
+    'What is my top performing coin?',
+    'What is the current price of Apple?',
+    'What did i buy last year?'
+  ] as const;
+
+  const popover = document.createElement('div');
+  popover.className = 'agent-widget__suggestions-popover';
+  popover.setAttribute('role', 'listbox');
+  popover.setAttribute('aria-label', 'Suggested questions');
+  for (const text of quickSuggestions) {
+    const option = document.createElement('button');
+    option.type = 'button';
+    option.className = 'agent-widget__suggestions-popover-item';
+    option.textContent = text;
+    option.setAttribute('role', 'option');
+    option.addEventListener('click', (e) => {
+      e.stopPropagation();
+      input.value = text;
+      input.focus();
+      popover.classList.remove('agent-widget__suggestions-popover--open');
+      plusTrigger.setAttribute('aria-expanded', 'false');
+    });
+    popover.appendChild(option);
+  }
+
+  function setPopoverOpen(open: boolean): void {
+    if (open) {
+      popover.classList.add('agent-widget__suggestions-popover--open');
+      plusTrigger.setAttribute('aria-expanded', 'true');
+    } else {
+      popover.classList.remove('agent-widget__suggestions-popover--open');
+      plusTrigger.setAttribute('aria-expanded', 'false');
+    }
+  }
+
+  plusTrigger.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const isOpen = popover.classList.contains('agent-widget__suggestions-popover--open');
+    setPopoverOpen(!isOpen);
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!popover.classList.contains('agent-widget__suggestions-popover--open')) return;
+    const target = e.target as Node;
+    if (!popover.contains(target) && !plusTrigger.contains(target)) {
+      setPopoverOpen(false);
+    }
+  });
+
   const button = document.createElement('button');
   button.type = 'submit';
   button.className = 'agent-widget__send';
@@ -295,8 +362,10 @@ export function mountChatWidget(container: HTMLElement) {
   button.innerHTML =
     '<svg class="agent-widget__send-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>';
 
-  form.appendChild(input);
-  form.appendChild(button);
+  formRow.appendChild(plusTrigger);
+  formRow.appendChild(input);
+  formRow.appendChild(button);
+  form.appendChild(formRow);
 
   function createTypingDots(): DocumentFragment {
     const frag = document.createDocumentFragment();
@@ -1197,7 +1266,11 @@ export function mountChatWidget(container: HTMLElement) {
 
   panel.appendChild(header);
   panel.appendChild(messages);
-  panel.appendChild(form);
+  const formWrap = document.createElement('div');
+  formWrap.className = 'agent-widget__form-wrap';
+  formWrap.appendChild(popover);
+  formWrap.appendChild(form);
+  panel.appendChild(formWrap);
   widget.appendChild(launcher);
   widget.appendChild(panel);
 
@@ -1316,7 +1389,7 @@ function injectWidgetStyles() {
     }
     .agent-widget__subtitle {
       margin: 2px 0 0;
-      font-size: 11px;
+      font-size: 12px;
       color: #5c6470;
     }
     .agent-widget__close {
@@ -1534,11 +1607,88 @@ function injectWidgetStyles() {
     }
     .agent-widget__form {
       flex-shrink: 0;
+      width: 100%;
       padding: 10px 12px 12px;
       border-top: 1px solid rgba(11, 13, 23, 0.08);
       display: flex;
       gap: 10px;
+      align-items: center;
       background: rgba(255,255,255,0.6);
+    }
+    .agent-widget__form-wrap {
+      position: relative;
+      flex-shrink: 0;
+      width: 100%;
+    }
+    .agent-widget__form-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      min-width: 0;
+    }
+    .agent-widget__plus-trigger {
+      flex-shrink: 0;
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      border: 1px solid rgba(11, 13, 23, 0.12);
+      background: #fff;
+      color: #0b0d17;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    .agent-widget__plus-trigger:hover {
+      border-color: #3d7aff;
+      box-shadow: 0 0 0 2px rgba(61, 122, 255, 0.2);
+    }
+    .agent-widget__plus-trigger:focus-visible {
+      outline: none;
+      border-color: #3d7aff;
+      box-shadow: 0 0 0 3px rgba(61, 122, 255, 0.2);
+    }
+    .agent-widget__plus-trigger-icon {
+      display: block;
+    }
+    .agent-widget__suggestions-popover {
+      position: absolute;
+      bottom: 100%;
+      left: 0;
+      right: 0;
+      margin-bottom: 6px;
+      display: none;
+      max-height: 140px;
+      overflow-y: auto;
+      background: #fff;
+      border: 1px solid rgba(11, 13, 23, 0.12);
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(11, 13, 23, 0.12);
+      overflow-x: hidden;
+      z-index: 10;
+    }
+    .agent-widget__suggestions-popover.agent-widget__suggestions-popover--open {
+      display: block;
+    }
+    .agent-widget__suggestions-popover-item {
+      display: block;
+      width: 100%;
+      padding: 10px 12px;
+      border: none;
+      background: none;
+      color: #0b0d17;
+      font-size: 11px;
+      text-align: left;
+      cursor: pointer;
+      transition: background 0.12s ease;
+    }
+    .agent-widget__suggestions-popover-item:hover {
+      background: rgba(61, 122, 255, 0.08);
+    }
+    .agent-widget__suggestions-popover-item:not(:last-child) {
+      border-bottom: 1px solid rgba(11, 13, 23, 0.06);
     }
     .agent-widget__input {
       flex: 1;

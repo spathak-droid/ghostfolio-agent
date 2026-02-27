@@ -5,6 +5,7 @@ import type { AgentTools } from '../../server/types';
 function createTools(overrides: Partial<AgentTools> = {}): AgentTools {
   return {
     complianceCheck: jest.fn().mockResolvedValue({}),
+    factComplianceCheck: jest.fn().mockResolvedValue({}),
     createOrder: jest.fn().mockResolvedValue({}),
     createOtherActivities: jest.fn().mockResolvedValue({}),
     factCheck: jest.fn().mockResolvedValue({}),
@@ -34,6 +35,7 @@ function createTools(overrides: Partial<AgentTools> = {}): AgentTools {
     }),
     marketData: jest.fn().mockResolvedValue({}),
     marketDataLookup: jest.fn().mockResolvedValue({}),
+    staticAnalysis: jest.fn().mockResolvedValue({}),
     holdingsAnalysis: jest.fn().mockResolvedValue({}),
     portfolioAnalysis: jest.fn().mockResolvedValue({}),
     transactionCategorize: jest.fn().mockResolvedValue({}),

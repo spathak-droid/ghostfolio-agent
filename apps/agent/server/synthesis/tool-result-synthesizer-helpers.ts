@@ -156,6 +156,10 @@ export function buildDeterministicToolSummary({
       : 'Fact check completed; discrepancy reported between sources.';
   }
 
+  if (toolName === 'fact_compliance_check') {
+    return 'Fact + compliance check completed.';
+  }
+
   return stringOrUndefined(rawPayload.summary) ?? stringOrUndefined(payload.summary);
 }
 
@@ -292,8 +296,11 @@ export function unwrapToolPayload(payload: Record<string, unknown>) {
 }
 
 export function extractBalanceAndCashFindings(payload: Record<string, unknown>): string[] {
+  const summaryFindings = extractSummaryBalanceFindings(payload.summary);
+  const performanceFindings = extractSummaryBalanceFindings(payload.performance);
+  const mergedBalanceFindings = [...new Set([...summaryFindings, ...performanceFindings])];
   return [
-    ...extractSummaryBalanceFindings(payload.summary),
+    ...mergedBalanceFindings,
     ...extractAccountBalances(payload.accounts),
     ...extractPlatformBalances(payload.platforms)
   ];
@@ -311,9 +318,12 @@ function extractSummaryBalanceFindings(summary: unknown): string[] {
     findings.push(`Cash (USD): ${roundToTwo(cash)}.`);
   }
   if (totalValue !== undefined && Number.isFinite(totalValue)) {
+    findings.push(`Portfolio worth: ${roundToTwo(totalValue)}.`);
     const holdingsOnly =
       cash !== undefined && Number.isFinite(cash) ? totalValue - cash : totalValue;
-    findings.push(`Holdings value (investments only, excluding cash): ${roundToTwo(holdingsOnly)}.`);
+    findings.push(
+      `Holdings value (investments only, excluding cash): ${roundToTwo(holdingsOnly)}.`
+    );
     findings.push(`Total value (holdings + cash): ${roundToTwo(totalValue)}.`);
   }
   return findings;
@@ -431,6 +441,9 @@ export function extractPerformanceFindings(payload: Record<string, unknown>) {
   const netPerformance = numberOrUndefined(performanceSource.netPerformance);
   if (netPerformance !== undefined) {
     findings.push(`Net performance: ${roundToTwo(netPerformance)}.`);
+    findings.push(
+      'Net performance is your gain/loss versus invested cost basis (positive = profit, negative = loss).'
+    );
     if (netPerformance > 0) {
       findings.push('Portfolio status: in profit.');
     } else if (netPerformance < 0) {
@@ -590,7 +603,11 @@ export function formatSignedPercent(value: number) {
 }
 
 export function isPortfolioLikeTool(toolName: AgentToolName): boolean {
-  return toolName === 'portfolio_analysis' || toolName === 'holdings_analysis';
+  return (
+    toolName === 'portfolio_analysis' ||
+    toolName === 'holdings_analysis' ||
+    toolName === 'static_analysis'
+  );
 }
 
 export function isCashSymbol(symbol: string): boolean {

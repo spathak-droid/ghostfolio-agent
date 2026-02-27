@@ -82,6 +82,22 @@ export function createEvalTools(captures: ToolCapture[]): AgentTools {
         summary: 'Market data lookup from Ghostfolio API'
       });
     },
+    analyzeStockTrend: async (inputOrRun, input) => {
+      track('analyze_stock_trend', inputOrRun, input);
+      return buildResult({
+        summary: 'Stock trend analysis completed'
+      });
+    },
+    staticAnalysis: async (inputOrRun, input) => {
+      track('static_analysis', inputOrRun, input);
+      return buildResult({
+        success: true,
+        risks: [],
+        summary: 'All checked rules are fulfilled; no potential risks identified.',
+        xRay: { categories: [], statistics: { rulesActiveCount: 17, rulesFulfilledCount: 17 } },
+        statistics: { rulesActiveCount: 17, rulesFulfilledCount: 17 }
+      });
+    },
     factCheck: async (inputOrRun, input) => {
       track('fact_check', inputOrRun, input);
       return buildResult({
@@ -91,6 +107,23 @@ export function createEvalTools(captures: ToolCapture[]): AgentTools {
         answer: 'Fact check: prices match between Ghostfolio and CoinGecko within tolerance.',
         sources: ['ghostfolio_api', 'coingecko'],
         summary: 'Fact check: 1 symbol(s) verified; prices match.'
+      });
+    },
+    factComplianceCheck: async (inputOrRun, input) => {
+      track('fact_compliance_check', inputOrRun, input);
+      return buildResult({
+        answer: 'Fact and compliance checks completed without blocking issues.',
+        compliance_check: {
+          isCompliant: true,
+          summary: 'Compliance check completed with 0 violation(s) and 0 warning(s).',
+          violations: [],
+          warnings: []
+        },
+        fact_check: {
+          match: true,
+          summary: 'Fact check: 1 symbol(s) verified; prices match.'
+        },
+        summary: 'Fact + compliance check completed: match=true, compliant=true.'
       });
     },
     marketOverview: async (inputOrRun, input) => {
@@ -201,6 +234,10 @@ export function createTrackedTools(baseTools: AgentTools, captures: ToolCapture[
       if (baseTools.factCheck) return baseTools.factCheck(inputOrRun, input);
       return { match: true, answer: 'Fact check not available.', summary: 'Fact check skipped.', sources: [] };
     },
+    factComplianceCheck: async (inputOrRun, input) => {
+      track('fact_compliance_check', inputOrRun, input);
+      return baseTools.factComplianceCheck(inputOrRun, input);
+    },
     marketData: async (inputOrRun, input) => {
       track('market_data', inputOrRun, input);
       return baseTools.marketData(inputOrRun, input);
@@ -208,6 +245,16 @@ export function createTrackedTools(baseTools: AgentTools, captures: ToolCapture[
     marketDataLookup: async (inputOrRun, input) => {
       track('market_data_lookup', inputOrRun, input);
       return baseTools.marketDataLookup(inputOrRun, input);
+    },
+    analyzeStockTrend: baseTools.analyzeStockTrend
+      ? async (inputOrRun, input) => {
+          track('analyze_stock_trend', inputOrRun, input);
+          return baseTools.analyzeStockTrend!(inputOrRun, input);
+        }
+      : undefined,
+    staticAnalysis: async (inputOrRun, input) => {
+      track('static_analysis', inputOrRun, input);
+      return baseTools.staticAnalysis(inputOrRun, input);
     },
     marketOverview: marketOverview
       ? async (inputOrRun, input) => {

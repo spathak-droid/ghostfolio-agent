@@ -542,6 +542,32 @@ describe('synthesizeToolResults', () => {
     );
   });
 
+  it('uses analyze_stock_trend answer as a key finding when provided', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      toolCalls: [
+        {
+          toolName: 'analyze_stock_trend',
+          success: true,
+          result: {
+            answer:
+              'Apple Inc. (AAPL) trend analysis. Timeline: 30d. Current price: 272.95. Period change: +16.51 (+6.44%). Window high/low: 278.12 / 255.78. Since entry (avg 203.43): +69.52 (+34.18%).',
+            data_as_of: '2026-02-26T00:00:00.000Z',
+            range: '30d',
+            source: 'ghostfolio_api',
+            sources: ['ghostfolio_api'],
+            summary: 'Stock trend analysis for AAPL'
+          }
+        }
+      ]
+    });
+
+    expect(response.answer).toContain(
+      'Apple Inc. (AAPL) trend analysis. Timeline: 30d. Current price: 272.95.'
+    );
+    expect(response.answer).not.toContain('No material findings from the returned tool payload.');
+  });
+
   it('answers diversification questions directly and de-duplicates repeated findings across tools', () => {
     const response = synthesizeToolResults({
       existingFlags: [],
@@ -676,5 +702,105 @@ describe('synthesizeToolResults', () => {
 
     expect(response.answer).not.toContain('No holdings found in portfolio.');
     expect(response.answer).toContain('Portfolio status: in profit.');
+  });
+
+  it('uses totalValueInBaseCurrency as portfolio worth finding', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      toolCalls: [
+        {
+          toolName: 'portfolio_analysis',
+          success: true,
+          result: {
+            data_as_of: '2026-02-27T00:00:00.000Z',
+            sources: ['ghostfolio_api'],
+            summary: 'Portfolio analysis from Ghostfolio performance data',
+            performance: {
+              currentNetWorth: 351563.41,
+              totalValueInBaseCurrency: 314684.15
+            }
+          }
+        }
+      ]
+    });
+
+    expect(response.answer).toContain('Portfolio worth: 314684.15.');
+    expect(response.answer).not.toContain('Current net worth (portfolio + cash):');
+  });
+
+  it('shows portfolio worth before net performance for portfolio analysis prompts', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      userMessage: 'Analyze my portfolio',
+      toolCalls: [
+        {
+          toolName: 'portfolio_analysis',
+          success: true,
+          result: {
+            data_as_of: '2026-02-27T00:00:00.000Z',
+            sources: ['ghostfolio_api'],
+            summary: 'Portfolio analysis from Ghostfolio performance data',
+            performance: {
+              totalValueInBaseCurrency: 352394.34,
+              netPerformance: 14814.36,
+              netPerformancePercentage: 0.0007
+            }
+          }
+        }
+      ]
+    });
+
+    const worthIndex = response.answer.indexOf('Portfolio worth: 352394.34.');
+    const performanceIndex = response.answer.indexOf('Net performance: 14814.36.');
+    expect(worthIndex).toBeGreaterThan(-1);
+    expect(performanceIndex).toBeGreaterThan(-1);
+    expect(worthIndex).toBeLessThan(performanceIndex);
+  });
+
+  it('renders findings for fact_compliance_check and surfaces mismatch risk', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      toolCalls: [
+        {
+          toolName: 'fact_compliance_check',
+          success: true,
+          result: {
+            compliance_check: {
+              violations: [
+                {
+                  message: 'Suitability inputs are required before personalized buy/sell guidance.',
+                  rule_id: 'R-FINRA-2111'
+                }
+              ],
+              warnings: [
+                {
+                  message: 'Potential wash sale window detected; review tax treatment.',
+                  regulation_excerpt: {
+                    excerpt: 'Wash sale losses are disallowed when substantially identical stock is acquired...',
+                    source_url: 'https://www.irs.gov/publications/p550',
+                    topic_id: 'wash-sale'
+                  },
+                  rule_id: 'R-IRS-WASH-SALE'
+                }
+              ]
+            },
+            data_as_of: '2026-02-27T00:00:00.000Z',
+            fact_check: {
+              answer: 'Fact check: discrepancy between sources.',
+              match: false
+            },
+            sources: ['ghostfolio_api', 'coingecko', 'https://www.irs.gov/publications/p550'],
+            summary: 'Fact + compliance check completed.'
+          }
+        }
+      ]
+    });
+
+    expect(response.answer).toContain('Summary: Fact + compliance check completed.');
+    expect(response.answer).toContain('Fact check: discrepancy between sources.');
+    expect(response.answer).toContain('Violation (R-FINRA-2111)');
+    expect(response.answer).toContain('Warning (R-IRS-WASH-SALE)');
+    expect(response.answer).toContain('regulation excerpt available');
+    expect(response.answer).toContain('discrepancy between Ghostfolio and second source');
   });
 });

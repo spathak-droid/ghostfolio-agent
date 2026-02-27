@@ -52,13 +52,17 @@ export function getPreferredSingleToolAnswerFromToolCalls(
   if (
     call.toolName !== 'create_order' &&
     call.toolName !== 'create_other_activities' &&
-    call.toolName !== 'compliance_check'
+    call.toolName !== 'compliance_check' &&
+    call.toolName !== 'static_analysis'
   ) {
     return undefined;
   }
   const result = call.result as Record<string, unknown>;
   if (call.toolName === 'compliance_check') {
     return buildComplianceAnswer(result);
+  }
+  if (call.toolName === 'static_analysis') {
+    return buildStaticAnalysisAnswer(result);
   }
   const answer = typeof result.answer === 'string' ? result.answer.trim() : undefined;
   if (!answer || answer.length === 0) return undefined;
@@ -91,6 +95,34 @@ function buildComplianceAnswer(result: Record<string, unknown>): string | undefi
   }
 
   return 'I ran a compliance check and found no blocking violations or warnings.';
+}
+
+function buildStaticAnalysisAnswer(result: Record<string, unknown>): string | undefined {
+  const summary = typeof result.summary === 'string' ? result.summary.trim() : '';
+  const risks = Array.isArray(result.risks) ? result.risks : [];
+  if (result.success === false) {
+    const answer = typeof result.answer === 'string' ? result.answer.trim() : '';
+    return answer || summary || 'Could not fetch portfolio report.';
+  }
+  if (risks.length === 0) {
+    return summary || 'Portfolio report: all checked rules are fulfilled; no potential risks identified.';
+  }
+  const lines: string[] = [summary];
+  const maxRisks = 8;
+  for (let i = 0; i < Math.min(risks.length, maxRisks); i++) {
+    const r = risks[i] as Record<string, unknown> | undefined;
+    if (!r || typeof r !== 'object') continue;
+    const cat = typeof r.categoryName === 'string' ? r.categoryName : '';
+    const name = typeof r.ruleName === 'string' ? r.ruleName : '';
+    const eval_ = typeof r.evaluation === 'string' ? r.evaluation : '';
+    if (cat || name || eval_) {
+      lines.push(`• ${cat}${cat && name ? ' – ' : ''}${name}${(cat || name) && eval_ ? ': ' : ''}${eval_}`);
+    }
+  }
+  if (risks.length > maxRisks) {
+    lines.push(`… and ${risks.length - maxRisks} more potential risk(s).`);
+  }
+  return lines.join('\n');
 }
 
 function normalizeComplianceItems(items: unknown): string[] {
@@ -158,6 +190,17 @@ export async function decideRoute({
     message,
     traceContext
   });
+  const shouldBypassReasoning = shouldBypassReasoningForPortfolioRetrieval({
+    message,
+    inferredTools
+  });
+
+  if (shouldBypassReasoning) {
+    return {
+      intent: inferredIntent,
+      tools: applyPriceFactCheckRouting(inferredTools)
+    };
+  }
 
   if (!llm?.reasonAboutQuery) {
     return {
@@ -222,6 +265,47 @@ export async function decideRoute({
     intent: inferredIntent,
     tools: applyPriceFactCheckRouting(inferredTools)
   };
+}
+
+function shouldBypassReasoningForPortfolioRetrieval({
+  inferredTools,
+  message
+}: {
+  inferredTools: AgentToolName[];
+  message: string;
+}) {
+  if (
+    inferredTools.includes('market_data') ||
+    inferredTools.includes('fact_check') ||
+    inferredTools.includes('fact_compliance_check') ||
+    inferredTools.includes('compliance_check') ||
+    inferredTools.includes('create_order') ||
+    inferredTools.includes('create_other_activities')
+  ) {
+    return false;
+  }
+
+  const hasPortfolioFamilyTool =
+    inferredTools.includes('portfolio_analysis') || inferredTools.includes('holdings_analysis');
+  const hasTransactionRetrievalTool =
+    inferredTools.includes('transaction_timeline') || inferredTools.includes('transaction_categorize');
+
+  const normalized = message.toLowerCase();
+  const clearlyPortfolioRetrieval = /\b(portfolio|holdings?|allocation|balance|net worth|performance|cash)\b/.test(
+    normalized
+  );
+  const clearlyTransactionRetrieval =
+    /\b(what|when|which)\b.*\b(did i|have i)?\b.*\b(buy|bought|sell|sold)\b/.test(normalized) ||
+    /\b(last year|last month|last week|this year|in 20\d{2}|during 20\d{2})\b/.test(normalized);
+
+  if (hasPortfolioFamilyTool && clearlyPortfolioRetrieval) {
+    return true;
+  }
+  if (hasTransactionRetrievalTool && clearlyTransactionRetrieval) {
+    return true;
+  }
+
+  return false;
 }
 
 function routePriceQueriesWithFactCheckChain({

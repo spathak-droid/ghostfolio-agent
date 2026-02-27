@@ -168,4 +168,32 @@ describe('GhostfolioClient', () => {
     );
     await expect(client.getUser({ token: 'abc' })).rejects.toBeInstanceOf(GhostfolioApiError);
   });
+
+  it('does not include upstream response body in POST error message', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: async () => '{"secret":"token-12345"}'
+    }) as unknown as typeof fetch;
+
+    const client = new GhostfolioClient('http://localhost:3333');
+    await expect(
+      client.createOrder(
+        {
+          type: 'BUY',
+          symbol: 'TSLA',
+          currency: 'USD',
+          date: '2026-01-01T00:00:00.000Z',
+          quantity: 2,
+          unitPrice: 100,
+          fee: 0
+        },
+        { token: 'abc' }
+      )
+    ).rejects.toEqual(
+      expect.objectContaining({
+        message: expect.not.stringContaining('token-12345')
+      })
+    );
+  });
 });

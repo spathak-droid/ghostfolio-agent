@@ -54,9 +54,12 @@ export function createFeedbackHandler({
         ok: true
       });
     } catch (error) {
+      logger.error('[agent.feedback] PERSIST_FAILED', {
+        message: error instanceof Error ? error.message : 'feedback_persist_failed'
+      });
       response.status(503).json({
         code: 'FEEDBACK_PERSIST_FAILED',
-        error: error instanceof Error ? error.message : 'feedback_persist_failed'
+        error: 'feedback_persist_failed'
       });
     }
   };

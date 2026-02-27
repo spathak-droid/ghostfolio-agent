@@ -152,6 +152,15 @@ describe('validateChatBody', () => {
     if (!result.ok) expect((result as { error: string }).error).toContain('symbols must contain only strings');
   });
 
+  it('rejects symbols arrays containing empty strings after trim', () => {
+    const result = validateChatBody({
+      ...validBody,
+      symbols: ['AAPL', '   ']
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect((result as { error: string }).error).toContain('must not contain empty');
+  });
+
   it('rejects invalid range values', () => {
     const result = validateChatBody({
       ...validBody,
@@ -186,6 +195,24 @@ describe('validateChatBody', () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect((result as { error: string }).error).toContain('metrics must be one of');
+  });
+
+  it('rejects metrics arrays containing empty strings after trim', () => {
+    const result = validateChatBody({
+      ...validBody,
+      metrics: ['price', '   ']
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect((result as { error: string }).error).toContain('must not contain empty');
+  });
+
+  it('rejects regulations arrays containing empty strings after trim', () => {
+    const result = validateChatBody({
+      ...validBody,
+      regulations: ['SEC', '']
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect((result as { error: string }).error).toContain('must not contain empty');
   });
 });
 
@@ -362,6 +389,14 @@ describe('validateClearChatBody', () => {
     const result = validateClearChatBody({ conversationId: 'c1', message: 'hi' });
     expect(result.ok).toBe(false);
     if (!result.ok) expect((result as { error: string }).error).toContain('Unknown');
+  });
+
+  it('accepts optional accessToken field for token resolution compatibility', () => {
+    const result = validateClearChatBody({
+      accessToken: 'a.b.c',
+      conversationId: 'c1'
+    });
+    expect(result.ok).toBe(true);
   });
 
   it('rejects missing conversationId', () => {

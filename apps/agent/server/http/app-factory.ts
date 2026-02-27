@@ -6,14 +6,20 @@ import { resolveWidgetCorsOrigin, resolveWidgetDistPath } from '../widget-static
 
 export function createAgentApp({
   chatHandler,
+  chatRateLimiter,
   clearHandler,
+  clearRateLimiter,
   feedbackHandler,
+  feedbackRateLimiter,
   widgetCorsOrigin,
   widgetDistPath
 }: {
   chatHandler: RequestHandler;
+  chatRateLimiter?: RequestHandler;
   clearHandler: RequestHandler;
+  clearRateLimiter?: RequestHandler;
   feedbackHandler: RequestHandler;
+  feedbackRateLimiter?: RequestHandler;
   widgetCorsOrigin: string;
   widgetDistPath: string;
 }) {
@@ -42,9 +48,9 @@ export function createAgentApp({
     response.status(200).json({ status: 'ok' });
   });
 
-  app.post('/chat/clear', clearHandler);
-  app.post('/chat', chatHandler);
-  app.post('/feedback', feedbackHandler);
+  app.post('/chat/clear', clearRateLimiter ?? ((_req, _res, next) => next()), clearHandler);
+  app.post('/chat', chatRateLimiter ?? ((_req, _res, next) => next()), chatHandler);
+  app.post('/feedback', feedbackRateLimiter ?? ((_req, _res, next) => next()), feedbackHandler);
 
   return app;
 }

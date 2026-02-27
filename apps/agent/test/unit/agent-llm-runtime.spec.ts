@@ -137,4 +137,61 @@ describe('agent llm runtime routing', () => {
     expect(result.tools).toEqual(expect.arrayContaining(['portfolio_analysis']));
     expect(result.tools).not.toContain('fact_check');
   });
+
+  it('routes explicit combined fact+compliance intent to fact_compliance_check', async () => {
+    const reasonAboutQuery = jest.fn().mockResolvedValue({
+      intent: 'finance',
+      mode: 'tool_call',
+      tool: 'none'
+    });
+    const llm = createLlmMock({ reasonAboutQuery });
+
+    const result = await decideRoute({
+      conversation: [] as AgentConversationMessage[],
+      llm,
+      message: 'Please verify the BTC price and run a compliance check on this recommendation',
+      traceContext: TRACE_CONTEXT
+    });
+
+    expect(result.tools).toContain('fact_compliance_check');
+    expect(result.tools).not.toContain('compliance_check');
+  });
+
+  it('bypasses reasonAboutQuery for clear portfolio retrieval prompts', async () => {
+    const reasonAboutQuery = jest.fn().mockResolvedValue({
+      intent: 'general',
+      mode: 'direct_reply',
+      tool: 'none'
+    });
+    const llm = createLlmMock({ reasonAboutQuery });
+
+    const result = await decideRoute({
+      conversation: [] as AgentConversationMessage[],
+      llm,
+      message: 'analyze my portfolio performance and allocation',
+      traceContext: TRACE_CONTEXT
+    });
+
+    expect(reasonAboutQuery).not.toHaveBeenCalled();
+    expect(result.tools).toEqual(expect.arrayContaining(['portfolio_analysis']));
+  });
+
+  it('bypasses reasonAboutQuery for clear transaction-history retrieval prompts', async () => {
+    const reasonAboutQuery = jest.fn().mockResolvedValue({
+      intent: 'general',
+      mode: 'direct_reply',
+      tool: 'none'
+    });
+    const llm = createLlmMock({ reasonAboutQuery });
+
+    const result = await decideRoute({
+      conversation: [] as AgentConversationMessage[],
+      llm,
+      message: 'what did i buy last year',
+      traceContext: TRACE_CONTEXT
+    });
+
+    expect(reasonAboutQuery).not.toHaveBeenCalled();
+    expect(result.tools).toEqual(expect.arrayContaining(['transaction_timeline']));
+  });
 });

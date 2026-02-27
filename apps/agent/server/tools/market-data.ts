@@ -327,60 +327,60 @@ interface FetchCurrentResultsArgs {
 
 async function fetchCurrentResults(args: FetchCurrentResultsArgs): Promise<MarketDataSymbolResult[]> {
   const { client, includeHistoricalData, lookup, symbols, windows, impersonationId, token } = args;
-  const results: MarketDataSymbolResult[] = [];
+  const symbolInputs = symbols.slice(0, MAX_SYMBOLS);
+  const results = await Promise.all(
+    symbolInputs.map(async (nameOrTicker): Promise<MarketDataSymbolResult> => {
+      const resolved = await resolveSymbol(nameOrTicker, lookup);
+      if (!resolved) {
+        return {
+          symbol: nameOrTicker,
+          dataSource: '',
+          currentPrice: 0,
+          currency: '',
+          error: {
+            error_code: 'SYMBOL_RESOLUTION_FAILED',
+            message: `Could not resolve symbol: ${nameOrTicker}`,
+            retryable: false
+          }
+        };
+      }
 
-  for (const nameOrTicker of symbols.slice(0, MAX_SYMBOLS)) {
-    const resolved = await resolveSymbol(nameOrTicker, lookup);
-    if (!resolved) {
-      results.push({
-        symbol: nameOrTicker,
-        dataSource: '',
-        currentPrice: 0,
-        currency: '',
-        error: {
-          error_code: 'SYMBOL_RESOLUTION_FAILED',
-          message: `Could not resolve symbol: ${nameOrTicker}`,
-          retryable: false
-        }
-      });
-      continue;
-    }
+      const item = await getSymbolDataWithFallback(
+        client,
+        { dataSource: resolved.dataSource, symbol: resolved.symbol },
+        { impersonationId, token, includeHistoricalData }
+      );
+      if (item.ok === true) {
+        const comparisons = computeHistoricalComparisons({
+          currentPrice: item.data.marketPrice,
+          historicalData: item.data.historicalData,
+          windows
+        });
+        return {
+          symbol: item.data.symbol,
+          dataSource: item.data.dataSource,
+          currentPrice: roundTwo(item.data.marketPrice),
+          currency: item.data.currency,
+          change1w: comparisons.change1w,
+          changePercent1w: comparisons.changePercent1w,
+          change1m: comparisons.change1m,
+          changePercent1m: comparisons.changePercent1m,
+          change1y: comparisons.change1y,
+          changePercent1y: comparisons.changePercent1y,
+          historicalComparisons: comparisons.historicalComparisons
+        };
+      }
 
-    const item = await getSymbolDataWithFallback(
-      client,
-      { dataSource: resolved.dataSource, symbol: resolved.symbol },
-      { impersonationId, token, includeHistoricalData }
-    );
-    if (item.ok === true) {
-      const comparisons = computeHistoricalComparisons({
-        currentPrice: item.data.marketPrice,
-        historicalData: item.data.historicalData,
-        windows
-      });
-      results.push({
-        symbol: item.data.symbol,
-        dataSource: item.data.dataSource,
-        currentPrice: roundTwo(item.data.marketPrice),
-        currency: item.data.currency,
-        change1w: comparisons.change1w,
-        changePercent1w: comparisons.changePercent1w,
-        change1m: comparisons.change1m,
-        changePercent1m: comparisons.changePercent1m,
-        change1y: comparisons.change1y,
-        changePercent1y: comparisons.changePercent1y,
-        historicalComparisons: comparisons.historicalComparisons
-      });
-    } else {
       const failedResult = item as { ok: false; error: ToolErrorPayload };
-      results.push({
+      return {
         symbol: resolved.symbol,
         dataSource: resolved.dataSource,
         currentPrice: 0,
         currency: '',
         error: failedResult.error
-      });
-    }
-  }
+      };
+    })
+  );
 
   return results;
 }

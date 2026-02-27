@@ -162,7 +162,14 @@ export function validateChatBody(body: unknown): ValidateChatBodyResult {
         error: `symbols must have at most ${MAX_ARRAY_LENGTH} items.`
       };
     }
-    const trimmed = body.symbols.map((s) => s.trim()).filter((s) => s.length > 0);
+    const trimmed = body.symbols.map((s) => s.trim());
+    if (trimmed.some((s) => s.length === 0)) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'symbols must not contain empty string values.'
+      };
+    }
     if (trimmed.some((s) => s.length > MAX_STRING_FIELD_LENGTH || !SYMBOL_PATTERN.test(s))) {
       return {
         ok: false,
@@ -170,7 +177,7 @@ export function validateChatBody(body: unknown): ValidateChatBodyResult {
         error: `Each symbol must match ${SYMBOL_PATTERN.toString()}.`
       };
     }
-    symbols = trimmed.length > 0 ? trimmed : undefined;
+    symbols = trimmed;
   }
 
   let metrics: string[] | undefined;
@@ -185,7 +192,14 @@ export function validateChatBody(body: unknown): ValidateChatBodyResult {
         error: `metrics must have at most ${MAX_ARRAY_LENGTH} items.`
       };
     }
-    const trimmed = body.metrics.map((s) => s.trim()).filter((s) => s.length > 0);
+    const trimmed = body.metrics.map((s) => s.trim());
+    if (trimmed.some((s) => s.length === 0)) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'metrics must not contain empty string values.'
+      };
+    }
     if (trimmed.some((s) => s.length > MAX_STRING_FIELD_LENGTH)) {
       return {
         ok: false,
@@ -204,7 +218,7 @@ export function validateChatBody(body: unknown): ValidateChatBodyResult {
         error: `metrics must be one of ${METRIC_VALUES.join(', ')}.`
       };
     }
-    metrics = trimmed.length > 0 ? trimmed : undefined;
+    metrics = trimmed;
   }
 
   let regulations: string[] | undefined;
@@ -219,7 +233,14 @@ export function validateChatBody(body: unknown): ValidateChatBodyResult {
         error: `regulations must have at most ${MAX_ARRAY_LENGTH} items.`
       };
     }
-    const trimmed = body.regulations.map((s) => s.trim()).filter((s) => s.length > 0);
+    const trimmed = body.regulations.map((s) => s.trim());
+    if (trimmed.some((s) => s.length === 0)) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'regulations must not contain empty string values.'
+      };
+    }
     if (trimmed.some((s) => s.length > MAX_STRING_FIELD_LENGTH * 2)) {
       return {
         ok: false,
@@ -227,7 +248,7 @@ export function validateChatBody(body: unknown): ValidateChatBodyResult {
         error: `Each regulation must be at most ${MAX_STRING_FIELD_LENGTH * 2} characters.`
       };
     }
-    regulations = trimmed.length > 0 ? trimmed : undefined;
+    regulations = trimmed;
   }
 
   const range = trimString(body.range);

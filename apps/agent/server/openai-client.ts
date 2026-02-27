@@ -644,9 +644,17 @@ export function createOpenAiClientFromEnv(): AgentLlm | undefined {
       ? configuredOpenRouterUrl
       : OPENROUTER_URL;
   const requestUrl = usingOpenRouter ? openRouterRequestUrl : OPENAI_URL;
+  const redisUrl =
+    process.env.AGENT_LLM_CACHE_REDIS_URL ?? process.env.AGENT_REDIS_URL ?? process.env.REDIS_URL;
+  const cacheEnabled =
+    process.env.AGENT_LLM_CACHE_ENABLED === 'false'
+      ? false
+      : process.env.AGENT_LLM_CACHE_ENABLED === 'true'
+        ? true
+        : Boolean(redisUrl?.trim());
   const cache = createLlmCacheStoreFromEnv({
-    enabled: process.env.AGENT_LLM_CACHE_ENABLED === 'true',
-    redisUrl: process.env.AGENT_LLM_CACHE_REDIS_URL ?? process.env.AGENT_REDIS_URL ?? process.env.REDIS_URL
+    enabled: cacheEnabled,
+    redisUrl
   });
 
   if (!apiKey) {

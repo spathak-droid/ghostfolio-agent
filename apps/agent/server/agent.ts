@@ -20,6 +20,7 @@ import { scoreConfidence } from './verification/confidence-scorer';
 import {
   ensurePendingClarificationTool,
   inferCreateOrderParamsFromMessage,
+  enforceHoldingsAnalysisForAssetQuestions,
   mergeCreateOrderParams,
   normalizeOrderToolsForIntent,
   preventOrderReplayWithoutPending,
@@ -53,6 +54,11 @@ import {
   finalizeDirectResponse,
   handleNoToolRoute
 } from './agent-llm-runtime';
+import {
+  buildToolCallFailureResult,
+  sanitizeErrorMessageForClient,
+  toOrchestrationErrorEntry
+} from './error-normalization';
 import { synthesizeAndFinalizeResponse } from './orchestration/synthesis-stage';
 const defaultConversationStore = createInMemoryConversationStore();
 const defaultContextManager = createDefaultContextManager();
@@ -140,19 +146,22 @@ export function createAgent({
         pendingState: persistedState,
         selectedTools: sanitizeAnalyzeStockTrendForScope({
           message,
-          selectedTools: sanitizePortfolioHoldingsToolScope({
+          selectedTools: enforceHoldingsAnalysisForAssetQuestions({
             message,
-            selectedTools: sanitizeOrderToolsForNonOrderRequests({
+            selectedTools: sanitizePortfolioHoldingsToolScope({
               message,
-              pendingState: persistedState,
-              selectedTools: normalizeOrderToolsForIntent({
+              selectedTools: sanitizeOrderToolsForNonOrderRequests({
                 message,
-                selectedTools: prioritizeExecutionToolsForIntent({
+                pendingState: persistedState,
+                selectedTools: normalizeOrderToolsForIntent({
                   message,
-                  selectedTools: ensurePendingClarificationTool({
+                  selectedTools: prioritizeExecutionToolsForIntent({
                     message,
-                    pendingState: persistedState,
-                    selectedTools: routeDecision.tools
+                    selectedTools: ensurePendingClarificationTool({
+                      message,
+                      pendingState: persistedState,
+                      selectedTools: routeDecision.tools
+                    })
                   })
                 })
               })
@@ -325,18 +334,25 @@ export function createAgent({
             toolExecutionDurationMs += toolDurationMs;
             const reportedFailure = getReportedToolFailure(result);
             if (reportedFailure) {
-              errors.push({
-                code: 'TOOL_EXECUTION_FAILED',
-                message: reportedFailure.message,
+              const normalizedMessage = sanitizeErrorMessageForClient(reportedFailure.message);
+              const entry = toOrchestrationErrorEntry({
+                isTimeout: false,
+                message: normalizedMessage,
                 recoverable: reportedFailure.recoverable
               });
+              errors.push(entry);
               logger.debug('[agent.chat] TOOL_RESULT', {
                 tool,
                 success: false,
-                error: reportedFailure.message
+                error: normalizedMessage
               });
               toolCalls.push({
-                result: { reason: 'tool_failure', errorMessage: reportedFailure.message },
+                result: buildToolCallFailureResult({
+                  errorCode: entry.code,
+                  message: entry.message,
+                  reason: 'tool_failure',
+                  retryable: entry.recoverable
+                }),
                 success: false,
                 toolName: tool
               });
@@ -345,7 +361,7 @@ export function createAgent({
                 durationMs: toolDurationMs,
                 name: tool,
                 input: { messagePreview: message.slice(0, 200) },
-                output: { reason: 'tool_failure', error: reportedFailure.message }
+                output: { reason: 'tool_failure', error: normalizedMessage }
               });
               continue;
             }
@@ -372,16 +388,19 @@ export function createAgent({
             });
           } catch (error) {
             const isTimeout = isTimeoutError(error);
-            const errMsg = isTimeout
+            const rawErrorMessage = isTimeout
               ? `${tool} timed out after 25 seconds`
               : error instanceof Error
                 ? error.message
                 : 'unknown tool failure';
-            errors.push({
-              code: isTimeout ? 'TOOL_EXECUTION_TIMEOUT' : 'TOOL_EXECUTION_FAILED',
+            const errMsg = sanitizeErrorMessageForClient(rawErrorMessage);
+            const retryable = isTimeout ? true : inferToolRecoverableFromThrownError(error);
+            const entry = toOrchestrationErrorEntry({
+              isTimeout,
               message: errMsg,
-              recoverable: isTimeout ? true : inferToolRecoverableFromThrownError(error)
+              recoverable: retryable
             });
+            errors.push(entry);
 
             logger.debug('[agent.chat] TOOL_RESULT', {
               tool,
@@ -390,7 +409,12 @@ export function createAgent({
             });
 
             toolCalls.push({
-              result: { reason: isTimeout ? 'tool_timeout' : 'tool_failure', errorMessage: errMsg },
+              result: buildToolCallFailureResult({
+                errorCode: entry.code,
+                message: entry.message,
+                reason: isTimeout ? 'tool_timeout' : 'tool_failure',
+                retryable: entry.recoverable
+              }),
               success: false,
               toolName: tool
             });
@@ -568,6 +592,8 @@ export function createAgent({
           errors,
           feedbackMemoryProvider,
           intent,
+          llm,
+          llmConversation,
           message,
           previousState: persistedState,
           routeDurationMs,
@@ -578,23 +604,31 @@ export function createAgent({
           traceContext
         });
       } catch (error) {
-        const failureAnswer =
-          isTimeoutError(error)
-            ? timeoutMessageForOperation('tool.batch')
-            : 'I could not complete the request because a tool failed. Please retry.';
-        const errMsg = isTimeoutError(error)
+        const isTimeout = isTimeoutError(error);
+        const failureAnswer = isTimeout
+          ? timeoutMessageForOperation('tool.batch')
+          : 'I could not complete the request because a tool failed. Please retry.';
+        const errMsg = isTimeout
           ? `agent tool flow timed out after ${AGENT_OPERATION_TIMEOUT_MS / 1000} seconds`
           : error instanceof Error
             ? error.message
             : 'unknown tool failure';
-        errors.push({
-          code: isTimeoutError(error) ? 'TOOL_EXECUTION_TIMEOUT' : 'TOOL_EXECUTION_FAILED',
-          message: errMsg,
-          recoverable: isTimeoutError(error) ? true : inferToolRecoverableFromThrownError(error)
+        const normalizedErrorMessage = sanitizeErrorMessageForClient(errMsg);
+        const recoverable = isTimeout ? true : inferToolRecoverableFromThrownError(error);
+        const entry = toOrchestrationErrorEntry({
+          isTimeout,
+          message: normalizedErrorMessage,
+          recoverable
         });
+        errors.push(entry);
 
         toolCalls.push({
-          result: { reason: isTimeoutError(error) ? 'tool_timeout' : 'tool_failure', errorMessage: errMsg },
+          result: buildToolCallFailureResult({
+            errorCode: entry.code,
+            message: entry.message,
+            reason: isTimeout ? 'tool_timeout' : 'tool_failure',
+            retryable: entry.recoverable
+          }),
           success: false,
           toolName: selectedTools[0] ?? 'transaction_categorize'
         });
@@ -634,5 +668,7 @@ export function createAgent({
 }
 
 function sanitizeToolErrorMessage(message: string): string {
-  return message.replace(/^TOOL_EXECUTION_(FAILED|TIMEOUT):\s*/i, '').trim();
+  return sanitizeErrorMessageForClient(
+    message.replace(/^TOOL_EXECUTION_(FAILED|TIMEOUT):\s*/i, '').trim()
+  );
 }

@@ -11,11 +11,13 @@ import type {
   AgentConversationMessage,
   AgentFeedbackMemory,
   AgentFeedbackMemoryProvider,
+  AgentLlm,
   AgentTraceContext,
   AgentTraceStep,
   CreateOrderParams
 } from '../types';
 import { applyDomainConstraints } from '../verification/domain-constraints';
+import { verifyClaimsAgainstToolEvidence } from '../verification/claim-verifier';
 import { scoreConfidence } from '../verification/confidence-scorer';
 import { validateOutput } from '../verification/output-validator';
 
@@ -28,6 +30,8 @@ export async function synthesizeAndFinalizeResponse({
   errors,
   feedbackMemoryProvider,
   intent,
+  llm,
+  llmConversation,
   message,
   previousState,
   routeDurationMs,
@@ -45,6 +49,8 @@ export async function synthesizeAndFinalizeResponse({
   errors: AgentChatResponse['errors'];
   feedbackMemoryProvider?: AgentFeedbackMemoryProvider;
   intent: 'finance' | 'general';
+  llm?: AgentLlm;
+  llmConversation: AgentConversationMessage[];
   message: string;
   previousState: Awaited<ReturnType<AgentConversationStore['getState']>>;
   routeDurationMs: number;
@@ -61,8 +67,8 @@ export async function synthesizeAndFinalizeResponse({
       feedbackMemory = await feedbackMemoryProvider.getForToolSignature(toolSignature);
       if (feedbackMemory) {
         trace.push({
-          type: 'llm',
-          name: 'feedback_memory_synthesis',
+          type: 'tool',
+          name: 'feedback_memory_lookup',
           output: {
             doCount: feedbackMemory.do.length,
             dontCount: feedbackMemory.dont.length,
@@ -105,39 +111,102 @@ export async function synthesizeAndFinalizeResponse({
     toolCalls
   });
 
-  const synthesisDurationMs = Date.now() - synthesizeStartedAt;
   logger.debug('[agent.chat] SYNTHESIZED', {
     answerLength: synthesized.answer.length,
     answerPreview:
       synthesized.answer.slice(0, 400) + (synthesized.answer.length > 400 ? '...' : ''),
     flags: synthesized.flags,
-    synthesisDurationMs,
     toolCallCount: toolCalls.length
   });
 
-  trace.push({
-    type: 'llm',
-    durationMs: Date.now() - synthesizeStartedAt,
-    name: 'synthesize',
-    input: { messagePreview: message.slice(0, 200), toolCallCount: toolCalls.length },
-    output: { answerPreview: synthesized.answer.slice(0, 500), flags: synthesized.flags }
-  });
-
   let baseAnswer = synthesized.answer;
+  let synthesisMode: 'deterministic' | 'llm_grounded' | 'deterministic_fallback' =
+    llm ? 'llm_grounded' : 'deterministic';
+  if (llm) {
+    try {
+      const worthInstruction = isPortfolioWorthQuestion(message)
+        ? [
+            'For portfolio worth questions: use totalValueInBaseCurrency as portfolio worth.'
+          ]
+        : [];
+      const analysisWorthInstruction = shouldLeadWithPortfolioWorth(message)
+        ? [
+            'For portfolio analysis responses, start with portfolio worth using totalValueInBaseCurrency when available.'
+          ]
+        : [];
+      const groundedPrompt = [
+        'Answer the user question using only grounded tool findings below.',
+        'Do not use section headers or report templates.',
+        'Be concise and direct. Include exact values when available.',
+        'If the user asked for one item (for example top performer), return only that.',
+        ...worthInstruction,
+        ...analysisWorthInstruction,
+        '',
+        `User question: ${message}`,
+        '',
+        'Grounded findings:',
+        synthesized.answer
+      ].join('\n');
+      const llmAnswer = await llm.answerFinanceQuestion(groundedPrompt, llmConversation, traceContext);
+      if (llmAnswer.trim().length > 0) {
+        baseAnswer = llmAnswer.trim();
+      }
+    } catch {
+      // Keep deterministic synthesis fallback when LLM synthesis fails.
+      synthesisMode = 'deterministic_fallback';
+    }
+  }
   const clarification = getPreferredSingleToolAnswerFromToolCalls(toolCalls);
   if (clarification) {
     baseAnswer = clarification;
   }
+  const synthesisDurationMs = Date.now() - synthesizeStartedAt;
+  trace.push({
+    type: 'llm',
+    durationMs: synthesisDurationMs,
+    name: 'synthesize',
+    input: { messagePreview: message.slice(0, 200), toolCallCount: toolCalls.length },
+    output: {
+      answerPreview: baseAnswer.slice(0, 500),
+      flags: synthesized.flags,
+      mode: synthesisMode
+    }
+  });
 
-  const outputValidation = validateOutput(baseAnswer);
+  const claimVerification = verifyClaimsAgainstToolEvidence({
+    answer: baseAnswer,
+    message,
+    toolCalls
+  });
+  if (claimVerification.flags.includes('unsupported_claim')) {
+    baseAnswer =
+      'I found unsupported numeric claims that could not be grounded in tool evidence. ' +
+      'I am withholding those claims. Please retry or run a fresh fact check.';
+  }
+
+  const outputValidation = validateOutput({
+    answer: baseAnswer,
+    intent,
+    toolCalls
+  });
+  if (outputValidation.severeErrors.length > 0) {
+    baseAnswer =
+      'I cannot provide a reliable answer because required validation checks failed. Please retry.';
+  }
   const inputFlags = detectInputFlags(message);
   const constraints = applyDomainConstraints(
     baseAnswer,
-    [...synthesized.flags, ...outputValidation.errors, ...inputFlags],
+    [...synthesized.flags, ...outputValidation.errors, ...inputFlags, ...claimVerification.flags],
     { intent }
   );
   const hasCriticalFlags = constraints.flags.some((flag) =>
-    ['missing_provenance', 'tool_failure'].includes(flag)
+    [
+      'fact_check_mismatch',
+      'fact_check_missing_for_price_claim',
+      'missing_provenance',
+      'tool_failure',
+      'unsupported_claim'
+    ].includes(flag)
   );
 
   const finalizeInput = {
@@ -226,4 +295,16 @@ export async function synthesizeAndFinalizeResponse({
   });
 
   return response;
+}
+
+function isPortfolioWorthQuestion(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return /\b(net worth|portfolio worth|portfolio value|how much is my portfolio worth|worth)\b/.test(
+    normalized
+  );
+}
+
+function shouldLeadWithPortfolioWorth(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return /\b(analyze|analysis|how is|summary)\b/.test(normalized) && /\bportfolio\b/.test(normalized);
 }

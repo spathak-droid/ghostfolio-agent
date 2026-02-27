@@ -26,17 +26,20 @@ import { createAgent } from './agent';
 import { createConversationStoreFromEnv } from './conversation-store';
 import { createDefaultContextManager } from './context-manager';
 import { createFeedbackStoreFromEnv } from './feedback-store';
+import { createRegulationStoreFromEnv } from './regulation-store';
 import { GhostfolioClient } from './ghostfolio-client';
 import { createOpenAiClientFromEnv } from './openai-client';
 import { createAgentApp, resolveWidgetRuntimeConfig } from './http/app-factory';
 import { createChatHandler } from './http/chat-handler';
 import { createClearHandler } from './http/clear-handler';
 import { createFeedbackHandler } from './http/feedback-handler';
+import { createRateLimitMiddleware } from './http/rate-limit';
 import { analyzeStockTrendTool } from './tools/analyze-stock-trend';
 import { complianceCheckTool } from './tools/compliance-check';
 import { createOrderTool } from './tools/create-order';
 import { createOtherActivitiesTool } from './tools/create-other-activities';
 import { factCheckTool } from './tools/fact-check';
+import { factComplianceCheckTool } from './tools/fact-compliance-check';
 import { getOrdersTool } from './tools/get-orders';
 import { getTransactionsTool } from './tools/get-transactions';
 import { holdingsAnalysisTool } from './tools/holdings-analysis';
@@ -44,8 +47,13 @@ import { marketDataLookupTool } from './tools/market-data-lookup';
 import { marketDataTool } from './tools/market-data';
 import { marketOverviewTool } from './tools/market-overview';
 import { portfolioAnalysisTool } from './tools/portfolio-analysis';
+import { staticAnalysisTool } from './tools/static-analysis';
 import { transactionCategorizeTool } from './tools/transaction-categorize';
 import { transactionTimelineTool } from './tools/transaction-timeline';
+import {
+  createToolResponseCacheStoreFromEnv,
+  withToolResponseCache
+} from './tool-response-cache';
 
 const port = Number(process.env.PORT ?? process.env.AGENT_PORT ?? '4444');
 const host = process.env.HOST ?? '0.0.0.0';
@@ -72,6 +80,13 @@ const ghostfolioAllowedHosts = (process.env.AGENT_GHOSTFOLIO_ALLOWED_HOSTS ?? ''
 
 try {
   const feedbackStore = createFeedbackStoreFromEnv();
+  const regulationStore = createRegulationStoreFromEnv();
+  if (process.env.AGENT_REGULATION_SEED_ON_START === 'true') {
+    regulationStore.seedTopics().then((r) => {
+      if (r.error) logger.warn('[agent] regulation seed on start failed:', r.error);
+      else logger.info('[agent] regulation topics seeded:', r.seeded);
+    });
+  }
   const enableFeedbackMemory = process.env.AGENT_ENABLE_FEEDBACK_MEMORY !== 'false';
 
   function parsePositiveInteger(value: string | undefined): number | undefined {
@@ -93,11 +108,26 @@ try {
     ttlMs: parsePositiveInteger(process.env.AGENT_CONVERSATION_TTL_MS)
   });
 
-  const contextManager = createDefaultContextManager({
-    maxRecentMessages: parsePositiveInteger(process.env.AGENT_CONTEXT_WINDOW_MAX_MESSAGES) ?? 10,
-    summarySampleMessages:
-      parsePositiveInteger(process.env.AGENT_CONTEXT_SUMMARY_SAMPLE_MESSAGES) ?? 6
-  });
+const contextManager = createDefaultContextManager({
+  maxRecentMessages: parsePositiveInteger(process.env.AGENT_CONTEXT_WINDOW_MAX_MESSAGES) ?? 10,
+  summarySampleMessages:
+    parsePositiveInteger(process.env.AGENT_CONTEXT_SUMMARY_SAMPLE_MESSAGES) ?? 6
+});
+const chatRateLimitMax = parsePositiveInteger(process.env.AGENT_CHAT_RATE_LIMIT_MAX) ?? 60;
+const chatRateLimitWindowMs =
+  parsePositiveInteger(process.env.AGENT_CHAT_RATE_LIMIT_WINDOW_MS) ?? 60_000;
+const clearRateLimitMax = parsePositiveInteger(process.env.AGENT_CLEAR_RATE_LIMIT_MAX) ?? 30;
+const clearRateLimitWindowMs =
+  parsePositiveInteger(process.env.AGENT_CLEAR_RATE_LIMIT_WINDOW_MS) ?? 60_000;
+const feedbackRateLimitMax =
+  parsePositiveInteger(process.env.AGENT_FEEDBACK_RATE_LIMIT_MAX) ?? 120;
+const feedbackRateLimitWindowMs =
+  parsePositiveInteger(process.env.AGENT_FEEDBACK_RATE_LIMIT_WINDOW_MS) ?? 60_000;
+const toolResponseCache = createToolResponseCacheStoreFromEnv({
+  redisUrl: process.env.AGENT_REDIS_URL ?? process.env.REDIS_URL
+});
+const toolResponseCacheTtlMs =
+  parsePositiveInteger(process.env.AGENT_TOOL_CACHE_TTL_MS) ?? 15_000;
 
 function toolInput(
   a: unknown,
@@ -175,79 +205,189 @@ function createAgentWithClient(ghostfolioClient: GhostfolioClient) {
       },
       complianceCheck: (a, b) => {
         const { message, createOrderParams, regulations } = toolInput(a, b);
-        return complianceCheckTool({
-          createOrderParams,
-          llmFactExtractor: llm?.extractComplianceFacts,
-          message,
-          regulations
+        return withToolResponseCache({
+          cache: toolResponseCache,
+          input: { message, createOrderParams, regulations },
+          task: () =>
+            complianceCheckTool({
+              createOrderParams,
+              llmFactExtractor: llm?.extractComplianceFacts,
+              message,
+              regulations
+            }),
+          toolName: 'compliance_check',
+          ttlMs: toolResponseCacheTtlMs
         });
       },
       factCheck: (a, b) => {
         const { impersonationId, message, symbols, token } = toolInput(a, b);
-        return factCheckTool({
-          client: ghostfolioClient,
+        return withToolResponseCache({
+          cache: toolResponseCache,
+          input: { impersonationId, message, symbols, token },
+          task: () =>
+            factCheckTool({
+              client: ghostfolioClient,
+              impersonationId,
+              message,
+              symbols,
+              token
+            }),
+          toolName: 'fact_check',
+          ttlMs: toolResponseCacheTtlMs
+        });
+      },
+      factComplianceCheck: (a, b) => {
+        const {
+          createOrderParams,
           impersonationId,
           message,
+          regulations,
           symbols,
-          token
+          token,
+          type
+        } = toolInput(a, b);
+        return withToolResponseCache({
+          cache: toolResponseCache,
+          input: {
+            createOrderParams,
+            impersonationId,
+            message,
+            regulations,
+            symbols,
+            token,
+            type
+          },
+          task: () =>
+            factComplianceCheckTool({
+              client: ghostfolioClient,
+              createOrderParams,
+              impersonationId,
+              llmFactExtractor: llm?.extractComplianceFacts,
+              message,
+              regulationStore,
+              regulations,
+              symbols,
+              token,
+              type
+            }),
+          toolName: 'fact_compliance_check',
+          ttlMs: toolResponseCacheTtlMs
         });
       },
       marketData: (a, b) => {
         const { impersonationId, message, metrics, symbols, token } = toolInput(a, b);
-        return marketDataTool({
-          client: ghostfolioClient,
-          impersonationId,
-          message,
-          metrics,
-          symbols,
-          token
+        return withToolResponseCache({
+          cache: toolResponseCache,
+          input: { impersonationId, message, metrics, symbols, token },
+          task: () =>
+            marketDataTool({
+              client: ghostfolioClient,
+              impersonationId,
+              message,
+              metrics,
+              symbols,
+              token
+            }),
+          toolName: 'market_data',
+          ttlMs: toolResponseCacheTtlMs
         });
       },
       analyzeStockTrend: (a, b) => {
         const { impersonationId, message, range, symbol, token } = toolInput(a, b);
-        return analyzeStockTrendTool({
-          client: ghostfolioClient,
-          impersonationId,
-          message,
-          range,
-          symbol,
-          token
+        return withToolResponseCache({
+          cache: toolResponseCache,
+          input: { impersonationId, message, range, symbol, token },
+          task: () =>
+            analyzeStockTrendTool({
+              client: ghostfolioClient,
+              impersonationId,
+              message,
+              range,
+              symbol,
+              token
+            }),
+          toolName: 'analyze_stock_trend',
+          ttlMs: toolResponseCacheTtlMs
         });
       },
       marketDataLookup: (a, b) => {
         const { impersonationId, message, token } = toolInput(a, b);
-        return marketDataLookupTool({
-          client: ghostfolioClient,
-          impersonationId,
-          message,
-          token
+        return withToolResponseCache({
+          cache: toolResponseCache,
+          input: { impersonationId, message, token },
+          task: () =>
+            marketDataLookupTool({
+              client: ghostfolioClient,
+              impersonationId,
+              message,
+              token
+            }),
+          toolName: 'market_data_lookup',
+          ttlMs: toolResponseCacheTtlMs
         });
       },
       marketOverview: (a, b) => {
         const { impersonationId, message, token } = toolInput(a, b);
-        return marketOverviewTool({
-          client: ghostfolioClient,
-          impersonationId,
-          message,
-          token
+        return withToolResponseCache({
+          cache: toolResponseCache,
+          input: { impersonationId, message, token },
+          task: () =>
+            marketOverviewTool({
+              client: ghostfolioClient,
+              impersonationId,
+              message,
+              token
+            }),
+          toolName: 'market_overview',
+          ttlMs: toolResponseCacheTtlMs
         });
       },
       portfolioAnalysis: (a, b) => {
         const { impersonationId, message, token } = toolInput(a, b);
-        return portfolioAnalysisTool({
-          client: ghostfolioClient,
-          impersonationId,
-          message,
-          token
+        return withToolResponseCache({
+          cache: toolResponseCache,
+          input: { impersonationId, message, token },
+          task: () =>
+            portfolioAnalysisTool({
+              client: ghostfolioClient,
+              impersonationId,
+              message,
+              token
+            }),
+          toolName: 'portfolio_analysis',
+          ttlMs: toolResponseCacheTtlMs
         });
       },
       holdingsAnalysis: (a, b) => {
         const { impersonationId, message, token } = toolInput(a, b);
-        return holdingsAnalysisTool({
-          client: ghostfolioClient,
-          impersonationId,
-          message,
-          token
+        return withToolResponseCache({
+          cache: toolResponseCache,
+          input: { impersonationId, message, token },
+          task: () =>
+            holdingsAnalysisTool({
+              client: ghostfolioClient,
+              impersonationId,
+              message,
+              token
+            }),
+          toolName: 'holdings_analysis',
+          ttlMs: toolResponseCacheTtlMs
+        });
+      },
+      staticAnalysis: (a, b) => {
+        const { impersonationId, message, token } = toolInput(a, b);
+        return withToolResponseCache({
+          cache: toolResponseCache,
+          input: { impersonationId, message, token },
+          task: () =>
+            staticAnalysisTool({
+              client: ghostfolioClient,
+              impersonationId,
+              message,
+              token
+            }),
+          toolName: 'static_analysis',
+          ttlMs: toolResponseCacheTtlMs
         });
       },
       transactionCategorize: (a, b) => {
@@ -336,23 +476,35 @@ function createAgentWithClient(ghostfolioClient: GhostfolioClient) {
   );
 
   const app = createAgentApp({
-  chatHandler: createChatHandler({
-    allowBodyAccessToken,
-    allowInsecureGhostfolioHttp,
-    createAgentWithClient,
-    ghostfolioAllowedHosts,
-    ghostfolioBaseUrl
-  }),
-  clearHandler: createClearHandler({
-    allowBodyAccessToken,
-    conversationStore
-  }),
-  feedbackHandler: createFeedbackHandler({
-    feedbackStore
-  }),
-  widgetCorsOrigin,
-  widgetDistPath
-});
+    chatHandler: createChatHandler({
+      allowBodyAccessToken,
+      allowInsecureGhostfolioHttp,
+      createAgentWithClient,
+      ghostfolioAllowedHosts,
+      ghostfolioBaseUrl
+    }),
+    chatRateLimiter: createRateLimitMiddleware({
+      maxRequests: chatRateLimitMax,
+      windowMs: chatRateLimitWindowMs
+    }),
+    clearHandler: createClearHandler({
+      allowBodyAccessToken,
+      conversationStore
+    }),
+    clearRateLimiter: createRateLimitMiddleware({
+      maxRequests: clearRateLimitMax,
+      windowMs: clearRateLimitWindowMs
+    }),
+    feedbackHandler: createFeedbackHandler({
+      feedbackStore
+    }),
+    feedbackRateLimiter: createRateLimitMiddleware({
+      maxRequests: feedbackRateLimitMax,
+      windowMs: feedbackRateLimitWindowMs
+    }),
+    widgetCorsOrigin,
+    widgetDistPath
+  });
   app.listen(port, host, () => {
     logger.info(`[agent] listening on http://${host}:${port}`);
   });

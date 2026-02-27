@@ -58,7 +58,7 @@ export const CREATE_ORDER_ALLOWED_KEYS = new Set([
   'unitPrice'
 ]);
 
-export const CLEAR_CHAT_BODY_ALLOWED_KEYS = new Set(['conversationId']);
+export const CLEAR_CHAT_BODY_ALLOWED_KEYS = new Set(['accessToken', 'conversationId']);
 
 export const FEEDBACK_ALLOWED_KEYS = new Set([
   'answer',

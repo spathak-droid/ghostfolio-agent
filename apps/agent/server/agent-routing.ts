@@ -4,6 +4,12 @@ import { SELECTABLE_TOOL_NAMES } from './tools/tool-registry';
 
 /** Keyword hints per selectable tool; used when LLM is unavailable. Registry is source of truth for tool names. */
 const SELECTABLE_KEYWORD_HINTS: Readonly<Record<string, string[]>> = {
+  fact_compliance_check: [
+    'verify and compliance',
+    'fact check and compliance',
+    'verify and check compliance',
+    'cross-check and compliance'
+  ],
   fact_check: [
     'fact check',
     'verify',
@@ -46,6 +52,22 @@ const SELECTABLE_KEYWORD_HINTS: Readonly<Record<string, string[]>> = {
     'what do i hold',
     'how much do i have'
   ],
+  static_analysis: [
+    'potential risks',
+    'portfolio risks',
+    'check risks',
+    'regional risk',
+    'asset risk',
+    'asset class risk',
+    'currency risk',
+    'cluster risk',
+    'portfolio report',
+    'x-ray',
+    'static analysis',
+    'emergency fund',
+    'buying power',
+    'fees risk'
+  ],
   market_data: [
     'price of',
     'current price',
@@ -80,7 +102,11 @@ const SELECTABLE_KEYWORD_HINTS: Readonly<Record<string, string[]>> = {
   transaction_categorize: ['transaction', 'categorize', 'category'],
   transaction_timeline: [
     'when did i buy',
+    'what did i buy',
+    'what have i bought',
     'when did i sell',
+    'what did i sell',
+    'what have i sold',
     'at what price',
     'last transaction',
     'latest transaction',
@@ -132,6 +158,10 @@ const SELECTABLE_KEYWORD_HINTS: Readonly<Record<string, string[]>> = {
 };
 
 export function selectToolsByKeyword(message: string): AgentToolName[] {
+  if (isExplicitFactComplianceIntent(message)) {
+    return ['fact_compliance_check'];
+  }
+
   const normalized = message.toLowerCase();
   const tools: AgentToolName[] = [];
 
@@ -184,6 +214,10 @@ export function prioritizeExecutionToolsForIntent({
   message: string;
   selectedTools: AgentToolName[];
 }): AgentToolName[] {
+  if (isExplicitFactComplianceIntent(message)) {
+    return ['fact_compliance_check'];
+  }
+
   if (isExplicitComplianceCheckIntent(message) && selectedTools.includes('compliance_check')) {
     return ['compliance_check'];
   }
@@ -199,6 +233,24 @@ export function prioritizeExecutionToolsForIntent({
       tool === 'get_orders'
   );
   return executionTools.length > 0 ? executionTools : selectedTools;
+}
+
+function isExplicitFactComplianceIntent(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+  const hasFactIntent =
+    /\bfact check\b/.test(normalized) ||
+    /\bverify\b/.test(normalized) ||
+    /\bdouble-check\b/.test(normalized) ||
+    /\bcross-check\b/.test(normalized) ||
+    /\bconfirm price\b/.test(normalized);
+  const hasComplianceIntent =
+    /\bcompliance\b/.test(normalized) ||
+    /\bcompliant\b/.test(normalized) ||
+    /\bregulation\b/.test(normalized) ||
+    /\bpolicy check\b/.test(normalized) ||
+    /\bis this compliant\b/.test(normalized);
+
+  return hasFactIntent && hasComplianceIntent;
 }
 
 function isExplicitComplianceCheckIntent(message: string): boolean {
@@ -419,10 +471,23 @@ export function ensurePendingClarificationTool({
     return selectedTools;
   }
 
+  // LLM already selected a non-order tool for this turn: do not hijack with pending order flow.
+  if (
+    selectedTools.some(
+      (tool) =>
+        tool !== 'create_order' && tool !== 'create_other_activities' && tool !== 'get_orders'
+    )
+  ) {
+    return selectedTools;
+  }
+
   const normalized = message.trim().toLowerCase();
   const cancelIntent =
     /\b(cancel|stop|nevermind|never mind|forget it|don'?t place)\b/.test(normalized);
   if (cancelIntent) {
+    return selectedTools;
+  }
+  if (isHistoricalTransactionLookupIntent(normalized)) {
     return selectedTools;
   }
 
@@ -555,6 +620,28 @@ export function sanitizePortfolioHoldingsToolScope({
   return selectedTools;
 }
 
+export function enforceHoldingsAnalysisForAssetQuestions({
+  message,
+  selectedTools
+}: {
+  message: string;
+  selectedTools: AgentToolName[];
+}): AgentToolName[] {
+  const normalized = message.toLowerCase();
+  const asksHoldingTerms =
+    /\b(coin|stock|holding|holdings|position|asset)\b/.test(normalized) ||
+    /\b(top|best|worst)\s+perform(ing|er)s?\b/.test(normalized);
+  if (!asksHoldingTerms) {
+    return selectedTools;
+  }
+
+  const withoutTrend = selectedTools.filter((tool) => tool !== 'analyze_stock_trend');
+  if (withoutTrend.includes('holdings_analysis')) {
+    return withoutTrend;
+  }
+  return ['holdings_analysis', ...withoutTrend];
+}
+
 function hasSpecificAssetReference(message: string): boolean {
   const normalized = message.toLowerCase();
   if (/\b[A-Z]{2,5}(?:-[A-Z]{2,5})?\b/.test(message)) return true;
@@ -584,6 +671,9 @@ export function isOrderConfirmationMessage(message: string): boolean {
 
 function looksLikeOrderClarificationInput(normalizedMessage: string): boolean {
   if (!normalizedMessage) return false;
+  if (isHistoricalTransactionLookupIntent(normalizedMessage)) {
+    return false;
+  }
   const compact = normalizedMessage.replace(/\s+/g, '');
 
   if (
@@ -615,4 +705,25 @@ function looksLikeOrderClarificationInput(normalizedMessage: string): boolean {
   }
 
   return false;
+}
+
+function isHistoricalTransactionLookupIntent(normalizedMessage: string): boolean {
+  if (!normalizedMessage.includes('buy') && !normalizedMessage.includes('bought') && !normalizedMessage.includes('sell') && !normalizedMessage.includes('sold')) {
+    return false;
+  }
+
+  const asksHistory =
+    /\b(last week|last month|last year|yesterday|today|this year|in 20\d{2}|during 20\d{2}|over time|history|historical|previous)\b/.test(
+      normalizedMessage
+    ) ||
+    /\b(what|when|which|show|list)\b.*\b(did i|have i)?\b.*\b(buy|bought|sell|sold)\b/.test(
+      normalizedMessage
+    ) ||
+    /\b(did i|have i)\b.*\b(buy|bought|sell|sold)\b/.test(normalizedMessage);
+
+  if (!asksHistory) {
+    return false;
+  }
+
+  return !isExplicitOrderExecutionIntent(normalizedMessage);
 }

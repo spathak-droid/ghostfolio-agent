@@ -113,6 +113,8 @@ export function synthesizeToolResults({
       collectMarketOverviewFindings({ keyFindings, nextSteps, payload });
     } else if (call.toolName === 'market_data_lookup') {
       collectMarketLookupFindings({ keyFindings, nextSteps, payload });
+    } else if (call.toolName === 'analyze_stock_trend') {
+      collectAnalyzeStockTrendFindings({ keyFindings, nextSteps, payload, rawPayload });
     } else if (call.toolName === 'transaction_categorize') {
       collectTransactionCategorizationFindings({
         flags,
@@ -130,6 +132,30 @@ export function synthesizeToolResults({
       });
     } else if (call.toolName === 'compliance_check') {
       collectComplianceFindings({ keyFindings, nextSteps, payload, risks });
+    } else if (call.toolName === 'fact_compliance_check') {
+      const factPayload = isObject(payload.fact_check) ? payload.fact_check : {};
+      const compliancePayload = isObject(payload.compliance_check) ? payload.compliance_check : {};
+      const factAnswer = typeof factPayload.answer === 'string' ? factPayload.answer : '';
+      if (factAnswer) keyFindings.push(factAnswer);
+      if (factPayload.match === false) {
+        risks.push('Fact check reported a price discrepancy between Ghostfolio and second source.');
+      }
+      collectComplianceFindings({
+        keyFindings,
+        nextSteps,
+        payload: compliancePayload,
+        risks
+      });
+      const hasExcerptWarning = [...(Array.isArray(compliancePayload.warnings) ? compliancePayload.warnings : []), ...(Array.isArray(compliancePayload.violations) ? compliancePayload.violations : [])]
+        .some(
+          (item) =>
+            isObject(item) &&
+            isObject(item.regulation_excerpt) &&
+            typeof item.regulation_excerpt.excerpt === 'string'
+        );
+      if (hasExcerptWarning) {
+        keyFindings.push('At least one compliance finding has a regulation excerpt available from the regulation bank.');
+      }
     } else if (call.toolName === 'fact_check') {
       const answer = typeof payload.answer === 'string' ? payload.answer : '';
       if (answer) keyFindings.push(answer);
@@ -326,12 +352,12 @@ function collectPortfolioFindings({
   }
 
   const topAllocation = extractTopAllocation(payload);
+  keyFindings.push(...extractBalanceAndCashFindings(payload));
   if (topAllocation.length > 0) {
     keyFindings.push(`Top allocation: ${topAllocation.join(', ')}.`);
   }
 
   keyFindings.push(...extractPerformanceFindings(payload));
-  keyFindings.push(...extractBalanceAndCashFindings(payload));
   keyFindings.push(...extractPortfolioEvolutionFindings(payload));
   keyFindings.push(...extractHoldingPerformerFindings(payload));
   nextSteps.push('Review position sizing against your target allocation and rebalance if needed.');
@@ -486,6 +512,47 @@ function collectMarketLookupFindings({
     }
   }
   nextSteps.push('Confirm price moves with your watchlist thresholds before trading.');
+}
+
+function collectAnalyzeStockTrendFindings({
+  keyFindings,
+  nextSteps,
+  payload,
+  rawPayload
+}: {
+  keyFindings: string[];
+  nextSteps: string[];
+  payload: Record<string, unknown>;
+  rawPayload: Record<string, unknown>;
+}) {
+  const answer = stringOrUndefined(payload.answer) ?? stringOrUndefined(rawPayload.answer);
+  if (answer) {
+    keyFindings.push(answer);
+  } else {
+    const trend = isObject(payload.trend) ? payload.trend : undefined;
+    if (trend) {
+      const currentPrice = numberOrUndefined(trend.currentPrice);
+      const periodChange = numberOrUndefined(trend.periodChange);
+      const periodChangePercent = numberOrUndefined(trend.periodChangePercent);
+      const windowHigh = numberOrUndefined(trend.windowHigh);
+      const windowLow = numberOrUndefined(trend.windowLow);
+      const trendParts: string[] = [];
+      if (currentPrice !== undefined) trendParts.push(`Current price: ${currentPrice}`);
+      if (periodChange !== undefined && periodChangePercent !== undefined) {
+        const signedChange = periodChange > 0 ? `+${periodChange}` : `${periodChange}`;
+        const signedPct = periodChangePercent > 0 ? `+${periodChangePercent}` : `${periodChangePercent}`;
+        trendParts.push(`Period change: ${signedChange} (${signedPct}%)`);
+      }
+      if (windowHigh !== undefined && windowLow !== undefined) {
+        trendParts.push(`Window high/low: ${windowHigh} / ${windowLow}`);
+      }
+      if (trendParts.length > 0) {
+        keyFindings.push(`Trend: ${trendParts.join('. ')}.`);
+      }
+    }
+  }
+
+  nextSteps.push('Compare this trend window to your entry thesis before changing position size.');
 }
 
 function collectTransactionCategorizationFindings({

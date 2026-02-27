@@ -173,6 +173,41 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     idempotent: true
   },
   {
+    name: 'fact_compliance_check',
+    description:
+      'Use only when the user explicitly asks for both fact verification and compliance/regulation validation in one request. ' +
+      'Runs fact_check and compliance_check together and returns nested sections for each, plus a combined verdict and provenance. ' +
+      'Good for: "verify BTC price and check if this is compliant", "fact-check this claim and run compliance check".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        ...COMMON_INPUT.properties,
+        symbols: { type: 'array', description: 'Optional symbols for fact checking (e.g. ["BTC"], ["ETH"])' },
+        regulations: {
+          type: 'array',
+          description: 'Optional rule IDs to restrict compliance checks (e.g. R-FINRA-2111)'
+        },
+        type: { type: 'string', description: 'Optional transaction type context (BUY, SELL, etc.)' }
+      },
+      required: ['message']
+    },
+    output_schema: {
+      type: 'object',
+      description: 'Combined result with nested fact_check and compliance_check sections',
+      properties: {
+        success: { type: 'boolean', description: 'True unless both sub-checks failed' },
+        fact_check: { type: 'object', description: 'Nested fact_check result' },
+        compliance_check: { type: 'object', description: 'Nested compliance_check result (optionally with regulation excerpts)' },
+        answer: { type: 'string', description: 'Natural-language combined verdict' },
+        summary: { type: 'string', description: 'Short combined summary' },
+        sources: { type: 'array', description: 'Deduplicated source identifiers and URLs' },
+        data_as_of: { type: 'string', description: 'Most recent available timestamp across both checks' }
+      }
+    },
+    error_model: TOOL_ERROR,
+    idempotent: true
+  },
+  {
     name: 'portfolio_analysis',
     description:
       'Use when the user asks for portfolio performance trend, net performance, net worth, or high-level returns over time. ' +
@@ -230,6 +265,39 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
           description:
             'Raw API response: accounts, summary, platforms, holdings'
         }
+      }
+    },
+    error_model: TOOL_ERROR,
+    idempotent: true
+  },
+  {
+    name: 'static_analysis',
+    description:
+      'Use when the user asks for portfolio risks, potential issues, x-ray report, or static analysis. ' +
+      'Calls GET /api/v1/portfolio/report and returns x-ray categories (liquidity, emergency fund, currency/asset/account/regional cluster risks, fees). ' +
+      'Rules with value false are potential risks; value true is good. ' +
+      'Good for: "check potential risks", "any risks in my portfolio?", "regional risk", "asset class risk", "portfolio report", "x-ray".',
+    input_schema: COMMON_INPUT,
+    output_schema: {
+      type: 'object',
+      description: 'Portfolio report (x-ray) with categories, rules, and risks (rules where value is false)',
+      properties: {
+        success: { type: 'boolean', description: 'Whether the report was fetched successfully' },
+        xRay: {
+          type: 'object',
+          description: 'Raw x-ray: categories (key, name, rules with evaluation, value, key, name), statistics'
+        },
+        risks: {
+          type: 'array',
+          description: 'Potential risks: rules where value is false (categoryKey, categoryName, ruleKey, ruleName, evaluation)'
+        },
+        statistics: {
+          type: 'object',
+          description: 'rulesActiveCount, rulesFulfilledCount'
+        },
+        summary: { type: 'string', description: 'Short human-readable summary of risks/status' },
+        data_as_of: { type: 'string', description: 'ISO timestamp of report' },
+        sources: { type: 'array', description: 'Source identifiers, e.g. ghostfolio_api' }
       }
     },
     error_model: TOOL_ERROR,
@@ -445,7 +513,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   {
     name: 'transaction_timeline',
     description:
-      'Use when the user asks when they bought or sold something, at what price, or for the last/latest transaction. ' +
+      'Use when the user asks when they bought or sold something, at what price, or for the last/latest transaction. which year did they buy or sell something? ' +
       'Requires transactions: run get_transactions first (orchestrator does this automatically). ' +
       'Supports optional filters by symbol, type, and date range. ' +
       'Returns a timeline of matching transactions (date, symbol, type, quantity, unitPrice). ' +
@@ -607,9 +675,11 @@ export type RegisteredToolName = (typeof TOOL_DEFINITIONS)[number]['name'];
 /** Tool names the LLM can select (get_transactions is internal). */
 export const SELECTABLE_TOOL_NAMES: readonly AgentToolName[] = [
   'compliance_check',
+  'fact_compliance_check',
   'fact_check',
   'portfolio_analysis',
   'holdings_analysis',
+  'static_analysis',
   'market_data',
   'analyze_stock_trend',
   'market_data_lookup',

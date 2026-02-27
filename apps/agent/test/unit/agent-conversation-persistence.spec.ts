@@ -6,12 +6,14 @@ import type { AgentConversationMessage } from '../../server/types';
 function createNoopTools() {
   return {
     complianceCheck: jest.fn().mockResolvedValue({}),
+    factComplianceCheck: jest.fn().mockResolvedValue({}),
     createOrder: jest.fn().mockResolvedValue({}),
     factCheck: jest.fn().mockResolvedValue({}),
     getOrders: jest.fn().mockResolvedValue({}),
     getTransactions: jest.fn().mockResolvedValue({}),
     marketData: jest.fn().mockResolvedValue({}),
     marketDataLookup: jest.fn().mockResolvedValue({}),
+    staticAnalysis: jest.fn().mockResolvedValue({}),
     holdingsAnalysis: jest.fn().mockResolvedValue({}),
     portfolioAnalysis: jest.fn().mockResolvedValue({}),
     transactionCategorize: jest.fn().mockResolvedValue({}),

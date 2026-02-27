@@ -117,6 +117,16 @@ export class GhostfolioClient {
     });
   }
 
+  public async getPortfolioReport({
+    impersonationId,
+    token
+  }: {
+    impersonationId?: string;
+    token?: string;
+  }) {
+    return this.get('/api/v1/portfolio/report', { impersonationId, token });
+  }
+
   public async getMarketData({
     impersonationId,
     token
@@ -263,7 +273,7 @@ export class GhostfolioClient {
       status,
       baseUrl: this.baseUrl,
       timestamp: Date.now(),
-      ...(bodyText !== undefined && { responseBody: bodyText.slice(0, 500) })
+      ...(bodyText !== undefined && { responseBodyLength: bodyText.length })
     };
     logger.debug('[ghostfolio-api-failure]', JSON.stringify(payload));
   }
@@ -419,7 +429,7 @@ export class GhostfolioClient {
           : '';
       throw new GhostfolioApiError({
         code: 'GHOSTFOLIO_HTTP_ERROR',
-        message: `Ghostfolio API request failed: ${response.status}${hint} ${text}`,
+        message: `Ghostfolio API request failed: ${response.status}${hint}`,
         method: 'POST',
         path,
         retryable: response.status >= 500 || response.status === 429,
@@ -466,7 +476,7 @@ export class GhostfolioClient {
           : '';
       throw new GhostfolioApiError({
         code: 'GHOSTFOLIO_HTTP_ERROR',
-        message: `Ghostfolio API request failed: ${response.status}${hint} ${text}`,
+        message: `Ghostfolio API request failed: ${response.status}${hint}`,
         method: 'PUT',
         path,
         retryable: response.status >= 500 || response.status === 429,

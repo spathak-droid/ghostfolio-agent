@@ -28,6 +28,56 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "mustNotContain": []
   },
   {
+    "id": "fact_compliance_check-happy-1",
+    "query": "Verify the bitcoin price and run a compliance check on this recommendation",
+    "expectedTools": [
+      "fact_compliance_check"
+    ],
+    "difficulty": "happy",
+    "expectedOutput": [
+      "Fact + compliance check completed"
+    ],
+    "passFailCriteria": [
+      "must satisfy expected route",
+      "must invoke expected tools",
+      "must include expected output fragment"
+    ],
+    "dimensions": [
+      "tool_execution",
+      "correctness"
+    ],
+    "expectedRoute": "llm_tools_llm_user",
+    "expectedToolCountAtLeast": 1,
+    "requireSuccessfulToolCalls": true,
+    "mustContain": [],
+    "mustNotContain": []
+  },
+  {
+    "id": "static_analysis-happy-1",
+    "query": "How is TSLA doing over the last 30 days?",
+    "expectedTools": [
+      "analyze_stock_trend"
+    ],
+    "difficulty": "happy",
+    "expectedOutput": [
+      "Static analysis completed"
+    ],
+    "passFailCriteria": [
+      "must satisfy expected route",
+      "must invoke expected tools",
+      "must include expected output fragment"
+    ],
+    "dimensions": [
+      "tool_execution",
+      "correctness"
+    ],
+    "expectedRoute": "llm_tools_llm_user",
+    "expectedToolCountAtLeast": 1,
+    "requireSuccessfulToolCalls": true,
+    "mustContain": [],
+    "mustNotContain": []
+  },
+  {
     "id": "portfolio_analysis-happy-1",
     "query": "Analyze my portfolio allocation",
     "expectedTools": [

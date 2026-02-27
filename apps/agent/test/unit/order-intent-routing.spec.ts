@@ -4,6 +4,7 @@ import type { AgentTools } from '../../server/types';
 function buildTools(overrides: Partial<AgentTools> = {}): AgentTools {
   return {
     complianceCheck: jest.fn().mockResolvedValue({}),
+    factComplianceCheck: jest.fn().mockResolvedValue({}),
     createOrder: jest.fn().mockResolvedValue({
       answer: 'Please confirm order details.',
       needsClarification: true
@@ -13,6 +14,7 @@ function buildTools(overrides: Partial<AgentTools> = {}): AgentTools {
     getTransactions: jest.fn().mockResolvedValue({}),
     marketData: jest.fn().mockResolvedValue({}),
     marketDataLookup: jest.fn().mockResolvedValue({}),
+    staticAnalysis: jest.fn().mockResolvedValue({}),
     holdingsAnalysis: jest.fn().mockResolvedValue({}),
     portfolioAnalysis: jest.fn().mockResolvedValue({}),
     transactionCategorize: jest.fn().mockResolvedValue({}),
@@ -169,6 +171,63 @@ describe('order-intent routing', () => {
 
     expect(transactionCategorize).toHaveBeenCalled();
     expect(createOrder).not.toHaveBeenCalled();
+  });
+
+  it('does not keep pending create_order flow for historical transaction lookup questions', async () => {
+    const createOrder = jest
+      .fn()
+      .mockResolvedValueOnce({
+        answer: 'Please confirm order details.',
+        needsClarification: true
+      })
+      .mockResolvedValue({
+        answer: 'Should not be called on historical lookup turn.',
+        needsClarification: true
+      });
+    const transactionTimeline = jest.fn().mockResolvedValue({
+      answer: 'You bought AAPL on 2025-06-12 at 203.43.',
+      data_as_of: '2026-02-26T00:00:00.000Z',
+      sources: ['agent_internal'],
+      summary: 'Transaction timeline returned 1 event(s).',
+      timeline: [{ date: '2025-06-12', symbol: 'AAPL', type: 'BUY', unitPrice: 203.43 }]
+    });
+    const tools = buildTools({ createOrder, transactionTimeline });
+    const agent = createAgent({
+      llm: {
+        answerFinanceQuestion: jest.fn().mockResolvedValue('fallback'),
+        reasonAboutQuery: jest
+          .fn()
+          .mockResolvedValueOnce({
+            intent: 'finance',
+            mode: 'tool_call',
+            rationale: 'explicit execution',
+            tool: 'create_order'
+          })
+          .mockResolvedValueOnce({
+            intent: 'finance',
+            mode: 'tool_call',
+            rationale: 'historical transaction lookup',
+            tool: 'transaction_timeline'
+          }),
+        selectTool: jest.fn().mockResolvedValue({ tool: 'none' })
+      },
+      tools
+    });
+
+    await agent.chat({
+      conversationId: 'conv-pending-order-should-not-hijack-history',
+      message: 'buy 2 AAPL',
+      token: 'jwt-token'
+    });
+
+    await agent.chat({
+      conversationId: 'conv-pending-order-should-not-hijack-history',
+      message: 'what did i buy last year',
+      token: 'jwt-token'
+    });
+
+    expect(transactionTimeline).toHaveBeenCalledTimes(1);
+    expect(createOrder).toHaveBeenCalledTimes(1);
   });
 });
 
