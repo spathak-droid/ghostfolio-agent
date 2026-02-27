@@ -17,7 +17,10 @@ export interface FeedbackStoreLike {
   }): Promise<{ ok: boolean; feedbackId?: string; error?: string }>;
 }
 
-export type CreateAgentWithClient = (client: GhostfolioClient) => {
+export type CreateAgentWithClient = (
+  client: GhostfolioClient,
+  storeScopeId: string
+) => {
   chat(input: {
     conversationId: string;
     message: string;

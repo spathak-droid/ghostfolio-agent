@@ -1,7 +1,8 @@
 export {
   createConversationStoreFromEnv,
   createInMemoryConversationStore,
-  createRedisConversationStore
+  createRedisConversationStore,
+  createUserScopedConversationStore
 } from './conversation-store';
 export type { AgentConversationStore, AgentWorkflowState } from './conversation-store';
 export {

@@ -6,18 +6,15 @@ import {
 } from '../chat-request-validation';
 import { resolveGhostfolioBaseUrl } from '../clients';
 import { GhostfolioClient } from '../clients';
+import { createUserScopedConversationStore } from '../stores';
 import { logger } from '../utils';
 import { resolveRequestToken } from '../auth';
-import type { AgentConversationMessage } from '../types';
-import type { ConversationHistoryStore } from '../stores';
-import type { ConversationStoreLike } from './types';
+import type { ConversationHistoryStore, AgentConversationStore } from '../stores';
 import { sendAgentFailed, sendValidationError } from './response-helpers';
 
 export interface ClearHandlerDeps {
   allowBodyAccessToken: boolean;
-  conversationStore: ConversationStoreLike & {
-    getConversation(conversationId: string): Promise<AgentConversationMessage[]>;
-  };
+  conversationStore: AgentConversationStore;
   conversationHistoryStore: ConversationHistoryStore;
   ghostfolioBaseUrl: string;
   allowInsecureGhostfolioHttp: boolean;
@@ -67,51 +64,59 @@ export function createClearHandler({
     const conversationId = validation.params.conversationId;
 
     try {
-      const conversation = await conversationStore.getConversation(conversationId);
-      if (conversation.length > 0) {
-        const baseUrlResolution = resolveGhostfolioBaseUrl({
-          allowedHosts: ghostfolioAllowedHosts,
-          allowInsecureHttp: allowInsecureGhostfolioHttp,
-          configuredBaseUrl: process.env.GHOSTFOLIO_BASE_URL,
-          fallbackBaseUrl: ghostfolioBaseUrl
-        });
-        if (baseUrlResolution.ok) {
-          try {
-            const client = new GhostfolioClient(baseUrlResolution.url);
-            const user = await client.getUser({
-              impersonationId:
-                typeof request.headers['impersonation-id'] === 'string'
-                  ? request.headers['impersonation-id']
-                  : undefined,
-              token: tokenResolution.token
-            });
-            const userId =
-              user && typeof user === 'object' && typeof (user as { id?: string }).id === 'string'
-                ? (user as { id: string }).id
-                : null;
-            if (userId) {
-              const firstUserContent = conversation.find((m) => m.role === 'user')?.content?.trim();
-              const title = firstUserContent
-                ? firstUserContent.length <= 512
-                  ? firstUserContent
-                  : firstUserContent.slice(0, 509) + '...'
-                : null;
-              await conversationHistoryStore.save({
-                conversationId,
-                userId,
-                messages: conversation,
-                title
-              });
-            }
-          } catch (err) {
-            logger.debug('[agent.chat.clear] history_save_skipped', {
-              message: err instanceof Error ? err.message : String(err)
-            });
-          }
+      let storeScopeId = 'anonymous';
+      const baseUrlResolution = resolveGhostfolioBaseUrl({
+        allowedHosts: ghostfolioAllowedHosts,
+        allowInsecureHttp: allowInsecureGhostfolioHttp,
+        configuredBaseUrl: process.env.GHOSTFOLIO_BASE_URL,
+        fallbackBaseUrl: ghostfolioBaseUrl
+      });
+      if (baseUrlResolution.ok) {
+        try {
+          const client = new GhostfolioClient(baseUrlResolution.url);
+          const user = await client.getUser({
+            impersonationId:
+              typeof request.headers['impersonation-id'] === 'string'
+                ? request.headers['impersonation-id']
+                : undefined,
+            token: tokenResolution.token
+          });
+          const userId =
+            user && typeof user === 'object' && typeof (user as { id?: string }).id === 'string'
+              ? (user as { id: string }).id
+              : null;
+          if (userId) storeScopeId = userId;
+        } catch (err) {
+          logger.debug('[agent.chat.clear] get_user_skipped', {
+            message: err instanceof Error ? err.message : String(err)
+          });
         }
       }
 
-      await conversationStore.clearConversation(conversationId);
+      const userScopedStore = createUserScopedConversationStore(conversationStore, storeScopeId);
+      const conversation = await userScopedStore.getConversation(conversationId);
+      if (conversation.length > 0 && baseUrlResolution?.ok && storeScopeId !== 'anonymous') {
+        try {
+          const firstUserContent = conversation.find((m) => m.role === 'user')?.content?.trim();
+          const title = firstUserContent
+            ? firstUserContent.length <= 512
+              ? firstUserContent
+              : firstUserContent.slice(0, 509) + '...'
+            : null;
+          await conversationHistoryStore.save({
+            conversationId,
+            userId: storeScopeId,
+            messages: conversation,
+            title
+          });
+        } catch (err) {
+          logger.debug('[agent.chat.clear] history_save_skipped', {
+            message: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+
+      await userScopedStore.clearConversation(conversationId);
       response.status(200).json({ ok: true });
     } catch (error) {
       logger.error('[agent.chat.clear] UNHANDLED_ERROR', {

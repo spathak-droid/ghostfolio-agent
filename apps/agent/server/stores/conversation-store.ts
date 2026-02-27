@@ -31,6 +31,36 @@ export interface AgentConversationStore {
   clearConversation(conversationId: string): Promise<void>;
 }
 
+const USER_SCOPE_KEY_SEP = '::';
+
+/**
+ * Wraps a delegate conversation store so all keys are scoped by userId.
+ * Ensures runtime conversation and state are always user-isolated.
+ */
+export function createUserScopedConversationStore(
+  delegate: AgentConversationStore,
+  userId: string
+): AgentConversationStore {
+  const scopeKey = (conversationId: string) => `${userId}${USER_SCOPE_KEY_SEP}${conversationId}`;
+  return {
+    async getConversation(conversationId: string) {
+      return delegate.getConversation(scopeKey(conversationId));
+    },
+    async setConversation(conversationId: string, conversation: AgentConversationMessage[]) {
+      return delegate.setConversation(scopeKey(conversationId), conversation);
+    },
+    async getState(conversationId: string) {
+      return delegate.getState(scopeKey(conversationId));
+    },
+    async setState(conversationId: string, state: AgentWorkflowState) {
+      return delegate.setState(scopeKey(conversationId), state);
+    },
+    async clearConversation(conversationId: string) {
+      return delegate.clearConversation(scopeKey(conversationId));
+    }
+  };
+}
+
 export function createInMemoryConversationStore(): AgentConversationStore {
   const conversations = new Map<string, AgentConversationMessage[]>();
   const states = new Map<string, AgentWorkflowState>();

@@ -25,6 +25,7 @@ installCrashHandlers();
 import { createAgent, createDefaultContextManager } from './agent';
 import {
   createConversationStoreFromEnv,
+  createUserScopedConversationStore,
   createConversationHistoryStoreFromEnv,
   createFeedbackStoreFromEnv,
   createRegulationStoreFromEnv,
@@ -194,10 +195,11 @@ function toolInput(
   };
 }
 
-function createAgentWithClient(ghostfolioClient: GhostfolioClient) {
+function createAgentWithClient(ghostfolioClient: GhostfolioClient, storeScopeId: string) {
+  const store = createUserScopedConversationStore(conversationStore, storeScopeId);
   return createAgent({
     contextManager,
-    conversationStore,
+    conversationStore: store,
     ...(enableFeedbackMemory ? { feedbackMemoryProvider: feedbackStore } : {}),
     llm,
     tools: {

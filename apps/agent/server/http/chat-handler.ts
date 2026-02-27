@@ -124,7 +124,7 @@ export function createChatHandler({
     }
 
     const resolvedGhostfolioBaseUrl = ghostfolioBaseUrlResolution.url;
-    const requestAgent = createAgentWithClient(new GhostfolioClient(resolvedGhostfolioBaseUrl));
+    const ghostfolioClient = new GhostfolioClient(resolvedGhostfolioBaseUrl);
     logger.debug('[agent-auth] Agent received:', {
       hasTokenFromBody,
       hasTokenFromHeader,
@@ -133,6 +133,16 @@ export function createChatHandler({
     });
 
     try {
+      const user = await ghostfolioClient.getUser({
+        impersonationId,
+        token
+      });
+      const userId =
+        user && typeof user === 'object' && typeof (user as { id?: string }).id === 'string'
+          ? (user as { id: string }).id
+          : null;
+      const storeScopeId = userId ?? 'anonymous';
+
       const createOrderParamsResult = parseCreateOrderParams(requestBody.createOrderParams);
       if (!createOrderParamsResult.ok) {
         const err = createOrderParamsResult as { error: string; status: 400 };
@@ -140,6 +150,7 @@ export function createChatHandler({
         return;
       }
 
+      const requestAgent = createAgentWithClient(ghostfolioClient, storeScopeId);
       const chatResponse = (await requestAgent.chat({
         ...validation.params,
         createOrderParams: createOrderParamsResult.params,
@@ -157,11 +168,6 @@ export function createChatHandler({
 
       await (async () => {
         try {
-          const client = new GhostfolioClient(resolvedGhostfolioBaseUrl);
-          const user = await client.getUser({ impersonationId, token });
-          const userId = user && typeof user === 'object' && typeof (user as { id?: string }).id === 'string'
-            ? (user as { id: string }).id
-            : null;
           if (!userId || !chatResponse.conversation?.length) return;
           const title = deriveTitleFromConversation(chatResponse.conversation);
           await conversationHistoryStore.save({
