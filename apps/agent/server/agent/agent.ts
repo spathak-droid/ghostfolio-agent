@@ -23,6 +23,7 @@ import {
   enforceHoldingsAnalysisForAssetQuestions,
   mergeCreateOrderParams,
   normalizeOrderToolsForIntent,
+  preventComplianceBlockingSpecializedTools,
   preventOrderReplayWithoutPending,
   prioritizeExecutionToolsForIntent,
   sanitizeAnalyzeStockTrendForScope,
@@ -155,12 +156,15 @@ export function createAgent({
                 pendingState: persistedState,
                 selectedTools: normalizeOrderToolsForIntent({
                   message,
-                  selectedTools: prioritizeExecutionToolsForIntent({
+                  selectedTools: preventComplianceBlockingSpecializedTools({
                     message,
-                    selectedTools: ensurePendingClarificationTool({
+                    selectedTools: prioritizeExecutionToolsForIntent({
                       message,
-                      pendingState: persistedState,
-                      selectedTools: routeDecision.tools
+                      selectedTools: ensurePendingClarificationTool({
+                        message,
+                        pendingState: persistedState,
+                        selectedTools: routeDecision.tools
+                      })
                     })
                   })
                 })

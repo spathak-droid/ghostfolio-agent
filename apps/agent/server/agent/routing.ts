@@ -53,6 +53,22 @@ export function normalizeOrderToolsForIntent({
   return withoutCreateOrder;
 }
 
+export function preventComplianceBlockingSpecializedTools({
+  message,
+  selectedTools
+}: {
+  message: string;
+  selectedTools: AgentToolName[];
+}): AgentToolName[] {
+  // If tax_estimate is selected and compliance wasn't explicitly asked for, remove compliance
+  if (selectedTools.includes('tax_estimate') && selectedTools.includes('compliance_check')) {
+    if (!isExplicitComplianceCheckIntent(message)) {
+      return selectedTools.filter((tool) => tool !== 'compliance_check');
+    }
+  }
+  return selectedTools;
+}
+
 export function prioritizeExecutionToolsForIntent({
   message,
   selectedTools
