@@ -3,6 +3,7 @@ const CHATBOX_OPEN_CLASS = 'agent-widget--open';
 const GHOST_ICON_PATH = '/widget/asset/ghost.svg';
 const STYLE_ELEMENT_ID = 'ghostfolio-agent-widget-style';
 const CHAT_API_PATH = '/api/v1/agent/chat';
+const FEEDBACK_API_PATH = '/feedback';
 /** Same key as Ghostfolio client TokenStorageService (auth-token) for same-origin auth. */
 const AUTH_TOKEN_STORAGE_KEY = 'auth-token';
 const IMPERSONATION_STORAGE_KEY = 'impersonationId';
@@ -33,6 +34,25 @@ interface AgentToolCall {
   result: Record<string, unknown>;
 }
 
+interface TrendChartPoint {
+  date: string;
+  price: number;
+}
+
+interface HoldingTrendPayload {
+  chart?: {
+    points?: TrendChartPoint[];
+    range?: string;
+  };
+  performance?: {
+    currentPrice?: number;
+    periodChange?: number;
+    periodChangePercent?: number;
+    sinceEntryChange?: number;
+    sinceEntryChangePercent?: number;
+  };
+}
+
 interface SymbolOption {
   dataSource?: string;
   label: string;
@@ -58,14 +78,22 @@ interface AgentConversationMessage {
 interface AgentTraceStep {
   type: 'llm' | 'tool';
   name: string;
+  durationMs?: number;
   input?: Record<string, unknown>;
   output?: unknown;
+}
+
+interface AgentLatency {
+  llmMs: number;
+  toolMs: number;
+  totalMs: number;
 }
 
 interface AgentChatResponse {
   answer: string;
   conversation?: AgentConversationMessage[];
   errors?: { code: string; message: string; recoverable: boolean }[];
+  latency?: AgentLatency;
   toolCalls?: AgentToolCall[];
   trace?: AgentTraceStep[];
   verification?: AgentVerification;
@@ -82,6 +110,26 @@ function resolveChatApiUrl(): string {
     return base.replace(/\/$/, '') + CHAT_API_PATH;
   }
   return CHAT_API_PATH;
+}
+
+function resolveFeedbackApiUrl(chatApiUrl: string): string {
+  if (chatApiUrl.endsWith(CHAT_API_PATH)) {
+    return chatApiUrl.slice(0, -CHAT_API_PATH.length) + '/api/v1/agent/feedback';
+  }
+  if (chatApiUrl.endsWith('/chat')) {
+    return chatApiUrl.slice(0, -'/chat'.length) + '/feedback';
+  }
+  return FEEDBACK_API_PATH;
+}
+
+function resolveClearConversationApiUrl(chatApiUrl: string): string {
+  if (chatApiUrl.endsWith(CHAT_API_PATH)) {
+    return chatApiUrl.slice(0, -CHAT_API_PATH.length) + CHAT_API_PATH + '/clear';
+  }
+  if (chatApiUrl.endsWith('/chat')) {
+    return chatApiUrl + '/clear';
+  }
+  return CHAT_API_PATH + '/clear';
 }
 
 function generateConversationId(): string {
@@ -106,8 +154,10 @@ export function mountChatWidget(container: HTMLElement) {
   injectWidgetStyles();
   container.setAttribute(AGENT_WIDGET_MOUNTED_ATTR, 'true');
 
-  const conversationId = generateConversationId();
+  let currentConversationId = generateConversationId();
   const chatApiUrl = resolveChatApiUrl();
+  const feedbackApiUrl = resolveFeedbackApiUrl(chatApiUrl);
+  const clearApiUrl = resolveClearConversationApiUrl(chatApiUrl);
 
   const widget = document.createElement('div');
   widget.className = 'agent-widget';
@@ -146,17 +196,34 @@ export function mountChatWidget(container: HTMLElement) {
   subtitle.className = 'agent-widget__subtitle';
   subtitle.textContent = 'Ask about your portfolio or market context';
 
+  const headerActions = document.createElement('div');
+  headerActions.className = 'agent-widget__header-actions';
+
+  const newChatButton = document.createElement('button');
+  newChatButton.type = 'button';
+  newChatButton.className = 'agent-widget__new-chat';
+  newChatButton.setAttribute('aria-label', 'New chat');
+  newChatButton.innerHTML = `
+    <svg class="agent-widget__new-chat-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 5v14"/>
+      <path d="M5 12h14"/>
+    </svg>
+  `;
+
   const closeButton = document.createElement('button');
   closeButton.type = 'button';
   closeButton.className = 'agent-widget__close';
   closeButton.setAttribute('aria-label', 'Minimize chat');
   closeButton.textContent = '×';
 
+  headerActions.appendChild(newChatButton);
+  headerActions.appendChild(closeButton);
+
   headerContent.appendChild(title);
   headerContent.appendChild(subtitle);
   header.appendChild(headerIcon);
   header.appendChild(headerContent);
-  header.appendChild(closeButton);
+  header.appendChild(headerActions);
 
   const messages = document.createElement('ul');
   messages.className = 'agent-widget__messages';
@@ -467,9 +534,14 @@ export function mountChatWidget(container: HTMLElement) {
     const trace = response.trace ?? [];
     const toolCalls = response.toolCalls ?? [];
     const errors = response.errors ?? [];
+    const latency = response.latency;
     const verification = response.verification;
     const hasDetails =
-      trace.length > 0 || toolCalls.length > 0 || errors.length > 0 || verification != null;
+      trace.length > 0 ||
+      toolCalls.length > 0 ||
+      errors.length > 0 ||
+      verification != null ||
+      latency != null;
 
     if (!hasDetails) {
       return;
@@ -552,12 +624,160 @@ export function mountChatWidget(container: HTMLElement) {
     li.appendChild(traceBox);
   }
 
+  function appendHoldingTrendCard(li: HTMLElement, response: AgentChatResponse): void {
+    const trendPayload = extractHoldingTrendPayload(response);
+    if (!trendPayload) return;
+    const points = getTrendPoints(trendPayload.chart?.points);
+    if (points.length < 2) return;
+    const card = createTrendCard({ points, trendPayload });
+    li.appendChild(card);
+  }
+
+  function getTrendPoints(points: HoldingTrendPayload['chart']['points']): TrendChartPoint[] {
+    if (!Array.isArray(points)) return [];
+    return points.filter((point): point is TrendChartPoint => {
+      return (
+        !!point &&
+        typeof point === 'object' &&
+        typeof point.date === 'string' &&
+        typeof point.price === 'number' &&
+        Number.isFinite(point.price)
+      );
+    });
+  }
+
+  function createTrendCard({
+    points,
+    trendPayload
+  }: {
+    points: TrendChartPoint[];
+    trendPayload: HoldingTrendPayload;
+  }): HTMLElement {
+    const card = document.createElement('div');
+    card.className = 'agent-widget__holding-trend-card';
+    const perf = trendPayload.performance ?? {};
+    card.appendChild(createTrendTitle());
+    card.appendChild(createTrendSummary({ perf, range: trendPayload.chart?.range ?? 'custom' }));
+    card.appendChild(createTrendChart(points));
+    card.appendChild(createTrendSinceEntry(perf));
+    return card;
+  }
+
+  function createTrendTitle(): HTMLElement {
+    const heading = document.createElement('div');
+    heading.className = 'agent-widget__holding-trend-title';
+    heading.textContent = 'Holding trend';
+    return heading;
+  }
+
+  function createTrendSummary({
+    perf,
+    range
+  }: {
+    perf: NonNullable<HoldingTrendPayload['performance']>;
+    range: string;
+  }): HTMLElement {
+    const summary = document.createElement('div');
+    summary.className = 'agent-widget__holding-trend-summary';
+    summary.textContent = `Range: ${range} | Current: ${formatMoney(perf.currentPrice)} | Period: ${formatSignedPercent(perf.periodChangePercent)}`;
+    return summary;
+  }
+
+  function createTrendChart(points: TrendChartPoint[]): SVGSVGElement {
+    const chart = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    chart.setAttribute('viewBox', '0 0 320 96');
+    chart.setAttribute('preserveAspectRatio', 'none');
+    chart.classList.add('agent-widget__trend-chart');
+
+    const areaPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    areaPath.setAttribute('class', 'agent-widget__trend-area');
+    areaPath.setAttribute('d', buildTrendPath(points, true));
+    chart.appendChild(areaPath);
+
+    const linePath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    linePath.setAttribute('class', 'agent-widget__trend-line');
+    linePath.setAttribute('d', buildTrendPath(points, false));
+    chart.appendChild(linePath);
+    return chart;
+  }
+
+  function createTrendSinceEntry(perf: NonNullable<HoldingTrendPayload['performance']>): HTMLElement {
+    const sub = document.createElement('div');
+    sub.className = 'agent-widget__holding-trend-sub';
+    sub.textContent = `Since entry: ${formatSignedPercent(perf.sinceEntryChangePercent)} (${formatSignedMoney(perf.sinceEntryChange)})`;
+    return sub;
+  }
+
+  function extractHoldingTrendPayload(response: AgentChatResponse): HoldingTrendPayload | null {
+    const toolCalls = response.toolCalls ?? [];
+    const latest = [...toolCalls]
+      .reverse()
+      .find((call) => call.success && call.toolName === 'analyze_stock_trend');
+    if (!latest || typeof latest.result !== 'object' || latest.result == null) {
+      return null;
+    }
+    return latest.result as HoldingTrendPayload;
+  }
+
+  function buildTrendPath(points: TrendChartPoint[], includeAreaBase: boolean): string {
+    const width = 320;
+    const height = 96;
+    const xStep = points.length > 1 ? width / (points.length - 1) : width;
+    const prices = points.map((point) => point.price);
+    const min = Math.min(...prices);
+    const max = Math.max(...prices);
+    const spread = max - min || 1;
+
+    let path = '';
+    points.forEach((point, index) => {
+      const x = index * xStep;
+      const y = height - ((point.price - min) / spread) * (height - 6) - 3;
+      path += index === 0 ? `M ${x.toFixed(2)} ${y.toFixed(2)}` : ` L ${x.toFixed(2)} ${y.toFixed(2)}`;
+    });
+    if (includeAreaBase) {
+      path += ` L ${width} ${height} L 0 ${height} Z`;
+    }
+    return path;
+  }
+
+  function formatMoney(value: number | undefined): string {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
+    return `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })} USD`;
+  }
+
+  function formatSignedMoney(value: number | undefined): string {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
+    const sign = value >= 0 ? '+' : '';
+    return `${sign}${value.toLocaleString(undefined, { maximumFractionDigits: 2 })} USD`;
+  }
+
+  function formatSignedPercent(value: number | undefined): string {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
+    const sign = value >= 0 ? '+' : '';
+    return `${sign}${value.toFixed(2)}%`;
+  }
+
   function buildDetailsContent(response: AgentChatResponse): DocumentFragment {
     const frag = document.createDocumentFragment();
     const trace = response.trace ?? [];
     const toolCalls = response.toolCalls ?? [];
     const errors = response.errors ?? [];
+    const latency = response.latency;
     const verification = response.verification;
+
+    if (latency != null) {
+      const section = document.createElement('div');
+      section.className = 'agent-widget__details-section';
+      const heading = document.createElement('div');
+      heading.className = 'agent-widget__details-heading';
+      heading.textContent = 'Latency';
+      section.appendChild(heading);
+      const line = document.createElement('div');
+      line.className = 'agent-widget__verification-line';
+      line.textContent = `LLM: ${latency.llmMs}ms, Tool: ${latency.toolMs}ms, Total: ${latency.totalMs}ms`;
+      section.appendChild(line);
+      frag.appendChild(section);
+    }
 
     if (trace.length > 0) {
       const section = document.createElement('div');
@@ -688,6 +908,182 @@ export function mountChatWidget(container: HTMLElement) {
     return frag;
   }
 
+  function appendFeedbackControls(
+    li: HTMLElement,
+    response: AgentChatResponse,
+    userMessage: string
+  ): void {
+    if (typeof response.answer !== 'string' || response.answer.trim().length === 0) {
+      return;
+    }
+
+    const box = document.createElement('div');
+    box.className = 'agent-widget__feedback-box';
+
+    const label = document.createElement('span');
+    label.className = 'agent-widget__feedback-label';
+    label.textContent = 'Was this helpful?';
+    box.appendChild(label);
+
+    const status = document.createElement('span');
+    status.className = 'agent-widget__feedback-status';
+
+    const thumbsUp = document.createElement('button');
+    thumbsUp.type = 'button';
+    thumbsUp.className = 'agent-widget__feedback-btn';
+    thumbsUp.setAttribute('aria-label', 'Helpful response');
+    thumbsUp.textContent = '👍';
+
+    const thumbsDown = document.createElement('button');
+    thumbsDown.type = 'button';
+    thumbsDown.className = 'agent-widget__feedback-btn';
+    thumbsDown.setAttribute('aria-label', 'Not helpful response');
+    thumbsDown.textContent = '👎';
+
+    const disableControls = () => {
+      thumbsUp.disabled = true;
+      thumbsDown.disabled = true;
+    };
+
+    const promptForCorrection = (): Promise<string | undefined> =>
+      new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'agent-widget__details-overlay';
+        overlay.setAttribute('role', 'dialog');
+        overlay.setAttribute('aria-modal', 'true');
+        overlay.setAttribute('aria-labelledby', 'agent-widget-correction-title');
+
+        const dialog = document.createElement('div');
+        dialog.className =
+          'agent-widget__details-dialog agent-widget__correction-dialog';
+
+        const header = document.createElement('div');
+        header.className = 'agent-widget__details-dialog-header';
+        const title = document.createElement('h3');
+        title.id = 'agent-widget-correction-title';
+        title.className = 'agent-widget__details-dialog-title';
+        title.textContent = 'How should I improve this answer?';
+        header.appendChild(title);
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'agent-widget__details-dialog-close';
+        closeBtn.setAttribute('aria-label', 'Close');
+        closeBtn.textContent = '×';
+        header.appendChild(closeBtn);
+        dialog.appendChild(header);
+
+        const body = document.createElement('div');
+        body.className = 'agent-widget__details-dialog-body';
+        const textarea = document.createElement('textarea');
+        textarea.className = 'agent-widget__correction-textarea';
+        textarea.placeholder = 'Optional: add a better answer...';
+        textarea.rows = 4;
+        body.appendChild(textarea);
+
+        const actions = document.createElement('div');
+        actions.className = 'agent-widget__correction-actions';
+        const skipBtn = document.createElement('button');
+        skipBtn.type = 'button';
+        skipBtn.className = 'agent-widget__correction-btn agent-widget__correction-btn--ghost';
+        skipBtn.textContent = 'Skip';
+        const submitBtn = document.createElement('button');
+        submitBtn.type = 'button';
+        submitBtn.className = 'agent-widget__correction-btn';
+        submitBtn.textContent = 'Submit';
+        actions.appendChild(skipBtn);
+        actions.appendChild(submitBtn);
+        body.appendChild(actions);
+        dialog.appendChild(body);
+        overlay.appendChild(dialog);
+
+        const cleanup = () => {
+          overlay.removeEventListener('click', onBackdropClick);
+          document.removeEventListener('keydown', onEscape);
+          overlay.remove();
+        };
+        const finish = (value: string | undefined) => {
+          cleanup();
+          resolve(value);
+        };
+        const onBackdropClick = (e: MouseEvent) => {
+          if (e.target === overlay) {
+            finish(undefined);
+          }
+        };
+        const onEscape = (e: KeyboardEvent) => {
+          if (e.key === 'Escape') {
+            finish(undefined);
+          }
+        };
+
+        closeBtn.addEventListener('click', () => finish(undefined));
+        skipBtn.addEventListener('click', () => finish(undefined));
+        submitBtn.addEventListener('click', () => {
+          const trimmed = textarea.value.trim();
+          finish(trimmed.length > 0 ? trimmed : undefined);
+        });
+        overlay.addEventListener('click', onBackdropClick);
+        document.addEventListener('keydown', onEscape);
+
+        document.body.appendChild(overlay);
+        textarea.focus();
+      });
+
+    const submitFeedback = async (rating: 'up' | 'down') => {
+      const correction =
+        rating === 'down'
+          ? await promptForCorrection()
+          : undefined;
+      try {
+        const token = getAuthToken();
+        const impersonationId = getImpersonationId();
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+        if (impersonationId) {
+          headers[IMPERSONATION_HEADER] = impersonationId;
+        }
+        const result = await fetch(feedbackApiUrl, {
+          method: 'POST',
+          headers,
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            answer: response.answer,
+            conversationId: currentConversationId,
+            latency: response.latency,
+            message: userMessage,
+            ...(correction && correction.trim().length > 0
+              ? { correction: correction.trim() }
+              : {}),
+            rating,
+            trace: response.trace
+          })
+        });
+        if (result.ok) {
+          status.textContent = 'Thanks for your feedback.';
+          disableControls();
+        } else {
+          status.textContent = 'Could not submit feedback.';
+        }
+      } catch {
+        status.textContent = 'Could not submit feedback.';
+      }
+    };
+
+    thumbsUp.addEventListener('click', () => {
+      void submitFeedback('up');
+    });
+    thumbsDown.addEventListener('click', () => {
+      void submitFeedback('down');
+    });
+
+    box.appendChild(thumbsUp);
+    box.appendChild(thumbsDown);
+    box.appendChild(status);
+    li.appendChild(box);
+  }
+
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const value = input.value.trim();
@@ -719,7 +1115,7 @@ export function mountChatWidget(container: HTMLElement) {
         headers,
         credentials: 'same-origin',
         body: JSON.stringify({
-          conversationId,
+          conversationId: currentConversationId,
           ...(nextCreateOrderParams ? { createOrderParams: nextCreateOrderParams } : {}),
           message: value
         })
@@ -744,8 +1140,10 @@ export function mountChatWidget(container: HTMLElement) {
           : 'No response.';
       setMessageContent(loadingLi, answer);
       if (res.ok) {
+        appendHoldingTrendCard(loadingLi, data as AgentChatResponse);
         appendSymbolOptions(loadingLi, data as AgentChatResponse);
         appendDetailsToggle(loadingLi, data as AgentChatResponse);
+        appendFeedbackControls(loadingLi, data as AgentChatResponse, value);
       }
     } catch {
       setMessageContent(loadingLi, 'Unable to reach the agent. Please try again.');
@@ -767,6 +1165,34 @@ export function mountChatWidget(container: HTMLElement) {
 
   closeButton.addEventListener('click', () => {
     widget.classList.remove(CHATBOX_OPEN_CLASS);
+  });
+
+  newChatButton.addEventListener('click', async () => {
+    const conversationIdToClear = currentConversationId;
+    currentConversationId = generateConversationId();
+    nextCreateOrderParams = undefined;
+    messages.innerHTML = '';
+    messages.appendChild(createWelcomeMessage());
+    messages.scrollTop = 0;
+    const token = getAuthToken();
+    const impersonationId = getImpersonationId();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    if (impersonationId) {
+      headers[IMPERSONATION_HEADER] = impersonationId;
+    }
+    try {
+      await fetch(clearApiUrl, {
+        method: 'POST',
+        headers,
+        credentials: 'same-origin',
+        body: JSON.stringify({ conversationId: conversationIdToClear })
+      });
+    } catch {
+      // Best-effort clear: UI already reset; server state may remain until TTL
+    }
   });
 
   panel.appendChild(header);
@@ -916,6 +1342,37 @@ function injectWidgetStyles() {
     .agent-widget__close:focus-visible {
       outline: 2px solid #3d7aff;
       outline-offset: 2px;
+    }
+    .agent-widget__header-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .agent-widget__new-chat {
+      border: none;
+      background: transparent;
+      color: #5c6470;
+      cursor: pointer;
+      padding: 0;
+      width: 28px;
+      height: 28px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      transition: background 0.12s ease, color 0.12s ease;
+    }
+    .agent-widget__new-chat:hover {
+      background: rgba(11, 13, 23, 0.06);
+      color: #0b0d17;
+    }
+    .agent-widget__new-chat:focus-visible {
+      outline: 2px solid #3d7aff;
+      outline-offset: 2px;
+    }
+    .agent-widget__new-chat-icon {
+      display: block;
     }
     .agent-widget__messages {
       list-style: none;
@@ -1144,6 +1601,79 @@ function injectWidgetStyles() {
       border-radius: 10px;
       background: rgba(255, 255, 255, 0.8);
       align-self: flex-start;
+    }
+    .agent-widget__feedback-box {
+      margin-top: 8px;
+      padding-top: 6px;
+      border-top: 1px solid rgba(15, 19, 32, 0.08);
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .agent-widget__feedback-label {
+      font-size: 10px;
+      color: #5c6470;
+      margin-right: 2px;
+    }
+    .agent-widget__feedback-btn {
+      border: 1px solid rgba(11, 13, 23, 0.12);
+      background: #fff;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 12px;
+      line-height: 1;
+      padding: 4px 6px;
+      transition: background 0.12s ease, border-color 0.12s ease;
+    }
+    .agent-widget__feedback-btn:hover:not(:disabled) {
+      background: #f8fafd;
+      border-color: rgba(11, 13, 23, 0.2);
+    }
+    .agent-widget__feedback-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .agent-widget__feedback-status {
+      font-size: 10px;
+      color: #16a34a;
+    }
+    .agent-widget__correction-dialog {
+      max-width: 420px;
+      max-height: 70vh;
+    }
+    .agent-widget__correction-textarea {
+      width: 100%;
+      border: 1px solid rgba(11, 13, 23, 0.12);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 12px;
+      resize: vertical;
+      box-sizing: border-box;
+      font-family: inherit;
+      color: #0b0d17;
+      background: #fff;
+    }
+    .agent-widget__correction-actions {
+      margin-top: 10px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .agent-widget__correction-btn {
+      border: none;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      background: #1a5de8;
+      color: #fff;
+    }
+    .agent-widget__correction-btn--ghost {
+      background: #fff;
+      color: #0b0d17;
+      border: 1px solid rgba(11, 13, 23, 0.12);
     }
     .agent-widget__trace-btn {
       display: inline-flex;
@@ -1427,6 +1957,47 @@ function injectWidgetStyles() {
     .agent-widget__json-full {
       display: block;
       margin-top: 4px;
+    }
+    .agent-widget__holding-trend-card {
+      margin-top: 10px;
+      border: 1px solid rgba(26, 93, 232, 0.18);
+      border-radius: 10px;
+      background: linear-gradient(180deg, rgba(26, 93, 232, 0.08), rgba(26, 93, 232, 0.02));
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .agent-widget__holding-trend-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: #dbeafe;
+      letter-spacing: 0.02em;
+    }
+    .agent-widget__holding-trend-summary,
+    .agent-widget__holding-trend-sub {
+      font-size: 10px;
+      color: #cbd5e1;
+      line-height: 1.35;
+    }
+    .agent-widget__trend-chart {
+      width: 100%;
+      height: 96px;
+      display: block;
+      border-radius: 8px;
+      background: linear-gradient(180deg, rgba(15, 23, 42, 0.38), rgba(15, 23, 42, 0.12));
+      overflow: hidden;
+    }
+    .agent-widget__trend-area {
+      fill: rgba(45, 212, 191, 0.18);
+      stroke: none;
+    }
+    .agent-widget__trend-line {
+      fill: none;
+      stroke: #2dd4bf;
+      stroke-width: 2;
+      stroke-linejoin: round;
+      stroke-linecap: round;
     }
   `;
 

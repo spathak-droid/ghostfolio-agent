@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { HttpException, Injectable } from '@nestjs/common';
 
 import { AgentChatRequest, AgentChatResponse } from './agent.types';
 
@@ -103,6 +103,52 @@ export class AgentService {
         }
       };
     }
+  }
+
+  public async clearConversation(
+    conversationId: string,
+    authorizationHeader?: string,
+    impersonationId?: string
+  ): Promise<{ ok: boolean }> {
+    const clearUrl = `${this.agentServiceUrl}/chat/clear`;
+    const response = await fetch(clearUrl, {
+      body: JSON.stringify({ conversationId }),
+      headers: {
+        ...(authorizationHeader ? { Authorization: authorizationHeader } : {}),
+        ...(impersonationId ? { 'Impersonation-Id': impersonationId } : {}),
+        'Content-Type': 'application/json'
+      },
+      method: 'POST'
+    });
+    const data = (await response.json()) as { ok?: boolean; error?: string; code?: string };
+    if (!response.ok) {
+      throw new HttpException(
+        { code: data.code ?? 'AGENT_CHAT_CLEAR_FAILED', error: data.error ?? 'clear failed' },
+        response.status
+      );
+    }
+    return { ok: Boolean(data.ok) };
+  }
+
+  public async feedback(
+    payload: Record<string, unknown>,
+    authorizationHeader?: string,
+    impersonationId?: string
+  ): Promise<Record<string, unknown>> {
+    const response = await fetch(`${this.agentServiceUrl}/feedback`, {
+      body: JSON.stringify(payload),
+      headers: {
+        ...(authorizationHeader ? { Authorization: authorizationHeader } : {}),
+        ...(impersonationId ? { 'Impersonation-Id': impersonationId } : {}),
+        'Content-Type': 'application/json'
+      },
+      method: 'POST'
+    });
+    const parsed = (await response.json()) as Record<string, unknown>;
+    if (!response.ok) {
+      throw new HttpException(parsed, response.status);
+    }
+    return parsed;
   }
 
   public async fetchWidgetAsset(assetPath: string): Promise<WidgetAssetProxyResponse> {

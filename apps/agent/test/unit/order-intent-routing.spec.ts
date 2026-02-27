@@ -8,10 +8,12 @@ function buildTools(overrides: Partial<AgentTools> = {}): AgentTools {
       answer: 'Please confirm order details.',
       needsClarification: true
     }),
+    factCheck: jest.fn().mockResolvedValue({}),
     getOrders: jest.fn().mockResolvedValue({}),
     getTransactions: jest.fn().mockResolvedValue({}),
     marketData: jest.fn().mockResolvedValue({}),
     marketDataLookup: jest.fn().mockResolvedValue({}),
+    holdingsAnalysis: jest.fn().mockResolvedValue({}),
     portfolioAnalysis: jest.fn().mockResolvedValue({}),
     transactionCategorize: jest.fn().mockResolvedValue({}),
     transactionTimeline: jest.fn().mockResolvedValue({}),

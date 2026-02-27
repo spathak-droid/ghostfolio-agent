@@ -88,10 +88,39 @@ describe('synthesizeToolResults', () => {
       ]
     });
 
-    expect(response.answer).toContain('Data as of: 2026-02-24T06:10:00.000Z');
+    expect(response.answer).toContain('Data as of:');
+    expect(response.answer).toContain('Date: 2026-02-24');
+    expect(response.answer).toContain('Time: 06:10:00.000');
+    expect(response.answer).toContain('Timezone: Z');
     expect(response.answer).toContain(
       'Missing data: No matching transactions for requested filters'
     );
+  });
+
+  it('omits data freshness section when freshest data_as_of is today (UTC)', () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-02-27T18:19:51.173Z'));
+    try {
+      const response = synthesizeToolResults({
+        existingFlags: [],
+        toolCalls: [
+          {
+            toolName: 'market_data_lookup',
+            success: true,
+            result: {
+              data_as_of: '2026-02-27T02:19:51.173Z',
+              prices: [{ symbol: 'AAPL', value: 192.12 }],
+              sources: ['ghostfolio_api'],
+              summary: 'AAPL last trade 192.12 USD'
+            }
+          }
+        ]
+      });
+
+      expect(response.answer).not.toContain('Data as of:');
+      expect(response.answer).not.toContain('Missing data:');
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('explains whether portfolio is in profit or loss from net performance', () => {
@@ -232,6 +261,64 @@ describe('synthesizeToolResults', () => {
     expect(response.answer).not.toContain('market feed unavailable');
   });
 
+  it('surfaces year-over-year market-data comparisons when provided', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      toolCalls: [
+        {
+          toolName: 'market_data',
+          success: true,
+          result: {
+            data_as_of: '2026-04-01T00:00:00.000Z',
+            sources: ['ghostfolio_api'],
+            symbols: [
+              {
+                symbol: 'BTC-USD',
+                currency: 'USD',
+                currentPrice: 67492,
+                changePercent1y: 32.34
+              }
+            ]
+          }
+        }
+      ]
+    });
+
+    expect(response.answer).toContain('BTC-USD: USD 67492 (+32.34% vs 1y ago)');
+  });
+
+  it('adds richer next steps when feedback memory requests actionable planning', () => {
+    const response = synthesizeToolResults({
+      feedbackMemory: {
+        do: ['Provide actionable next steps.'],
+        dont: [],
+        sources: 2,
+        synthesisIssues: ['Previous response lacked plan quality.'],
+        toolIssues: []
+      },
+      existingFlags: [],
+      toolCalls: [
+        {
+          toolName: 'market_data_lookup',
+          success: true,
+          result: {
+            data_as_of: '2026-04-01T00:00:00.000Z',
+            prices: [{ symbol: 'AAPL', value: 192.12 }],
+            sources: ['ghostfolio_api'],
+            summary: 'AAPL last trade 192.12 USD'
+          }
+        }
+      ]
+    });
+
+    expect(response.answer).toContain(
+      'Write down entry/exit levels and the invalidation threshold before trading.'
+    );
+    expect(response.answer).toContain(
+      'Verify one independent data point (volume, catalyst, or macro event) before execution.'
+    );
+  });
+
   it('reads structured per-symbol market-data error payloads', () => {
     const response = synthesizeToolResults({
       existingFlags: [],
@@ -291,10 +378,303 @@ describe('synthesizeToolResults', () => {
 
     expect(response.answer).toContain('Compliance check: 1 violation(s), 1 warning(s).');
     expect(response.answer).toContain(
+      'No, you should not proceed yet because compliance check found 1 blocking violation(s).'
+    );
+    expect(response.answer).toContain(
       'Violation (R-FINRA-2111): Suitability inputs are required before personalized buy/sell guidance.'
     );
     expect(response.answer).toContain(
       'Warning (R-IRS-WASH-SALE): Potential wash sale window detected; review tax treatment.'
     );
+  });
+
+  it('splits pipe-delimited compliance findings into separate risk lines', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      toolCalls: [
+        {
+          toolName: 'compliance_check',
+          success: true,
+          result: {
+            data_as_of: '2026-02-26',
+            policyVersion: 'us-baseline-v1',
+            sources: ['policy_pack:us-baseline-v1'],
+            summary: 'Compliance check completed with 1 violation(s) and 0 warning(s).',
+            violations: [
+              'R-FINRA-2111: Suitability inputs are required before personalized buy/sell guidance. | R-RISK-CONCENTRATION: Concentration risk is too high.'
+            ],
+            warnings: []
+          }
+        }
+      ]
+    });
+
+    expect(response.answer).toContain(
+      'Violation (R-FINRA-2111): Suitability inputs are required before personalized buy/sell guidance.'
+    );
+    expect(response.answer).toContain(
+      'Violation (R-RISK-CONCENTRATION): Concentration risk is too high.'
+    );
+  });
+
+  it('omits account/platform balances for portfolio allocation prompts by default', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      userMessage: 'Analyze my portfolio allocation',
+      toolCalls: [
+        {
+          toolName: 'portfolio_analysis',
+          success: true,
+          result: {
+            allocation: [
+              { percentage: 60, symbol: 'BTCUSD' },
+              { percentage: 40, symbol: 'TSLA' }
+            ],
+            data: {
+              accountBalances: [
+                { accountName: 'My Account', balance: 1000, currency: 'USD', balanceInBaseCurrency: 1000 }
+              ],
+              accounts: [{ name: 'Platform', balance: 1000, currency: 'USD' }],
+              summary: { cash: 1000 }
+            },
+            sources: ['ghostfolio_api'],
+            data_as_of: '2026-02-26T00:00:00.000Z'
+          }
+        }
+      ]
+    });
+
+    expect(response.answer).toContain('Top allocation: BTCUSD 60%, TSLA 40%.');
+    expect(response.answer).not.toContain('Account balances:');
+    expect(response.answer).not.toContain('Platform balances:');
+  });
+
+  it('extracts portfolio evolution insights from chart data', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      toolCalls: [
+        {
+          toolName: 'portfolio_analysis',
+          success: true,
+          result: {
+            data_as_of: '2026-02-26T00:00:00.000Z',
+            sources: ['ghostfolio_api'],
+            chart: [
+              { date: '2026-01-01', netWorth: 100000 },
+              { date: '2026-01-15', netWorth: 125000 },
+              { date: '2026-02-01', netWorth: 80000 },
+              { date: '2026-02-26', netWorth: 110000 }
+            ],
+            performance: {
+              netPerformance: 10000,
+              netPerformancePercentage: 0.1
+            }
+          }
+        }
+      ]
+    });
+
+    expect(response.answer).toContain('Portfolio evolution: peak net worth 125000 on 2026-01-15.');
+    expect(response.answer).toContain(
+      'Max drawdown: -36% (from 2026-01-15 to 2026-02-01).'
+    );
+    expect(response.answer).toContain('Recovery from drawdown low: +37.5%.');
+  });
+
+  it('extracts top and bottom holding performers from holdings payload', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      toolCalls: [
+        {
+          toolName: 'holdings_analysis',
+          success: true,
+          result: {
+            data_as_of: '2026-02-26T00:00:00.000Z',
+            sources: ['ghostfolio_api'],
+            data: {
+              holdings: {
+                AAPL: { symbol: 'AAPL', netPerformancePercent: 1.6952, allocationInPercentage: 0.3 },
+                SOLUSD: { symbol: 'SOLUSD', netPerformancePercent: 0.0882, allocationInPercentage: 0.2 },
+                BTCUSD: { symbol: 'BTCUSD', netPerformancePercent: 0.0658, allocationInPercentage: 0.15 },
+                NVDA: { symbol: 'NVDA', netPerformancePercent: -0.0374, allocationInPercentage: 0.12 },
+                AAVEBUSD: { symbol: 'AAVEBUSD', netPerformancePercent: -0.9921, allocationInPercentage: 0.1 },
+                USD: { symbol: 'USD', netPerformancePercent: 0, allocationInPercentage: 0.13 }
+              }
+            }
+          }
+        }
+      ]
+    });
+
+    expect(response.answer).toContain(
+      'Top performers: AAPL +169.52%, SOLUSD +8.82%, BTCUSD +6.58%.'
+    );
+    expect(response.answer).toContain(
+      'Bottom performers: AAVEBUSD -99.21%, NVDA -3.74%, BTCUSD +6.58%.'
+    );
+  });
+
+  it('keeps detailed tool failures in Tool errors section without duplicating in Risks/flags', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      toolCalls: [
+        {
+          toolName: 'analyze_stock_trend',
+          success: false,
+          result: {
+            errorMessage:
+              'I could not analyze a holding trend because your portfolio has no holdings yet. Add an asset first, then ask again.',
+            reason: 'tool_failure'
+          }
+        }
+      ]
+    });
+
+    expect(response.answer).toContain('Tool errors (ground your answer in these');
+    expect(response.answer).toContain(
+      'analyze_stock_trend: I could not analyze a holding trend because your portfolio has no holdings yet.'
+    );
+    expect(response.answer).toContain(
+      'One or more tool calls failed. See Tool errors for details.'
+    );
+    expect(response.answer).not.toContain(
+      '- I could not analyze a holding trend because your portfolio has no holdings yet. Add an asset first, then ask again.'
+    );
+  });
+
+  it('answers diversification questions directly and de-duplicates repeated findings across tools', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      userMessage: 'how diverse is my portfolio?',
+      toolCalls: [
+        {
+          toolName: 'holdings_analysis',
+          success: true,
+          result: {
+            allocation: [
+              { percentage: 57.55, symbol: 'BTCUSD' },
+              { percentage: 19.48, symbol: 'BTC-USD' },
+              { percentage: 9.3, symbol: 'TSLA' }
+            ],
+            performance: {
+              netPerformance: 13738.09,
+              netPerformancePercentage: 0.0006
+            },
+            data_as_of: '2026-02-26T00:00:00.000Z',
+            sources: ['ghostfolio_api']
+          }
+        },
+        {
+          toolName: 'portfolio_analysis',
+          success: true,
+          result: {
+            allocation: [
+              { percentage: 57.55, symbol: 'BTCUSD' },
+              { percentage: 19.48, symbol: 'BTC-USD' },
+              { percentage: 9.3, symbol: 'TSLA' }
+            ],
+            performance: {
+              netPerformance: 13738.09,
+              netPerformancePercentage: 0.0006
+            },
+            data_as_of: '2026-02-26T00:00:00.000Z',
+            sources: ['ghostfolio_api']
+          }
+        }
+      ]
+    });
+
+    expect(response.answer).toContain('Answer: Your portfolio is highly concentrated;');
+    expect(response.answer).toContain('Top allocation: BTCUSD 57.55%, BTC-USD 19.48%, TSLA 9.3%.');
+    expect(response.answer.match(/Net performance: 13738\.09\./g)?.length).toBe(1);
+  });
+
+  it('returns concise no-holdings answer without zero metrics or actionable next steps', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      userMessage: 'how diverse is my portfolio?',
+      toolCalls: [
+        {
+          toolName: 'holdings_analysis',
+          success: true,
+          result: {
+            allocation: [],
+            performance: {
+              netPerformance: 0,
+              netPerformancePercentage: 0
+            },
+            data_as_of: '2026-02-26T00:00:00.000Z',
+            sources: ['ghostfolio_api']
+          }
+        }
+      ]
+    });
+
+    expect(response.answer).toContain(
+      'Answer: Your portfolio currently has no holdings, so diversification is not applicable yet.'
+    );
+    expect(response.answer).toContain('No holdings found in portfolio.');
+    expect(response.answer).not.toContain('Net performance: 0');
+    expect(response.answer).not.toContain('Risks/flags:');
+    expect(response.answer).not.toContain('Actionable next steps:');
+  });
+
+  it('answers holdings status and risk questions directly before summary', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      userMessage: 'how are all my holdings doing? any risk ?',
+      toolCalls: [
+        {
+          toolName: 'holdings_analysis',
+          success: true,
+          result: {
+            allocation: [
+              { percentage: 57.55, symbol: 'BTCUSD' },
+              { percentage: 19.48, symbol: 'BTC-USD' },
+              { percentage: 9.3, symbol: 'TSLA' }
+            ],
+            performance: {
+              netPerformance: 13738.09,
+              netPerformancePercentage: 0.0006
+            },
+            data_as_of: '2026-02-26T00:00:00.000Z',
+            sources: ['ghostfolio_api']
+          }
+        }
+      ]
+    });
+
+    expect(response.answer.startsWith('Answer:')).toBe(true);
+    expect(response.answer).toContain('Your holdings are');
+    expect(response.answer).toContain('Largest concentration is');
+    expect(response.answer).toContain('No critical risks were flagged');
+    expect(response.answer).toContain('Key findings:');
+  });
+
+  it('does not infer no-holdings from portfolio_analysis-only payload', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      userMessage: 'how is my portfolio doing?',
+      toolCalls: [
+        {
+          toolName: 'portfolio_analysis',
+          success: true,
+          result: {
+            allocation: [],
+            data_as_of: '2026-02-27T00:00:00.000Z',
+            performance: {
+              currentNetWorth: 351101.8,
+              netPerformance: 13521.8,
+              netPerformancePercentage: 0.0006
+            },
+            sources: ['ghostfolio_api'],
+            summary: 'Portfolio analysis from Ghostfolio performance data'
+          }
+        }
+      ]
+    });
+
+    expect(response.answer).not.toContain('No holdings found in portfolio.');
+    expect(response.answer).toContain('Portfolio status: in profit.');
   });
 });

@@ -63,6 +63,15 @@ export interface MarketDataSymbolResult {
   changePercent1w?: number;
   change1m?: number;
   changePercent1m?: number;
+  change1y?: number;
+  changePercent1y?: number;
+  historicalComparisons?: {
+    change: number;
+    changePercent: number;
+    date: string;
+    label: string;
+    price: number;
+  }[];
   error?: ToolErrorPayload;
 }
 
@@ -153,7 +162,7 @@ function normalizeMetrics(inputMetrics?: string[]) {
 
 function inferHistoricalIntent(message: string): boolean {
   const normalized = message.toLowerCase();
-  return /\b(last week|last month|last year|yesterday|compared|difference|change)\b/.test(
+  return /\b(last week|last month|last year|yesterday|compared|difference|change|historical|past)\b/.test(
     normalized
   );
 }
@@ -173,6 +182,7 @@ async function getSymbolDataWithFallback(
   client: GhostfolioClient,
   primary: { dataSource: string; symbol: string },
   opts: {
+    includeHistoricalData?: number;
     impersonationId?: string;
     token?: string;
   }
@@ -180,6 +190,7 @@ async function getSymbolDataWithFallback(
   | {
       ok: true;
       data: {
+        historicalData: { date: string; value: number }[];
         marketPrice: number;
         currency: string;
         symbol: string;
@@ -196,12 +207,13 @@ async function getSymbolDataWithFallback(
       const data = await client.getSymbolData({
         dataSource,
         symbol,
-        includeHistoricalData: 0,
+        includeHistoricalData: opts.includeHistoricalData ?? 0,
         impersonationId: opts.impersonationId,
         token: opts.token
       });
       const item = data as {
         marketPrice?: number;
+        historicalData?: { date?: string; value?: number }[];
         currency?: string;
         symbol?: string;
         dataSource?: string;
@@ -222,9 +234,23 @@ async function getSymbolDataWithFallback(
         };
       }
 
+      const historicalData = Array.isArray(item.historicalData)
+        ? item.historicalData
+            .map((point) => {
+              const date = typeof point?.date === 'string' ? point.date : undefined;
+              const value =
+                typeof point?.value === 'number' && Number.isFinite(point.value)
+                  ? point.value
+                  : undefined;
+              return date && value !== undefined ? { date, value } : undefined;
+            })
+            .filter((point): point is { date: string; value: number } => Boolean(point))
+        : [];
+
       return {
         ok: true as const,
         data: {
+          historicalData,
           marketPrice,
           currency: typeof item.currency === 'string' ? item.currency : 'USD',
           symbol: item.symbol ?? symbol,
@@ -291,14 +317,16 @@ function createLookup(
 
 interface FetchCurrentResultsArgs {
   client: GhostfolioClient;
+  includeHistoricalData?: number;
   lookup: (query: string) => Promise<{ dataSource: string; symbol: string }[]>;
   symbols: string[];
+  windows: number[];
   impersonationId?: string;
   token?: string;
 }
 
 async function fetchCurrentResults(args: FetchCurrentResultsArgs): Promise<MarketDataSymbolResult[]> {
-  const { client, lookup, symbols, impersonationId, token } = args;
+  const { client, includeHistoricalData, lookup, symbols, windows, impersonationId, token } = args;
   const results: MarketDataSymbolResult[] = [];
 
   for (const nameOrTicker of symbols.slice(0, MAX_SYMBOLS)) {
@@ -321,14 +349,26 @@ async function fetchCurrentResults(args: FetchCurrentResultsArgs): Promise<Marke
     const item = await getSymbolDataWithFallback(
       client,
       { dataSource: resolved.dataSource, symbol: resolved.symbol },
-      { impersonationId, token }
+      { impersonationId, token, includeHistoricalData }
     );
     if (item.ok === true) {
+      const comparisons = computeHistoricalComparisons({
+        currentPrice: item.data.marketPrice,
+        historicalData: item.data.historicalData,
+        windows
+      });
       results.push({
         symbol: item.data.symbol,
         dataSource: item.data.dataSource,
         currentPrice: roundTwo(item.data.marketPrice),
-        currency: item.data.currency
+        currency: item.data.currency,
+        change1w: comparisons.change1w,
+        changePercent1w: comparisons.changePercent1w,
+        change1m: comparisons.change1m,
+        changePercent1m: comparisons.changePercent1m,
+        change1y: comparisons.change1y,
+        changePercent1y: comparisons.changePercent1y,
+        historicalComparisons: comparisons.historicalComparisons
       });
     } else {
       const failedResult = item as { ok: false; error: ToolErrorPayload };
@@ -351,19 +391,28 @@ function buildAnswer(results: MarketDataSymbolResult[]) {
       if (result.error) {
         return `${result.symbol}: ${result.error.message}`;
       }
-      return `${result.symbol}: ${result.currency} ${result.currentPrice}`;
+      const base = `${result.symbol}: ${result.currency} ${result.currentPrice}`;
+      const comparisons = result.historicalComparisons ?? [];
+      if (comparisons.length === 0) {
+        return base;
+      }
+      const comparisonText = comparisons
+        .map(
+          (comparison) =>
+            `${comparison.label} ago (${comparison.date}): ${result.currency} ${comparison.price}, vs ${comparison.label}: ${formatSignedPercent(comparison.changePercent)}`
+        )
+        .join('; ');
+      return `${base}; ${comparisonText}`;
     })
     .join('; ');
 }
 
 function buildSummary({
   message,
-  requestedMetrics,
   results,
   unsupportedMetrics
 }: {
   message: string;
-  requestedMetrics: string[];
   results: MarketDataSymbolResult[];
   unsupportedMetrics: string[];
 }) {
@@ -373,12 +422,127 @@ function buildSummary({
   if (unsupportedMetrics.length > 0) {
     summary += ` Unsupported metrics ignored in current-only mode: ${unsupportedMetrics.join(', ')}.`;
   }
-
-  if (inferHistoricalIntent(message) && requestedMetrics.length > 0) {
-    summary += ' Historical comparisons are not available in current-only mode.';
+  if (inferHistoricalIntent(message)) {
+    summary += ' Historical comparisons included when data is available.';
   }
 
   return summary;
+}
+
+function parseRequestedWindows(message: string): number[] {
+  const normalized = message.toLowerCase();
+  const requested = new Set<number>();
+  if (/\b(last|past)\s+5\s+days?\b/.test(normalized) || /\b5\s*day\b/.test(normalized)) {
+    requested.add(5);
+  }
+  if (/\b(last|past)\s+week\b/.test(normalized) || /\bweekly\b/.test(normalized)) {
+    requested.add(7);
+  }
+  if (/\b(last|past)\s+month\b/.test(normalized)) {
+    requested.add(30);
+  }
+  if (/\b(last|past)\s+year\b/.test(normalized) || /\b(year ago|a year ago|1 year)\b/.test(normalized)) {
+    requested.add(365);
+  }
+  if (/\byesterday\b/.test(normalized)) {
+    requested.add(1);
+  }
+  if (/\bhistorical\b/.test(normalized) && requested.size === 0) {
+    requested.add(5);
+    requested.add(7);
+    requested.add(30);
+  }
+  if (requested.size === 0 && /\b(change|difference|grew|growth|trend|compare)\b/.test(normalized)) {
+    requested.add(7);
+  }
+  return [...requested].sort((a, b) => a - b);
+}
+
+function getHistoricalDaysToFetch(windows: number[]): number {
+  if (windows.length === 0) {
+    return 0;
+  }
+  const maxWindow = windows[windows.length - 1];
+  return maxWindow + (maxWindow >= 365 ? 15 : 3);
+}
+
+function computeHistoricalComparisons({
+  currentPrice,
+  historicalData,
+  windows
+}: {
+  currentPrice: number;
+  historicalData: { date: string; value: number }[];
+  windows: number[];
+}) {
+  const normalized = historicalData
+    .map((point) => ({ date: point.date.slice(0, 10), dateMs: Date.parse(point.date), value: point.value }))
+    .filter((point) => Number.isFinite(point.dateMs) && Number.isFinite(point.value) && point.value > 0);
+
+  const response: {
+    change1m?: number;
+    change1w?: number;
+    change1y?: number;
+    changePercent1m?: number;
+    changePercent1w?: number;
+    changePercent1y?: number;
+    historicalComparisons: {
+      change: number;
+      changePercent: number;
+      date: string;
+      label: string;
+      price: number;
+    }[];
+  } = { historicalComparisons: [] };
+
+  if (normalized.length === 0 || windows.length === 0) {
+    return response;
+  }
+
+  const now = Date.now();
+  for (const windowDays of windows) {
+    const target = now - windowDays * 24 * 60 * 60 * 1000;
+    const anchor = normalized.reduce<{ date: string; dateMs: number; value: number } | undefined>(
+      (best, point) => {
+        if (!best) return point;
+        return Math.abs(point.dateMs - target) < Math.abs(best.dateMs - target) ? point : best;
+      },
+      undefined
+    );
+    if (!anchor || anchor.value <= 0) {
+      continue;
+    }
+    const change = currentPrice - anchor.value;
+    const changePercent = (change / anchor.value) * 100;
+    const label = windowDays === 1 ? '1d' : windowDays === 5 ? '5d' : windowDays === 7 ? '1w' : windowDays === 30 ? '1m' : windowDays === 365 ? '1y' : `${windowDays}d`;
+    response.historicalComparisons.push({
+      label,
+      date: anchor.date,
+      price: roundTwo(anchor.value),
+      change: roundTwo(change),
+      changePercent: roundTwo(changePercent)
+    });
+
+    if (windowDays === 7) {
+      response.change1w = roundTwo(change);
+      response.changePercent1w = roundTwo(changePercent);
+    }
+    if (windowDays === 30) {
+      response.change1m = roundTwo(change);
+      response.changePercent1m = roundTwo(changePercent);
+    }
+    if (windowDays === 365) {
+      response.change1y = roundTwo(change);
+      response.changePercent1y = roundTwo(changePercent);
+    }
+  }
+
+  return response;
+}
+
+function formatSignedPercent(value: number): string {
+  const rounded = roundTwo(value);
+  return `${rounded > 0 ? '+' : ''}${rounded}%`;
 }
 
 export async function marketDataTool({
@@ -394,24 +558,27 @@ export async function marketDataTool({
       Array.isArray(inputSymbols) && inputSymbols.length > 0
         ? inputSymbols.filter(Boolean)
         : parseSymbolsFromMessage(message ?? '');
-    const { requestedMetrics, unsupportedMetrics } = normalizeMetrics(inputMetrics);
+    const { unsupportedMetrics } = normalizeMetrics(inputMetrics);
 
     if (symbols.length === 0) {
       return buildNoSymbolsResponse();
     }
+    const requestedWindows = parseRequestedWindows(message ?? '');
+    const includeHistoricalData = getHistoricalDaysToFetch(requestedWindows);
 
     const lookup = createLookup(client, impersonationId, token);
     const results = await fetchCurrentResults({
       client,
+      includeHistoricalData,
       lookup,
       symbols,
+      windows: requestedWindows,
       impersonationId,
       token
     });
     const answer = buildAnswer(results);
     const summary = buildSummary({
       message,
-      requestedMetrics,
       results,
       unsupportedMetrics
     });

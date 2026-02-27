@@ -36,7 +36,7 @@ describe('marketDataTool', () => {
     expect(symbols[0]?.changePercent1w).toBeUndefined();
   });
 
-  it('keeps current-only behavior even when message asks for last week', async () => {
+  it('computes week-over-week change when message asks for last week', async () => {
     const client = {
       getSymbolLookup: jest.fn().mockResolvedValue({
         items: [{ dataSource: 'YAHOO', symbol: 'AAPL' }]
@@ -45,7 +45,11 @@ describe('marketDataTool', () => {
         currency: 'USD',
         dataSource: 'YAHOO',
         marketPrice: 125.5,
-        symbol: 'AAPL'
+        symbol: 'AAPL',
+        historicalData: [
+          { date: '2026-02-19T00:00:00.000Z', value: 100 },
+          { date: '2026-02-26T00:00:00.000Z', value: 125.5 }
+        ]
       })
     };
 
@@ -57,11 +61,40 @@ describe('marketDataTool', () => {
     const symbols = result.symbols as Array<Record<string, unknown>>;
     expect(client.getSymbolData).toHaveBeenCalledWith(
       expect.objectContaining({
-        includeHistoricalData: 0
+        includeHistoricalData: 10
       })
     );
-    expect(symbols[0]?.changePercent1w).toBeUndefined();
-    expect(result.summary).toContain('Current data for 1 symbol(s)');
+    expect(symbols[0]?.changePercent1w).toBe(25.5);
+    expect(result.answer).toContain('vs 1w: +25.5%');
+  });
+
+  it('returns one-year historical comparison when asked for last year', async () => {
+    const client = {
+      getSymbolLookup: jest.fn().mockResolvedValue({ items: [] }),
+      getSymbolData: jest.fn().mockResolvedValue({
+        currency: 'USD',
+        dataSource: 'YAHOO',
+        marketPrice: 67492,
+        symbol: 'BTC-USD',
+        historicalData: [
+          { date: '2025-02-26T00:00:00.000Z', value: 51000 },
+          { date: '2026-02-26T00:00:00.000Z', value: 67492 }
+        ]
+      })
+    };
+
+    const result = await marketDataTool({
+      client: client as never,
+      message: 'how much was bitcoin last year ?'
+    });
+
+    expect(client.getSymbolData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        includeHistoricalData: 380
+      })
+    );
+    expect(result.answer).toContain('1y ago (2025-02-26): USD 51000');
+    expect(result.answer).toContain('vs 1y: +32.34%');
   });
 
   it('resolves common typo and suffix in natural language query', async () => {

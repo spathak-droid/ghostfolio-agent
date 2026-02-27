@@ -14,27 +14,23 @@ export async function portfolioAnalysisTool({
   token?: string;
 }) {
   try {
-    const data = await client.getPortfolioSummary({ impersonationId, token });
-    logPortfolioFetch(data);
+    const data = await client.getPortfolioPerformance({ impersonationId, range: 'max', token });
+    logPortfolioPerformanceFetch(data);
     const generatedAt = new Date().toISOString();
-
-    const allocationResult = normalizeAllocation(data?.holdings);
-    const allocation = allocationResult.allocation;
-    const performance = normalizePerformance(data?.summary);
+    const normalized = normalizePerformancePayload(data);
     const dataAsOf = resolveDataAsOf({
-      createdAt: data?.createdAt,
+      chart: data.chart,
       generatedAt
     });
 
     return {
-      allocation,
+      allocation: [],
       data_as_of: dataAsOf,
-      performance,
+      performance: normalized,
       message,
       source: 'ghostfolio_api',
       sources: ['ghostfolio_api'],
-      summary: 'Portfolio analysis from Ghostfolio data',
-      usd_removed_from_holdings: allocationResult.usdRemovedFromHoldings,
+      summary: 'Portfolio analysis from Ghostfolio performance data',
       data
     };
   } catch (error) {
@@ -50,89 +46,51 @@ export async function portfolioAnalysisTool({
   }
 }
 
-function logPortfolioFetch(data: unknown) {
-  if (!isObject(data)) {
-    return;
-  }
-
-  const holdings = isObject(data.holdings) ? data.holdings : {};
-  const summary = isObject(data.summary) ? data.summary : {};
-  const symbols = Object.keys(holdings).slice(0, 5);
-
+function logPortfolioPerformanceFetch(data: Record<string, unknown>) {
+  const performance = isObject(data.performance) ? data.performance : {};
   const payload = {
     location: 'portfolio-analysis.ts:portfolioAnalysisTool',
-    message: 'fetched portfolio data',
-    hasError: asBoolean(data.hasError),
-    holdingsCount: Object.keys(holdings).length,
-    symbols,
-    summary: {
-      netPerformance: asNumber(summary.netPerformance),
-      netPerformancePercentage: asNumber(summary.netPerformancePercentage),
-      totalValueInBaseCurrency: asNumber(summary.totalValueInBaseCurrency)
+    message: 'fetched portfolio performance data',
+    hasErrors: asBoolean(data.hasErrors),
+    hasErrorsArray: Array.isArray(data.errors) ? data.errors.length : undefined,
+    performance: {
+      currentNetWorth: asNumber(performance.currentNetWorth),
+      netPerformance: asNumber(performance.netPerformance),
+      netPerformancePercentage: asNumber(performance.netPerformancePercentage)
     },
     timestamp: Date.now()
   };
   logger.debug('[agent-portfolio] fetched:', payload);
 }
 
-/**
- * USD is CASH, not a holding. Holdings/allocation must exclude USD;
- * cash is shown separately from portfolio allocation.
- */
-const CASH_SYMBOLS = new Set(['USD']);
-
-function isCashSymbol(symbol: string): boolean {
-  return CASH_SYMBOLS.has(symbol.toUpperCase());
-}
-
-function normalizeAllocation(holdings: unknown): {
-  allocation: { percentage: number; symbol: string }[];
-  usdRemovedFromHoldings: boolean;
-} {
-  if (!isObject(holdings)) {
-    return { allocation: [], usdRemovedFromHoldings: false };
-  }
-
-  const rows = Object.values(holdings)
-    .filter(isObject)
-    .map((holding) => {
-      const symbol = asString(holding.symbol) ?? 'unknown';
-      const share = asNumber(holding.allocationInPercentage) ?? 0;
-      return {
-        percentage: roundToTwo(share * 100),
-        symbol
-      };
-    });
-
-  const usdRemovedFromHoldings = rows.some((r) => isCashSymbol(r.symbol));
-  const allocation = rows
-    .filter((r) => !isCashSymbol(r.symbol))
-    .sort((a, b) => b.percentage - a.percentage)
-    .slice(0, 10);
-
-  return { allocation, usdRemovedFromHoldings };
-}
-
-function normalizePerformance(summary: unknown) {
-  if (!isObject(summary)) {
-    return undefined;
-  }
-
+function normalizePerformancePayload(data: Record<string, unknown>) {
+  const performance = isObject(data.performance) ? data.performance : {};
   return {
-    netPerformance: asNumber(summary.netPerformance) ?? 0,
-    netPerformancePercentage: asNumber(summary.netPerformancePercentage) ?? 0,
-    totalValueInBaseCurrency: asNumber(summary.totalValueInBaseCurrency) ?? 0
+    currentNetWorth: asNumber(performance.currentNetWorth) ?? 0,
+    netPerformance: asNumber(performance.netPerformance) ?? 0,
+    netPerformancePercentage: asNumber(performance.netPerformancePercentage) ?? 0,
+    totalValueInBaseCurrency: asNumber(performance.currentValueInBaseCurrency) ?? 0
   };
 }
 
 function resolveDataAsOf({
-  createdAt,
+  chart,
   generatedAt
 }: {
-  createdAt: unknown;
+  chart: unknown;
   generatedAt: string;
 }) {
-  return asString(createdAt) ?? generatedAt;
+  if (!Array.isArray(chart) || chart.length === 0) {
+    return generatedAt;
+  }
+
+  const last = chart[chart.length - 1];
+  if (!isObject(last)) {
+    return generatedAt;
+  }
+
+  const date = asString(last.date);
+  return date ? `${date}T00:00:00.000Z` : generatedAt;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -149,8 +107,4 @@ function asString(value: unknown) {
 
 function asBoolean(value: unknown) {
   return typeof value === 'boolean' ? value : undefined;
-}
-
-function roundToTwo(value: number) {
-  return Math.round(value * 100) / 100;
 }

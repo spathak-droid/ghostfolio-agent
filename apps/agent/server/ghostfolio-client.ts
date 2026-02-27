@@ -67,6 +67,56 @@ export class GhostfolioClient {
     return this.get('/api/v1/portfolio/details', { impersonationId, token });
   }
 
+  public async getPortfolioHoldings({
+    impersonationId,
+    range = 'max',
+    token
+  }: {
+    impersonationId?: string;
+    range?: string;
+    token?: string;
+  }) {
+    const params = new URLSearchParams({
+      range: range.trim() || 'max'
+    });
+    return this.get(`/api/v1/portfolio/holdings?${params.toString()}`, { impersonationId, token });
+  }
+
+  public async getPortfolioHolding({
+    dataSource,
+    symbol,
+    impersonationId,
+    token
+  }: {
+    dataSource: string;
+    symbol: string;
+    impersonationId?: string;
+    token?: string;
+  }) {
+    return this.get(
+      `/api/v1/portfolio/holding/${encodeURIComponent(dataSource)}/${encodeURIComponent(symbol)}`,
+      { impersonationId, token }
+    );
+  }
+
+  public async getPortfolioPerformance({
+    impersonationId,
+    range = 'max',
+    token
+  }: {
+    impersonationId?: string;
+    range?: string;
+    token?: string;
+  }) {
+    const params = new URLSearchParams({
+      range: range.trim() || 'max'
+    });
+    return this.get(`/api/v2/portfolio/performance?${params.toString()}`, {
+      impersonationId,
+      token
+    });
+  }
+
   public async getMarketData({
     impersonationId,
     token
@@ -303,7 +353,8 @@ export class GhostfolioClient {
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         if (
-          path === '/api/v1/portfolio/details' &&
+          (path === '/api/v1/portfolio/details' ||
+            path.startsWith('/api/v1/portfolio/holdings')) &&
           errorMessage.startsWith('Ghostfolio API returned empty JSON body')
         ) {
           return this.emptyPortfolioDetailsFallback();

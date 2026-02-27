@@ -5,8 +5,10 @@ import { existsSync } from 'fs';
 
 import { createAgent } from './agent';
 import {
+  parseFeedbackBody,
   parseCreateOrderParams,
   validateChatBody,
+  validateClearChatBody,
   validateImpersonationId,
   validateTokenLength
 } from './chat-request-validation';
@@ -16,19 +18,24 @@ import { resolveGhostfolioBaseUrl } from './ghostfolio-base-url';
 import { GhostfolioClient } from './ghostfolio-client';
 import { createOpenAiClientFromEnv } from './openai-client';
 import { resolveRequestToken } from './request-auth';
+import { createFeedbackStoreFromEnv } from './feedback-store';
 import { createOrderTool } from './tools/create-order';
 import { createOtherActivitiesTool } from './tools/create-other-activities';
 import { complianceCheckTool } from './tools/compliance-check';
 import { getOrdersTool } from './tools/get-orders';
 import { getTransactionsTool } from './tools/get-transactions';
+import { factCheckTool } from './tools/fact-check';
 import { marketDataTool } from './tools/market-data';
+import { analyzeStockTrendTool } from './tools/analyze-stock-trend';
 import { marketDataLookupTool } from './tools/market-data-lookup';
 import { marketOverviewTool } from './tools/market-overview';
+import { holdingsAnalysisTool } from './tools/holdings-analysis';
 import { portfolioAnalysisTool } from './tools/portfolio-analysis';
 import { transactionCategorizeTool } from './tools/transaction-categorize';
 import { transactionTimelineTool } from './tools/transaction-timeline';
 import { logger } from './logger';
 import { resolveWidgetCorsOrigin, resolveWidgetDistPath } from './widget-static';
+import type { AgentChatResponse, AgentTraceStep } from './types';
 
 const app = express();
 // Railway and similar platforms set PORT; fall back to AGENT_PORT for local dev
@@ -54,6 +61,8 @@ const ghostfolioAllowedHosts = (
   .split(',')
   .map((host) => host.trim())
   .filter(Boolean);
+const feedbackStore = createFeedbackStoreFromEnv();
+const enableFeedbackMemory = process.env.AGENT_ENABLE_FEEDBACK_MEMORY !== 'false';
 
 // traceable() calls the tool with (runtimeTrace, input); use second arg when present so token is passed
 function toolInput(
@@ -124,6 +133,25 @@ function parsePositiveInteger(value: string | undefined): number | undefined {
 
   return Math.floor(parsed);
 }
+
+function summarizeTraceLatency(trace: AgentTraceStep[] | undefined): {
+  llmMs: number;
+  toolMs: number;
+} {
+  let llmMs = 0;
+  let toolMs = 0;
+  for (const step of trace ?? []) {
+    if (typeof step.durationMs !== 'number' || !Number.isFinite(step.durationMs)) {
+      continue;
+    }
+    if (step.type === 'llm') {
+      llmMs += Math.max(0, Math.round(step.durationMs));
+    } else if (step.type === 'tool') {
+      toolMs += Math.max(0, Math.round(step.durationMs));
+    }
+  }
+  return { llmMs, toolMs };
+}
 // Tool Registry execution wiring: each tool in TOOL_DEFINITIONS is implemented below and passed to the agent.
 const conversationStore = createConversationStoreFromEnv({
   redisUrl: process.env.AGENT_REDIS_URL ?? process.env.REDIS_URL,
@@ -140,6 +168,7 @@ function createAgentWithClient(ghostfolioClient: GhostfolioClient) {
   return createAgent({
   contextManager,
   conversationStore,
+  ...(enableFeedbackMemory ? { feedbackMemoryProvider: feedbackStore } : {}),
   llm,
   tools: {
     getTransactions: (a, b) => {
@@ -162,6 +191,16 @@ function createAgentWithClient(ghostfolioClient: GhostfolioClient) {
         regulations
       });
     },
+    factCheck: (a, b) => {
+      const { impersonationId, message, symbols, token } = toolInput(a, b);
+      return factCheckTool({
+        client: ghostfolioClient,
+        impersonationId,
+        message,
+        symbols,
+        token
+      });
+    },
     marketData: (a, b) => {
       const { impersonationId, message, metrics, symbols, token } = toolInput(a, b);
       return marketDataTool({
@@ -170,6 +209,17 @@ function createAgentWithClient(ghostfolioClient: GhostfolioClient) {
         message,
         metrics,
         symbols,
+        token
+      });
+    },
+    analyzeStockTrend: (a, b) => {
+      const { impersonationId, message, range, symbol, token } = toolInput(a, b);
+      return analyzeStockTrendTool({
+        client: ghostfolioClient,
+        impersonationId,
+        message,
+        range,
+        symbol,
         token
       });
     },
@@ -194,6 +244,15 @@ function createAgentWithClient(ghostfolioClient: GhostfolioClient) {
     portfolioAnalysis: (a, b) => {
       const { impersonationId, message, token } = toolInput(a, b);
       return portfolioAnalysisTool({
+        client: ghostfolioClient,
+        impersonationId,
+        message,
+        token
+      });
+    },
+    holdingsAnalysis: (a, b) => {
+      const { impersonationId, message, token } = toolInput(a, b);
+      return holdingsAnalysisTool({
         client: ghostfolioClient,
         impersonationId,
         message,
@@ -283,7 +342,49 @@ app.get('/health', (_request, response) => {
   response.status(200).json({ status: 'ok' });
 });
 
+app.post('/chat/clear', async (request, response) => {
+  const requestBody =
+    request.body && typeof request.body === 'object' && !Array.isArray(request.body)
+      ? (request.body as Record<string, unknown>)
+      : {};
+  const tokenResolution = resolveRequestToken({
+    allowBodyAccessToken,
+    authorizationHeader: request.headers.authorization,
+    bodyAccessToken:
+      typeof requestBody.accessToken === 'string'
+        ? requestBody.accessToken
+        : undefined
+  });
+  if (!tokenResolution.ok) {
+    const err = tokenResolution as { status: 400; error: string };
+    response.status(err.status).json({ error: err.error, code: 'VALIDATION_ERROR' });
+    return;
+  }
+  const tokenCheck = validateTokenLength(tokenResolution.token);
+  if (!tokenCheck.ok) {
+    const err = tokenCheck as { status: 400; error: string };
+    response.status(err.status).json({ error: err.error, code: 'VALIDATION_ERROR' });
+    return;
+  }
+  const validation = validateClearChatBody(requestBody);
+  if (!validation.ok) {
+    const err = validation as { status: 400; error: string };
+    response.status(err.status).json({ error: err.error, code: 'VALIDATION_ERROR' });
+    return;
+  }
+  try {
+    await conversationStore.clearConversation(validation.params.conversationId);
+    response.status(200).json({ ok: true });
+  } catch (error) {
+    logger.error('[agent.chat.clear] UNHANDLED_ERROR', {
+      message: error instanceof Error ? error.message : 'clearConversation failed'
+    });
+    response.status(500).json({ error: 'AGENT_CHAT_CLEAR_FAILED', code: 'AGENT_CHAT_CLEAR_FAILED' });
+  }
+});
+
 app.post('/chat', async (request, response) => {
+  const requestStartedAt = Date.now();
   const requestBody =
     request.body && typeof request.body === 'object' && !Array.isArray(request.body)
       ? (request.body as Record<string, unknown>)
@@ -373,7 +474,15 @@ app.post('/chat', async (request, response) => {
       createOrderParams: createOrderParamsResult.params,
       impersonationId: impersonationValidation.value,
       token
-    });
+    }) as AgentChatResponse;
+
+    const totalMs = Math.max(0, Date.now() - requestStartedAt);
+    const breakdown = summarizeTraceLatency(chatResponse.trace);
+    chatResponse.latency = {
+      llmMs: breakdown.llmMs,
+      toolMs: breakdown.toolMs,
+      totalMs
+    };
 
     response.status(200).json(chatResponse);
   } catch (error) {
@@ -383,6 +492,57 @@ app.post('/chat', async (request, response) => {
     response.status(500).json({
       answer: 'Something went wrong. Please try again.',
       error: 'AGENT_CHAT_FAILED'
+    });
+  }
+});
+
+app.post('/feedback', async (request, response) => {
+  const requestBody =
+    request.body && typeof request.body === 'object' && !Array.isArray(request.body)
+      ? (request.body as Record<string, unknown>)
+      : {};
+  const validation = parseFeedbackBody(requestBody);
+  if (!validation.ok) {
+    const err = validation as { status: 400; error: string };
+    response.status(err.status).json({
+      code: 'VALIDATION_ERROR',
+      error: err.error
+    });
+    return;
+  }
+
+  logger.info('[agent.feedback] RECEIVED', {
+    conversationId: validation.params.conversationId,
+    hasCorrection: Boolean(validation.params.correction),
+    hasMessage: Boolean(validation.params.message),
+    rating: validation.params.rating
+  });
+
+  try {
+    const result = await feedbackStore.save({
+      answer: validation.params.answer,
+      conversationId: validation.params.conversationId,
+      correction: validation.params.correction,
+      latency: validation.params.latency,
+      message: validation.params.message,
+      rating: validation.params.rating,
+      trace: validation.params.trace
+    });
+    if (!result.ok) {
+      response.status(503).json({
+        code: 'FEEDBACK_PERSIST_FAILED',
+        error: result.error ?? 'feedback_persist_failed'
+      });
+      return;
+    }
+    response.status(200).json({
+      feedbackId: result.feedbackId,
+      ok: true
+    });
+  } catch (error) {
+    response.status(503).json({
+      code: 'FEEDBACK_PERSIST_FAILED',
+      error: error instanceof Error ? error.message : 'feedback_persist_failed'
     });
   }
 });

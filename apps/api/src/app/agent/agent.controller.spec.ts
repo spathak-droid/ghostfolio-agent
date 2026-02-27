@@ -137,4 +137,30 @@ describe('AgentController', () => {
     );
     expect(responseMock.send).toHaveBeenCalledWith(Buffer.from('<svg/>'));
   });
+
+  it('forwards feedback payload and authorization header to service', async () => {
+    const feedbackMock = jest.fn().mockResolvedValue({ ok: true });
+    const controller = new AgentController({
+      feedback: feedbackMock
+    } as unknown as AgentService);
+
+    await controller.feedback(
+      {
+        answer: 'Assistant answer',
+        conversationId: 'conv-1',
+        rating: 'up'
+      },
+      'Bearer jwt-token'
+    );
+
+    expect(feedbackMock).toHaveBeenCalledWith(
+      {
+        answer: 'Assistant answer',
+        conversationId: 'conv-1',
+        rating: 'up'
+      },
+      'Bearer jwt-token',
+      undefined
+    );
+  });
 });

@@ -7,10 +7,17 @@ function buildDefaultTools(): AgentTools {
   return {
     complianceCheck: jest.fn(),
     createOrder: jest.fn(),
+    factCheck: jest.fn(),
     getOrders: jest.fn(),
     getTransactions: jest.fn(),
     marketData: jest.fn(),
     marketDataLookup: jest.fn(),
+    holdingsAnalysis: jest.fn().mockResolvedValue({
+      allocation: [],
+      data_as_of: '2026-02-24T00:00:00Z',
+      sources: ['test'],
+      summary: 'Holdings analysis from Ghostfolio data'
+    }),
     portfolioAnalysis: jest.fn(),
     transactionCategorize: jest.fn(),
     transactionTimeline: jest.fn()
@@ -18,13 +25,16 @@ function buildDefaultTools(): AgentTools {
 }
 
 function createTestAgent({
+  feedbackMemoryProvider,
   llm,
   tools
 }: {
+  feedbackMemoryProvider?: CreateAgentOptions['feedbackMemoryProvider'];
   llm?: CreateAgentOptions['llm'];
   tools?: Partial<AgentTools>;
 }): ReturnType<typeof createAgent> {
   return createAgent({
+    feedbackMemoryProvider,
     llm,
     tools: {
       ...buildDefaultTools(),
@@ -34,13 +44,70 @@ function createTestAgent({
 }
 
 describe('standalone agent orchestrator', () => {
+  it('loads feedback memory before synthesis and skips extra llm synthesis call', async () => {
+    const reasonAboutQuery = jest.fn().mockResolvedValue({
+      intent: 'finance',
+      mode: 'tool_call',
+      rationale: 'finance',
+      tool: 'market_data_lookup'
+    });
+    const getForToolSignature = jest.fn().mockResolvedValue({
+      do: ['Provide actionable next steps.'],
+      dont: ['Avoid generic opening.'],
+      sources: 1,
+      synthesisIssues: ['Keep synthesis faithful to tool output.'],
+      toolIssues: ['market_data_lookup: timeout']
+    });
+    const agent = createTestAgent({
+      feedbackMemoryProvider: {
+        getForToolSignature
+      },
+      llm: {
+        answerFinanceQuestion: jest.fn().mockResolvedValue('fallback'),
+        reasonAboutQuery,
+        selectTool: jest.fn().mockResolvedValue({
+          tool: 'market_data_lookup'
+        })
+      },
+      tools: {
+        marketDataLookup: jest.fn().mockResolvedValue({
+          prices: [{ symbol: 'AAPL', value: 200 }],
+          summary: 'AAPL snapshot',
+          sources: ['ghostfolio_api'],
+          data_as_of: '2026-02-26T00:00:00.000Z'
+        })
+      }
+    });
+
+    const response = await agent.chat({
+      conversationId: 'conv-feedback-memory-1',
+      message: 'summarize my portfolio allocation',
+      token: 'jwt-token'
+    });
+
+    expect(getForToolSignature).toHaveBeenCalledWith(
+      'market_data_lookup>portfolio_analysis>holdings_analysis'
+    );
+    expect(response.answer).toContain(
+      'Set explicit target allocation bands for each major position and cash.'
+    );
+    expect(response.trace?.some((step) => step.name === 'feedback_memory_synthesis')).toBe(true);
+    expect(response.trace?.some((step) => step.name === 'llm_synthesize_from_tool_results')).toBe(
+      false
+    );
+  });
+
   it('uses LLM-selected tool when planner is enabled', async () => {
     const agent = createTestAgent({
       llm: {
         answerFinanceQuestion: jest.fn(),
-        selectTool: jest.fn().mockResolvedValue({
+        reasonAboutQuery: jest.fn().mockResolvedValue({
+          intent: 'finance',
+          mode: 'tool_call',
+          rationale: 'needs lookup',
           tool: 'market_data_lookup'
-        })
+        }),
+        selectTool: jest.fn().mockResolvedValue({ tool: 'none' })
       },
       tools: {
         getTransactions: jest.fn(),
@@ -63,7 +130,7 @@ describe('standalone agent orchestrator', () => {
 
     expect(response.toolCalls[0]?.toolName).toBe('market_data_lookup');
     expect(response.answer).toContain('Summary:');
-    expect(response.answer).toContain('TSLA moved +2.1% on the day');
+    expect(response.answer).toContain('Latest prices: TSLA 211.43.');
   });
 
   it('uses reasoning agent decision to force direct reply without tools', async () => {
@@ -312,7 +379,7 @@ describe('standalone agent orchestrator', () => {
       ])
     );
     expect(response.answer).toContain('Summary:');
-    expect(response.answer).toContain('Concentrated in AAPL');
+    expect(response.answer).toContain('Top allocation: AAPL 100%.');
   });
 
   it('routes portfolio query to portfolio-analysis tool and uses tool payload in structured response', async () => {
@@ -487,16 +554,20 @@ describe('standalone agent orchestrator', () => {
     );
   });
 
-  it('falls back to direct LLM answer when selected tools fail', async () => {
+  it('returns tool-driven error answer when selected tools fail', async () => {
     const answerFinanceQuestion = jest
       .fn()
       .mockResolvedValue('I could not fetch live data, but I can still explain what this metric means.');
     const agent = createTestAgent({
       llm: {
         answerFinanceQuestion,
-        selectTool: jest.fn().mockResolvedValue({
+        reasonAboutQuery: jest.fn().mockResolvedValue({
+          intent: 'finance',
+          mode: 'tool_call',
+          rationale: 'needs lookup',
           tool: 'market_data_lookup'
-        })
+        }),
+        selectTool: jest.fn().mockResolvedValue({ tool: 'none' })
       },
       tools: {
         getTransactions: jest.fn(),
@@ -514,13 +585,51 @@ describe('standalone agent orchestrator', () => {
       token: 'jwt-token'
     });
 
-    expect(answerFinanceQuestion).toHaveBeenCalled();
-    expect(response.answer.toLowerCase()).toContain('could not fetch live data');
+    expect(answerFinanceQuestion).not.toHaveBeenCalled();
+    expect(response.answer).toContain('downstream error');
     expect(response.errors).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ code: 'TOOL_EXECUTION_FAILED', recoverable: true })
       ])
     );
+  });
+
+  it('hides raw tool error details for upstream API failures', async () => {
+    const answerFinanceQuestion = jest.fn().mockResolvedValue('fallback');
+    const agent = createTestAgent({
+      llm: {
+        answerFinanceQuestion,
+        reasonAboutQuery: jest.fn().mockResolvedValue({
+          intent: 'finance',
+          mode: 'tool_call',
+          rationale: 'needs lookup',
+          tool: 'market_data_lookup'
+        }),
+        selectTool: jest.fn().mockResolvedValue({ tool: 'none' })
+      },
+      tools: {
+        getTransactions: jest.fn(),
+        marketData: jest.fn(),
+        marketDataLookup: jest
+          .fn()
+          .mockRejectedValue(new Error('Ghostfolio API request failed: 500')),
+        portfolioAnalysis: jest.fn(),
+        transactionCategorize: jest.fn(),
+        transactionTimeline: jest.fn()
+      }
+    });
+
+    const response = await agent.chat({
+      conversationId: 'conv-tool-fallback-api-1',
+      message: 'what is the latest price of aapl',
+      token: 'jwt-token'
+    });
+
+    expect(answerFinanceQuestion).not.toHaveBeenCalled();
+    expect(response.answer).toBe(
+      'I could not fetch data from the Ghostfolio API right now. Please retry.'
+    );
+    expect(response.answer).not.toContain('Ghostfolio API request failed: 500');
   });
 
   it('falls back to direct LLM answer when tool output is empty', async () => {
@@ -587,6 +696,174 @@ describe('standalone agent orchestrator', () => {
     expect(response.verification.isValid).toBe(true);
   });
 
+  it('does not call analyze_stock_trend for portfolio-wide holdings questions', async () => {
+    const analyzeStockTrend = jest.fn().mockResolvedValue({
+      answer: 'Trend analysis result',
+      data_as_of: '2026-02-27T00:00:00.000Z',
+      sources: ['ghostfolio_api'],
+      summary: 'Stock trend analysis for BTCUSD'
+    });
+    const holdingsAnalysis = jest.fn().mockResolvedValue({
+      allocation: [{ percentage: 57.55, symbol: 'BTCUSD' }],
+      data_as_of: '2026-02-27T00:00:00.000Z',
+      sources: ['ghostfolio_api'],
+      summary: 'Holdings analysis from Ghostfolio data'
+    });
+    const agent = createTestAgent({
+      llm: {
+        answerFinanceQuestion: jest.fn().mockResolvedValue('fallback'),
+        reasonAboutQuery: jest.fn().mockResolvedValue({
+          intent: 'finance',
+          mode: 'tool_call',
+          rationale: 'trend and holdings requested',
+          tools: ['analyze_stock_trend', 'holdings_analysis'],
+          tool: 'analyze_stock_trend'
+        }),
+        selectTool: jest.fn().mockResolvedValue({ tool: 'none' })
+      },
+      tools: {
+        analyzeStockTrend,
+        holdingsAnalysis
+      }
+    });
+
+    await agent.chat({
+      conversationId: 'conv-broad-holdings-trend-1',
+      message: 'how are all my holdings doing? any risk ?',
+      token: 'jwt-token'
+    });
+
+    expect(analyzeStockTrend).not.toHaveBeenCalled();
+    expect(holdingsAnalysis).toHaveBeenCalled();
+  });
+
+  it('uses only portfolio_analysis when message says portfolio', async () => {
+    const portfolioAnalysis = jest.fn().mockResolvedValue({
+      allocation: [{ percentage: 60, symbol: 'AAPL' }],
+      data_as_of: '2026-02-27T00:00:00.000Z',
+      sources: ['ghostfolio_api'],
+      summary: 'Portfolio analysis from Ghostfolio data'
+    });
+    const holdingsAnalysis = jest.fn().mockResolvedValue({
+      allocation: [{ percentage: 60, symbol: 'AAPL' }],
+      data_as_of: '2026-02-27T00:00:00.000Z',
+      sources: ['ghostfolio_api'],
+      summary: 'Holdings analysis from Ghostfolio data'
+    });
+    const agent = createTestAgent({
+      llm: {
+        answerFinanceQuestion: jest.fn().mockResolvedValue('fallback'),
+        reasonAboutQuery: jest.fn().mockResolvedValue({
+          intent: 'finance',
+          mode: 'tool_call',
+          rationale: 'both proposed',
+          tools: ['portfolio_analysis', 'holdings_analysis'],
+          tool: 'portfolio_analysis'
+        }),
+        selectTool: jest.fn().mockResolvedValue({ tool: 'none' })
+      },
+      tools: {
+        portfolioAnalysis,
+        holdingsAnalysis
+      }
+    });
+
+    await agent.chat({
+      conversationId: 'conv-portfolio-only-1',
+      message: 'how is my portfolio doing?',
+      token: 'jwt-token'
+    });
+
+    expect(portfolioAnalysis).toHaveBeenCalled();
+    expect(holdingsAnalysis).not.toHaveBeenCalled();
+  });
+
+  it('uses only holdings_analysis when message says holdings', async () => {
+    const portfolioAnalysis = jest.fn().mockResolvedValue({
+      allocation: [{ percentage: 60, symbol: 'AAPL' }],
+      data_as_of: '2026-02-27T00:00:00.000Z',
+      sources: ['ghostfolio_api'],
+      summary: 'Portfolio analysis from Ghostfolio data'
+    });
+    const holdingsAnalysis = jest.fn().mockResolvedValue({
+      allocation: [{ percentage: 60, symbol: 'AAPL' }],
+      data_as_of: '2026-02-27T00:00:00.000Z',
+      sources: ['ghostfolio_api'],
+      summary: 'Holdings analysis from Ghostfolio data'
+    });
+    const agent = createTestAgent({
+      llm: {
+        answerFinanceQuestion: jest.fn().mockResolvedValue('fallback'),
+        reasonAboutQuery: jest.fn().mockResolvedValue({
+          intent: 'finance',
+          mode: 'tool_call',
+          rationale: 'both proposed',
+          tools: ['portfolio_analysis', 'holdings_analysis'],
+          tool: 'holdings_analysis'
+        }),
+        selectTool: jest.fn().mockResolvedValue({ tool: 'none' })
+      },
+      tools: {
+        portfolioAnalysis,
+        holdingsAnalysis
+      }
+    });
+
+    await agent.chat({
+      conversationId: 'conv-holdings-only-1',
+      message: 'how are my holdings doing?',
+      token: 'jwt-token'
+    });
+
+    expect(holdingsAnalysis).toHaveBeenCalled();
+    expect(portfolioAnalysis).not.toHaveBeenCalled();
+  });
+
+  it('uses only holdings_analysis for portfolio allocation questions', async () => {
+    const portfolioAnalysis = jest.fn().mockResolvedValue({
+      allocation: [],
+      data_as_of: '2026-02-27T00:00:00.000Z',
+      performance: {
+        currentNetWorth: 351101.8,
+        netPerformance: 13521.8,
+        netPerformancePercentage: 0.0006
+      },
+      sources: ['ghostfolio_api'],
+      summary: 'Portfolio analysis from Ghostfolio performance data'
+    });
+    const holdingsAnalysis = jest.fn().mockResolvedValue({
+      allocation: [{ percentage: 57.55, symbol: 'BTCUSD' }],
+      data_as_of: '2026-02-27T00:00:00.000Z',
+      sources: ['ghostfolio_api'],
+      summary: 'Holdings analysis from Ghostfolio data'
+    });
+    const agent = createTestAgent({
+      llm: {
+        answerFinanceQuestion: jest.fn().mockResolvedValue('fallback'),
+        reasonAboutQuery: jest.fn().mockResolvedValue({
+          intent: 'finance',
+          mode: 'tool_call',
+          rationale: 'portfolio question',
+          tool: 'portfolio_analysis'
+        }),
+        selectTool: jest.fn().mockResolvedValue({ tool: 'none' })
+      },
+      tools: {
+        portfolioAnalysis,
+        holdingsAnalysis
+      }
+    });
+
+    await agent.chat({
+      conversationId: 'conv-portfolio-allocation-holdings-only-1',
+      message: 'summarize my portfolio allocation',
+      token: 'jwt-token'
+    });
+
+    expect(holdingsAnalysis).toHaveBeenCalled();
+    expect(portfolioAnalysis).not.toHaveBeenCalled();
+  });
+
   it('synthesizes multiple tools in one coherent response', async () => {
     const agent = createTestAgent({
       tools: {
@@ -624,8 +901,8 @@ describe('standalone agent orchestrator', () => {
       'portfolio_analysis'
     ]);
     expect(response.answer).toContain('Summary:');
-    expect(response.answer).toContain('Portfolio is concentrated in NVDA');
-    expect(response.answer).toContain('NVDA closed higher on earnings momentum');
+    expect(response.answer).toContain('Top allocation: NVDA 72%, MSFT 28%.');
+    expect(response.answer).toContain('Latest prices: NVDA 820.55.');
     expect(response.answer).toContain('Risks/flags:');
     expect(response.verification.isValid).toBe(true);
   });
@@ -687,7 +964,7 @@ describe('standalone agent orchestrator', () => {
     );
     expect(response.toolCalls).toHaveLength(2);
     expect(response.answer).toContain('Summary:');
-    expect(response.answer).toContain('NVDA closed higher on earnings momentum');
+    expect(response.answer).toContain('Latest prices: NVDA 820.55.');
     expect(response.answer).toContain('Risks/flags:');
     expect(response.verification.flags).toContain('tool_failure');
   });
@@ -781,7 +1058,7 @@ describe('standalone agent orchestrator', () => {
     );
     expect(getTransactions).toHaveBeenCalled();
     expect(transactionCategorize).toHaveBeenCalled();
-    expect(response.answer).toContain('Transaction categorization completed');
+    expect(response.answer).toContain('Summary: Fetched transactions | Categorized 1 transactions.');
   });
 
   it('chains get-transactions before transaction-timeline for buy-price questions', async () => {

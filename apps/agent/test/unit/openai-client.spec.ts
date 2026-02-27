@@ -55,6 +55,57 @@ describe('openai client', () => {
     expect(result.tool).toBe('none');
   });
 
+  it('returns cached selectTool result without calling LLM', async () => {
+    const cache = {
+      get: jest.fn().mockResolvedValue(JSON.stringify({ tool: 'portfolio_analysis' })),
+      set: jest.fn()
+    };
+    global.fetch = jest.fn();
+
+    const client = createOpenAiClient({
+      apiKey: 'test-key',
+      cache,
+      model: 'gpt-4o-mini'
+    });
+
+    const result = await client.selectTool('Analyze my portfolio', []);
+
+    expect(result.tool).toBe('portfolio_analysis');
+    expect(cache.get).toHaveBeenCalledTimes(1);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('caches selectTool result on cache miss', async () => {
+    const cache = {
+      get: jest.fn().mockResolvedValue(undefined),
+      set: jest.fn().mockResolvedValue(undefined)
+    };
+    global.fetch = jest.fn().mockResolvedValue({
+      json: async () => ({
+        choices: [{ message: { content: '{"tool":"market_data_lookup"}' } }]
+      }),
+      ok: true
+    }) as unknown as typeof fetch;
+
+    const client = createOpenAiClient({
+      apiKey: 'test-key',
+      cache,
+      cacheTtlSeconds: {
+        selectTool: 33
+      },
+      model: 'gpt-4o-mini'
+    });
+
+    const result = await client.selectTool('what is tsla price', []);
+
+    expect(result.tool).toBe('market_data_lookup');
+    expect(cache.set).toHaveBeenCalledWith(
+      expect.stringContaining('llm_cache:select_tool:'),
+      JSON.stringify({ tool: 'market_data_lookup' }),
+      33
+    );
+  });
+
   it('returns greeting fallback when answer content is empty for hello', async () => {
     global.fetch = jest.fn().mockResolvedValue({
       json: async () => ({
@@ -103,6 +154,31 @@ describe('openai client', () => {
 
     expect(result.toLowerCase()).toContain('help');
     expect(result.toLowerCase()).toContain('portfolio');
+  });
+
+  it('forces finance-only direct reply for non-finance meta prompts', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: 'I am a large language model, trained by Google.'
+            }
+          }
+        ]
+      }),
+      ok: true
+    }) as unknown as typeof fetch;
+
+    const client = createOpenAiClient({
+      apiKey: 'test-key',
+      model: 'gpt-4o-mini'
+    });
+
+    const result = await client.answerFinanceQuestion('which llm do you use?', []);
+
+    expect(result.toLowerCase()).toContain('portfolio');
+    expect(result.toLowerCase()).not.toContain('trained by google');
   });
 
   it('returns finance joke fallback when model returns empty', async () => {
@@ -206,37 +282,6 @@ describe('openai client', () => {
         body: expect.stringContaining('"model":"openai/gpt-5-nano"')
       })
     );
-  });
-
-  it('includes structured formatting instructions for synthesized tool answers', async () => {
-    global.fetch = jest.fn().mockResolvedValue({
-      json: async () => ({
-        choices: [{ message: { content: '## Portfolio Snapshot\n- Holdings: 10,000 USD' } }]
-      }),
-      ok: true
-    }) as unknown as typeof fetch;
-
-    const client = createOpenAiClient({
-      apiKey: 'test-key',
-      model: 'gpt-4o-mini'
-    });
-
-    await client.synthesizeFromToolResults(
-      'summarize my portfolio',
-      [],
-      'Summary: Portfolio analysis completed for 3 holding(s).'
-    );
-
-    const fetchCall = (global.fetch as jest.Mock).mock.calls[0] as [string, { body: string }];
-    const requestBody = JSON.parse(fetchCall[1].body) as {
-      messages: Array<{ content: string; role: string }>;
-    };
-    const systemPrompt = requestBody.messages[0]?.content ?? '';
-
-    expect(systemPrompt).toContain('Output format requirements (always follow):');
-    expect(systemPrompt).toContain('Return plain text only (no markdown syntax).');
-    expect(systemPrompt).toContain('Use "-" bullets for facts and metrics.');
-    expect(systemPrompt).toContain('Do not return one dense paragraph');
   });
 
   it('uses OpenAI model fallback automatically without extra env configuration', async () => {
@@ -363,6 +408,37 @@ describe('openai client', () => {
         transaction_type: 'BUY'
       })
     );
+  });
+
+  it('returns cached compliance facts without calling LLM', async () => {
+    const cache = {
+      get: jest.fn().mockResolvedValue(
+        JSON.stringify({
+          concentration_risk: true,
+          is_recommendation: true
+        })
+      ),
+      set: jest.fn()
+    };
+    global.fetch = jest.fn();
+
+    const client = createOpenAiClient({
+      apiKey: 'test-key',
+      cache,
+      model: 'gpt-4o-mini'
+    });
+
+    const result = await client.extractComplianceFacts?.(
+      'Should I put all my money into one stock?'
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        concentration_risk: true,
+        is_recommendation: true
+      })
+    );
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it('returns undefined compliance facts for non-JSON model output', async () => {

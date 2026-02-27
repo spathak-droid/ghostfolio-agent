@@ -1,7 +1,9 @@
 import {
   CHAT_VALIDATION,
+  parseFeedbackBody,
   parseCreateOrderParams,
   validateChatBody,
+  validateClearChatBody,
   validateImpersonationId,
   validateTokenLength
 } from '../../server/chat-request-validation';
@@ -279,5 +281,104 @@ describe('parseCreateOrderParams', () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect((result as { error: string }).error).toContain('unknown field');
+  });
+});
+
+describe('parseFeedbackBody', () => {
+  it('accepts valid thumbs up payload', () => {
+    const result = parseFeedbackBody({
+      answer: 'Some reply\nwith multiple lines',
+      conversationId: 'conv-1',
+      latency: { totalMs: 120 },
+      message: 'what is my allocation?',
+      rating: 'up'
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects unknown top-level fields', () => {
+    const result = parseFeedbackBody({
+      answer: 'Some reply',
+      conversationId: 'conv-1',
+      extra: true,
+      rating: 'up'
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect((result as { error: string }).error).toContain('Unknown request field');
+    }
+  });
+
+  it('rejects invalid rating enum', () => {
+    const result = parseFeedbackBody({
+      answer: 'Some reply',
+      conversationId: 'conv-1',
+      rating: 'neutral'
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect((result as { error: string }).error).toContain('rating');
+    }
+  });
+
+  it('rejects non-array trace', () => {
+    const result = parseFeedbackBody({
+      answer: 'Some reply',
+      conversationId: 'conv-1',
+      rating: 'up',
+      trace: { step: 1 }
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect((result as { error: string }).error).toContain('trace');
+    }
+  });
+
+  it('accepts correction with tabs and newlines', () => {
+    const result = parseFeedbackBody({
+      answer: 'Some reply',
+      conversationId: 'conv-1',
+      correction: 'Line 1\nLine 2\t(indented)',
+      rating: 'down'
+    });
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe('validateClearChatBody', () => {
+  it('accepts valid body with conversationId', () => {
+    const result = validateClearChatBody({ conversationId: 'conv-clear-1' });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.params.conversationId).toBe('conv-clear-1');
+  });
+
+  it('rejects non-object body', () => {
+    const result = validateClearChatBody(null);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect((result as { error: string }).error).toContain('JSON object');
+  });
+
+  it('rejects unknown fields', () => {
+    const result = validateClearChatBody({ conversationId: 'c1', message: 'hi' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect((result as { error: string }).error).toContain('Unknown');
+  });
+
+  it('rejects missing conversationId', () => {
+    const result = validateClearChatBody({});
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect((result as { error: string }).error).toContain('conversationId is required');
+  });
+
+  it('rejects empty conversationId after trim', () => {
+    const result = validateClearChatBody({ conversationId: '  ' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect((result as { error: string }).error).toContain('conversationId');
+  });
+
+  it('rejects conversationId with control characters', () => {
+    const result = validateClearChatBody({ conversationId: 'id\nx' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect((result as { error: string }).error).toContain('control characters');
   });
 });

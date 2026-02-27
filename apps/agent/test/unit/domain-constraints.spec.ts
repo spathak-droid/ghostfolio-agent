@@ -19,4 +19,13 @@ describe('domain constraints', () => {
     expect(constrained.isValid).toBe(true);
     expect(constrained.flags).not.toContain('missing_provenance');
   });
+
+  it('keeps USD cash classification warning but does not invalidate response', () => {
+    const constrained = applyDomainConstraints('Portfolio includes cash details.', [
+      'USD_SHOULD_BE_CASH_NOT_HOLDING'
+    ]);
+
+    expect(constrained.flags).toContain('USD_SHOULD_BE_CASH_NOT_HOLDING');
+    expect(constrained.isValid).toBe(true);
+  });
 });

@@ -140,26 +140,95 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     idempotent: true
   },
   {
+    name: 'fact_check',
+    description:
+      'Use when the user asks to verify, double-check, or fact-check a price or market data claim. ' +
+      'Compares Ghostfolio (primary) with CoinGecko (second source) for crypto symbols and returns match/mismatch with provenance. ' +
+      'Good for: "verify bitcoin price", "fact check the price of ETH", "confirm current price of solana". ' +
+      'Stocks have no second source; tool reports "no second source" for non-crypto.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        ...COMMON_INPUT.properties,
+        symbols: { type: 'array', description: 'Optional symbol names or tickers to verify (e.g. ["bitcoin"], ["ETH"])' }
+      },
+      required: ['message']
+    },
+    output_schema: {
+      type: 'object',
+      description: 'Fact-check result: match, primary and secondary data, discrepancy if any, sources',
+      properties: {
+        match: { type: 'boolean', description: 'True when primary and secondary prices agree within tolerance (or no second source)' },
+        primary: { type: 'object', description: 'Primary result from Ghostfolio (symbols with prices)' },
+        secondary: { type: 'object', description: 'Secondary result from CoinGecko or null' },
+        discrepancy: { type: 'string', description: 'Human-readable discrepancy when match is false' },
+        comparisons: { type: 'array', description: 'Per-symbol comparison details' },
+        answer: { type: 'string', description: 'Natural-language verdict' },
+        sources: { type: 'array', description: 'Source identifiers (ghostfolio_api, coingecko)' },
+        data_as_of: { type: 'string', description: 'ISO timestamp' },
+        summary: { type: 'string', description: 'Short summary' }
+      }
+    },
+    error_model: TOOL_ERROR,
+    idempotent: true
+  },
+  {
     name: 'portfolio_analysis',
     description:
-      'Use when the user asks about their portfolio overview, allocation, performance, net worth, available balance, cash, or deposits. ' +
-      'Calls GET /portfolio/details and returns accounts (with balance per account), holdings (per-symbol allocation, performance, quantity, value), platforms (with balance), and a summary (total value, cash, net performance, fees, dividends). ' +
-      'Good for: "What is my balance?", "How much cash do I have?", "Available balance", "What did I deposit?", "How is my portfolio?", "What is my allocation?", "Show my performance", "What do I hold?". ' +
+      'Use when the user asks for portfolio performance trend, net performance, net worth, or high-level returns over time. ' +
+      'Calls GET /api/v2/portfolio/performance?range=max and returns normalized performance fields plus the raw chart/performance payload. ' +
+      'Good for: "How is my portfolio performing?", "Show performance over time", "What is my current net worth?", "What is my return?". ' +
+      'For holdings/allocation/cash breakdown, use holdings_analysis. ' +
       'Do NOT use to execute transactions or edit activities; use create_order (or create_other_activities) only for explicit execution requests.',
     input_schema: COMMON_INPUT,
     output_schema: {
       type: 'object',
-      description: 'PortfolioDetails: accounts, holdings map, summary, platforms; see GET /portfolio/details',
+      description: 'Portfolio performance payload from GET /api/v2/portfolio/performance?range=max',
+      properties: {
+        allocation: {
+          type: 'array',
+          description: 'Always empty for portfolio_analysis; use holdings_analysis for allocation'
+        },
+        performance: {
+          type: 'object',
+          description:
+            'Normalized performance values: netPerformance, netPerformancePercentage, totalValueInBaseCurrency, currentNetWorth'
+        },
+        data_as_of: { type: 'string', description: 'ISO timestamp of data' },
+        summary: { type: 'string', description: 'Short human-readable summary' },
+        sources: { type: 'array', description: 'Source identifiers, e.g. ghostfolio_api' },
+        data: {
+          type: 'object',
+          description: 'Raw GET /api/v2/portfolio/performance payload (chart, firstOrderDate, performance, errors)'
+        }
+      }
+    },
+    error_model: TOOL_ERROR,
+    idempotent: true
+  },
+  {
+    name: 'holdings_analysis',
+    description:
+      'Use when the user asks for holdings, allocation, cash vs investments, account balances, or platform balances. ' +
+      'Calls GET /api/v1/portfolio/holdings?range=max and returns allocation plus normalized holdings performance/cash fields. ' +
+      'Good for: "What do I hold?", "What is my allocation?", "How much cash do I have?", "Show account balances".',
+    input_schema: COMMON_INPUT,
+    output_schema: {
+      type: 'object',
+      description: 'Portfolio holdings payload from GET /api/v1/portfolio/holdings?range=max',
       properties: {
         allocation: { type: 'object', description: 'Normalized holdings allocation by symbol' },
-        performance: { type: 'object', description: 'Normalized summary performance (netPerformance, totalValueInBaseCurrency, etc.)' },
+        performance: {
+          type: 'object',
+          description: 'Normalized summary performance (netPerformance, totalValueInBaseCurrency, etc.)'
+        },
         data_as_of: { type: 'string', description: 'ISO timestamp of data' },
         summary: { type: 'string', description: 'Short human-readable summary' },
         sources: { type: 'array', description: 'Source identifiers, e.g. ghostfolio_api' },
         data: {
           type: 'object',
           description:
-            'Raw API response: accounts (balance, currency, name, valueInBaseCurrency per account), summary (cash, totalValueInBaseCurrency, netPerformance), platforms (balance per platform), holdings'
+            'Raw API response: accounts, summary, platforms, holdings'
         }
       }
     },
@@ -199,6 +268,51 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
         summary: { type: 'string', description: 'Short summary' },
         answer: { type: 'string', description: 'Natural-language answer for the user' },
         data_as_of: { type: 'string', description: 'ISO timestamp' },
+        sources: { type: 'array', description: 'Source identifiers' }
+      }
+    },
+    error_model: TOOL_ERROR,
+    idempotent: true
+  },
+  {
+    name: 'analyze_stock_trend',
+    description:
+      'Use when the user asks how a specific holding is doing over time (e.g. "how is my bitcoin doing", "BTC trend in last 7 days"). ' +
+      'Calls GET /api/v1/portfolio/holding/:dataSource/:symbol and analyzes historicalData for a selected timeline window (7d/30d/90d/1y/max). ' +
+      'Returns period change, high/low in window, and since-entry change vs averagePrice. ' +
+      'Good for: "trend for BTC", "how much did it grow last week", "show my BTC 30-day change".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        ...COMMON_INPUT.properties,
+        symbol: { type: 'string', description: 'Asset name or ticker, e.g. bitcoin, BTCUSD, AAPL' },
+        range: { type: 'string', description: 'Timeline window: 7d, 30d, 90d, 1y, max' }
+      },
+      required: ['message']
+    },
+    output_schema: {
+      type: 'object',
+      description: 'Holding trend analysis from GET /api/v1/portfolio/holding/:dataSource/:symbol',
+      properties: {
+        answer: { type: 'string', description: 'Natural-language trend analysis' },
+        summary: { type: 'string', description: 'Short trend summary' },
+        data_as_of: { type: 'string', description: 'ISO timestamp' },
+        range: { type: 'string', description: 'Resolved timeline window used for analysis' },
+        chart: {
+          type: 'object',
+          description: 'Normalized chart data for rendering: points[] with { date, price } and range'
+        },
+        performance: {
+          type: 'object',
+          description:
+            'Normalized performance metrics: currentPrice, periodChange, periodChangePercent, sinceEntryChange, sinceEntryChangePercent'
+        },
+        trend: {
+          type: 'object',
+          description:
+            'Computed metrics: currentPrice, periodChange, periodChangePercent, sinceEntryChange, sinceEntryChangePercent, windowHigh, windowLow'
+        },
+        data: { type: 'object', description: 'Raw holding payload including historicalData' },
         sources: { type: 'array', description: 'Source identifiers' }
       }
     },
@@ -493,8 +607,11 @@ export type RegisteredToolName = (typeof TOOL_DEFINITIONS)[number]['name'];
 /** Tool names the LLM can select (get_transactions is internal). */
 export const SELECTABLE_TOOL_NAMES: readonly AgentToolName[] = [
   'compliance_check',
+  'fact_check',
   'portfolio_analysis',
+  'holdings_analysis',
   'market_data',
+  'analyze_stock_trend',
   'market_data_lookup',
   'market_overview',
   'transaction_categorize',

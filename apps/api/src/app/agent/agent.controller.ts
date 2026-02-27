@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Headers, Param, Post, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  HttpCode,
+  Param,
+  Post,
+  Res
+} from '@nestjs/common';
 import type { Response } from 'express';
 
 import { AgentChatDto } from './agent-chat.dto';
@@ -25,6 +34,30 @@ export class AgentController {
       authorizationHeader ??
       (body.accessToken?.trim() ? `Bearer ${body.accessToken.trim()}` : undefined);
     return this.agentService.chat(body, token, impersonationId);
+  }
+
+  @Post('chat/clear')
+  @HttpCode(200)
+  public async clearConversation(
+    @Body() body: { conversationId: string },
+    @Headers('authorization') authorizationHeader?: string,
+    @Headers('impersonation-id') impersonationId?: string
+  ): Promise<{ ok: boolean }> {
+    return this.agentService.clearConversation(
+      body.conversationId,
+      authorizationHeader,
+      impersonationId
+    );
+  }
+
+  @Post('feedback')
+  @HttpCode(200)
+  public async feedback(
+    @Body() body: Record<string, unknown>,
+    @Headers('authorization') authorizationHeader?: string,
+    @Headers('impersonation-id') impersonationId?: string
+  ): Promise<Record<string, unknown>> {
+    return this.agentService.feedback(body, authorizationHeader, impersonationId);
   }
 
   @Get('widget/:asset')

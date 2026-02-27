@@ -116,4 +116,56 @@ describe('AgentService', () => {
     expect(result.contentType).toBe('text/javascript; charset=utf-8');
     expect(result.body.toString('utf8')).toContain('widget');
   });
+
+  it('forwards feedback payload to standalone agent service', async () => {
+    fetchMock.mockResolvedValue({
+      json: async () => ({ ok: true }),
+      ok: true
+    });
+
+    const service = new AgentService();
+    const result = await service.feedback(
+      {
+        answer: 'Assistant answer',
+        conversationId: 'conv-1',
+        rating: 'down'
+      },
+      'Bearer jwt-token'
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith('http://localhost:4444/feedback', {
+      body: JSON.stringify({
+        answer: 'Assistant answer',
+        conversationId: 'conv-1',
+        rating: 'down'
+      }),
+      headers: {
+        Authorization: 'Bearer jwt-token',
+        'Content-Type': 'application/json'
+      },
+      method: 'POST'
+    });
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('surfaces feedback upstream failure status and payload', async () => {
+    fetchMock.mockResolvedValue({
+      json: async () => ({ code: 'FEEDBACK_PERSIST_FAILED' }),
+      ok: false,
+      status: 503
+    });
+
+    const service = new AgentService();
+
+    await expect(
+      service.feedback({
+        answer: 'Assistant answer',
+        conversationId: 'conv-1',
+        rating: 'down'
+      })
+    ).rejects.toMatchObject({
+      response: { code: 'FEEDBACK_PERSIST_FAILED' },
+      status: 503
+    });
+  });
 });

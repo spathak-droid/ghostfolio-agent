@@ -29,9 +29,11 @@ export function applyDomainConstraints(
     intent === 'general'
       ? flags.filter((flag) => flag !== 'missing_provenance')
       : flags;
+  const nonFatalFlags = new Set<string>(['USD_SHOULD_BE_CASH_NOT_HOLDING']);
+  const fatalFlags = effectiveFlags.filter((flag) => !nonFatalFlags.has(flag));
 
   return {
     flags: effectiveFlags,
-    isValid: effectiveFlags.length === 0
+    isValid: fatalFlags.length === 0
   };
 }

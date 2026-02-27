@@ -4,6 +4,8 @@ import {
   AgentChatRequest,
   AgentChatResponse,
   AgentConversationMessage,
+  AgentFeedbackMemory,
+  AgentFeedbackMemoryProvider,
   AgentTraceStep,
   AgentTools
 } from './types';
@@ -27,6 +29,8 @@ import {
   normalizeOrderToolsForIntent,
   preventOrderReplayWithoutPending,
   prioritizeExecutionToolsForIntent,
+  sanitizeAnalyzeStockTrendForScope,
+  sanitizePortfolioHoldingsToolScope,
   sanitizeOrderToolsForNonOrderRequests,
   isOrderConfirmationMessage,
   hasPendingOrderClarification
@@ -67,11 +71,13 @@ const defaultContextManager = createDefaultContextManager();
 export function createAgent({
   contextManager = defaultContextManager,
   conversationStore = defaultConversationStore,
+  feedbackMemoryProvider,
   llm,
   tools
 }: {
   contextManager?: AgentContextManager;
   conversationStore?: AgentConversationStore;
+  feedbackMemoryProvider?: AgentFeedbackMemoryProvider;
   llm?: AgentLlm;
   tools: AgentTools;
 }) {
@@ -93,6 +99,9 @@ export function createAgent({
       type,
       wantsLatest
     }: AgentChatRequest): Promise<AgentChatResponse> => {
+      const chatStartedAt = Date.now();
+      let toolExecutionDurationMs = 0;
+      let synthesisDurationMs = 0;
       const persistedConversation = await safeGetConversation({
         conversationId,
         conversationStore
@@ -110,10 +119,14 @@ export function createAgent({
       );
       const conversation = [...persistedConversation];
       conversation.push({ content: message, role: 'user' });
-      const llmConversation = contextManager.buildContext({
+      const llmConversationBase = contextManager.buildContext({
         conversation,
         state: persistedState
       });
+      const errors: AgentChatResponse['errors'] = [];
+      const toolCalls: AgentChatResponse['toolCalls'] = [];
+      const trace: AgentTraceStep[] = [];
+      const llmConversation = llmConversationBase;
       const traceContext = createTraceContext({ conversationId, conversation, message });
 
       logger.debug('[agent.chat] START', {
@@ -122,30 +135,34 @@ export function createAgent({
         conversationLength: conversation.length
       });
 
-      const errors: AgentChatResponse['errors'] = [];
-      const toolCalls: AgentChatResponse['toolCalls'] = [];
-      const trace: AgentTraceStep[] = [];
-
+      const routeStartedAt = Date.now();
       const routeDecision = await decideRoute({
         conversation: llmConversation,
         llm,
         message,
         traceContext
       });
+      const routeDurationMs = Date.now() - routeStartedAt;
       const selectedTools = preventOrderReplayWithoutPending({
         message,
         pendingState: persistedState,
-        selectedTools: sanitizeOrderToolsForNonOrderRequests({
+        selectedTools: sanitizeAnalyzeStockTrendForScope({
           message,
-          pendingState: persistedState,
-          selectedTools: normalizeOrderToolsForIntent({
+          selectedTools: sanitizePortfolioHoldingsToolScope({
             message,
-            selectedTools: prioritizeExecutionToolsForIntent({
+            selectedTools: sanitizeOrderToolsForNonOrderRequests({
               message,
-              selectedTools: ensurePendingClarificationTool({
+              pendingState: persistedState,
+              selectedTools: normalizeOrderToolsForIntent({
                 message,
-                pendingState: persistedState,
-                selectedTools: routeDecision.tools
+                selectedTools: prioritizeExecutionToolsForIntent({
+                  message,
+                  selectedTools: ensurePendingClarificationTool({
+                    message,
+                    pendingState: persistedState,
+                    selectedTools: routeDecision.tools
+                  })
+                })
               })
             })
           })
@@ -155,19 +172,22 @@ export function createAgent({
 
       logger.debug('[agent.chat] ROUTE', {
         intent,
+        routeDurationMs,
         selectedTools,
+        selectedToolsCount: selectedTools.length,
         toolCount: selectedTools.length
       });
 
       trace.push({
         type: 'llm',
+        durationMs: routeDurationMs,
         name: 'route',
         input: { messagePreview: message.slice(0, 200), conversationLength: conversation.length },
         output: { intent, selectedTools }
       });
 
       if (selectedTools.length === 0) {
-        return handleNoToolRoute({
+        const noToolResponse = await handleNoToolRoute({
           conversation,
           conversationId,
           conversationStore,
@@ -182,6 +202,14 @@ export function createAgent({
           traceContext,
           treatAsOrderConfirmation: isOrderConfirmationMessage(message)
         });
+        logger.debug('[agent.chat] LATENCY', {
+          routeDurationMs,
+          selectedToolsCount: selectedTools.length,
+          synthesisDurationMs,
+          toolExecutionDurationMs,
+          totalDurationMs: Date.now() - chatStartedAt
+        });
+        return noToolResponse;
       }
 
       let latestCreateOrderParams: import('./types').CreateOrderParams | undefined =
@@ -189,6 +217,7 @@ export function createAgent({
       try {
         for (const tool of selectedTools) {
           if (isTransactionDependentTool(tool)) {
+            const transactionFlowStartedAt = Date.now();
             await runTransactionsDependentFlow({
               dateFrom,
               dateTo,
@@ -207,6 +236,15 @@ export function createAgent({
               type,
               wantsLatest
             });
+            const transactionFlowDurationMs = Date.now() - transactionFlowStartedAt;
+            toolExecutionDurationMs += transactionFlowDurationMs;
+            trace.push({
+              type: 'tool',
+              durationMs: transactionFlowDurationMs,
+              name: `${tool}_flow`,
+              input: { messagePreview: message.slice(0, 200) },
+              output: { status: 'completed' }
+            });
             continue;
           }
 
@@ -220,10 +258,18 @@ export function createAgent({
               try {
                 const getToolParametersForOrder = llm.getToolParametersForOrder;
                 if (getToolParametersForOrder) {
+                  const getToolParamsStartedAt = Date.now();
                   extracted = await withOperationTimeout({
                     operation: 'llm.get_tool_parameters_for_order',
                     task: () =>
                       getToolParametersForOrder(message, llmConversation, tool, traceContext)
+                  });
+                  trace.push({
+                    type: 'llm',
+                    durationMs: Date.now() - getToolParamsStartedAt,
+                    name: 'get_tool_parameters_for_order',
+                    input: { messagePreview: message.slice(0, 200), tool },
+                    output: { hasParams: Boolean(extracted) }
                   });
                 } else {
                   extracted = undefined;
@@ -263,6 +309,7 @@ export function createAgent({
               );
               latestCreateOrderParams = createOrderParams;
             }
+            const toolStartedAt = Date.now();
             const result = await executeTool({
               dateFrom,
               dateTo,
@@ -282,6 +329,8 @@ export function createAgent({
               wantsLatest,
               createOrderParams
             });
+            const toolDurationMs = Date.now() - toolStartedAt;
+            toolExecutionDurationMs += toolDurationMs;
             const reportedFailure = getReportedToolFailure(result);
             if (reportedFailure) {
               errors.push({
@@ -295,12 +344,13 @@ export function createAgent({
                 error: reportedFailure.message
               });
               toolCalls.push({
-                result: { reason: 'tool_failure' },
+                result: { reason: 'tool_failure', errorMessage: reportedFailure.message },
                 success: false,
                 toolName: tool
               });
               trace.push({
                 type: 'tool',
+                durationMs: toolDurationMs,
                 name: tool,
                 input: { messagePreview: message.slice(0, 200) },
                 output: { reason: 'tool_failure', error: reportedFailure.message }
@@ -314,6 +364,7 @@ export function createAgent({
             });
             trace.push({
               type: 'tool',
+              durationMs: toolDurationMs,
               name: tool,
               input: { messagePreview: message.slice(0, 200) },
               output: result
@@ -347,7 +398,7 @@ export function createAgent({
             });
 
             toolCalls.push({
-              result: { reason: isTimeout ? 'tool_timeout' : 'tool_failure' },
+              result: { reason: isTimeout ? 'tool_timeout' : 'tool_failure', errorMessage: errMsg },
               success: false,
               toolName: tool
             });
@@ -389,34 +440,32 @@ export function createAgent({
               response: timeoutResponse,
               toolCalls
             });
+            logger.debug('[agent.chat] LATENCY', {
+              routeDurationMs,
+              selectedToolsCount: selectedTools.length,
+              synthesisDurationMs,
+              toolExecutionDurationMs,
+              totalDurationMs: Date.now() - chatStartedAt
+            });
             return timeoutResponse;
           }
-          if (llm) {
-          return finalizeDirectResponse({
-            conversation,
-            conversationId,
-            conversationStore,
-            draftCreateOrderParams: latestCreateOrderParams,
-            errors,
-            hasCriticalFlags: true,
-            llm,
-            llmConversation,
-            message,
-            previousState: persistedState,
-            toolCalls,
-            trace,
-            traceContext,
-            verificationFlags: ['tool_failure']
-          });
-          }
-
           const authFailure = errors.some(({ message: errorMessage }) =>
             /Ghostfolio API request failed: (401|403)/.test(errorMessage)
           );
+          const apiFailure = errors.some(({ message: errorMessage }) =>
+            /Ghostfolio API request failed: \d{3}/.test(errorMessage) ||
+            errorMessage.includes('GHOSTFOLIO_')
+          );
+          const firstToolError =
+            errors.find(({ code }) => code === 'TOOL_EXECUTION_FAILED')?.message ??
+            'I could not complete the request because all selected tools failed. Please retry.';
+          const sanitizedToolError = sanitizeToolErrorMessage(firstToolError);
           const failureAnswer =
             authFailure
               ? 'I could not access your Ghostfolio data because authentication failed. Please sign in again and retry.'
-              : 'I could not complete the request because all selected tools failed. Please retry.';
+              : apiFailure
+                ? 'I could not fetch data from the Ghostfolio API right now. Please retry.'
+                : sanitizedToolError;
           const failureResponse = buildToolFailureResponse({
             answer: failureAnswer,
             conversation,
@@ -431,11 +480,18 @@ export function createAgent({
             response: failureResponse,
             toolCalls
           });
+          logger.debug('[agent.chat] LATENCY', {
+            routeDurationMs,
+            selectedToolsCount: selectedTools.length,
+            synthesisDurationMs,
+            toolExecutionDurationMs,
+            totalDurationMs: Date.now() - chatStartedAt
+          });
           return failureResponse;
         }
 
         if (!hasUsableToolData(toolCalls) && llm) {
-          return finalizeDirectResponse({
+          const directResponse = await finalizeDirectResponse({
             conversation,
             conversationId,
             conversationStore,
@@ -451,10 +507,48 @@ export function createAgent({
             traceContext,
             verificationFlags: ['tool_empty_result']
           });
+          logger.debug('[agent.chat] LATENCY', {
+            routeDurationMs,
+            selectedToolsCount: selectedTools.length,
+            synthesisDurationMs,
+            toolExecutionDurationMs,
+            totalDurationMs: Date.now() - chatStartedAt
+          });
+          return directResponse;
         }
 
+        let feedbackMemory: AgentFeedbackMemory | undefined;
+        if (feedbackMemoryProvider) {
+          try {
+            const toolSignature = toolCalls.map((call) => call.toolName).join('>');
+            feedbackMemory = await feedbackMemoryProvider.getForToolSignature(toolSignature);
+            if (feedbackMemory) {
+              trace.push({
+                type: 'llm',
+                name: 'feedback_memory_synthesis',
+                output: {
+                  doCount: feedbackMemory.do.length,
+                  dontCount: feedbackMemory.dont.length,
+                  sources: feedbackMemory.sources,
+                  synthesisIssueCount: feedbackMemory.synthesisIssues.length,
+                  toolIssueCount: feedbackMemory.toolIssues.length,
+                  toolSignature
+                }
+              });
+            }
+          } catch {
+            feedbackMemory = undefined;
+          }
+        }
+
+        const synthesizeStartedAt = Date.now();
         const synthesized = await traceable(
-          async (input: { existingFlags: string[]; toolCalls: AgentChatResponse['toolCalls'] }) =>
+          async (input: {
+            existingFlags: string[];
+            feedbackMemory?: AgentFeedbackMemory;
+            userMessage?: string;
+            toolCalls: AgentChatResponse['toolCalls'];
+          }) =>
             synthesizeToolResults(input),
           {
             metadata: buildTraceMetadata({
@@ -471,60 +565,35 @@ export function createAgent({
         )(
           {
           existingFlags: [],
+          feedbackMemory,
+          userMessage: message,
           toolCalls
           }
         );
+        synthesisDurationMs = Date.now() - synthesizeStartedAt;
 
         logger.debug('[agent.chat] SYNTHESIZED', {
           answerLength: synthesized.answer.length,
           answerPreview: synthesized.answer.slice(0, 400) + (synthesized.answer.length > 400 ? '...' : ''),
           flags: synthesized.flags,
+          synthesisDurationMs,
           toolCallCount: toolCalls.length
         });
 
         trace.push({
           type: 'llm',
+          durationMs: Date.now() - synthesizeStartedAt,
           name: 'synthesize',
           input: { messagePreview: message.slice(0, 200), toolCallCount: toolCalls.length },
           output: { answerPreview: synthesized.answer.slice(0, 500), flags: synthesized.flags }
         });
 
+        // synthesizeToolResults already extracts error messages into the output
+        // Just use the synthesized answer which includes the Tool errors section
         let baseAnswer = synthesized.answer;
         const clarification = getPreferredSingleToolAnswerFromToolCalls(toolCalls);
         if (clarification) {
           baseAnswer = clarification;
-        } else if (llm?.synthesizeFromToolResults) {
-            try {
-              const synthesizeFromToolResults = llm.synthesizeFromToolResults;
-              if (synthesizeFromToolResults) {
-                const llmAnswer = await withOperationTimeout({
-                  operation: 'llm.synthesize_from_tool_results',
-                  task: () =>
-                    synthesizeFromToolResults(message, llmConversation, synthesized.answer, traceContext)
-                });
-                if (typeof llmAnswer === 'string' && llmAnswer.trim().length > 0) {
-                  baseAnswer = llmAnswer.trim();
-                }
-              }
-            } catch (error) {
-              if (isTimeoutError(error)) {
-                errors.push({
-                  code: 'LLM_EXECUTION_TIMEOUT',
-                  message: 'llm.synthesize_from_tool_results timed out after 25 seconds',
-                  recoverable: true
-                });
-              } else {
-                errors.push({
-                  code: 'LLM_EXECUTION_FAILED',
-                  message:
-                    error instanceof Error
-                      ? error.message
-                      : 'llm.synthesize_from_tool_results failed',
-                  recoverable: true
-                });
-              }
-              baseAnswer = synthesized.answer;
-            }
         }
 
         const outputValidation = validateOutput(baseAnswer);
@@ -616,6 +685,13 @@ export function createAgent({
           answerPreview: response.answer.slice(0, 300) + (response.answer.length > 300 ? '...' : ''),
           verification: response.verification
         });
+        logger.debug('[agent.chat] LATENCY', {
+          routeDurationMs,
+          selectedToolsCount: selectedTools.length,
+          synthesisDurationMs,
+          toolExecutionDurationMs,
+          totalDurationMs: Date.now() - chatStartedAt
+        });
 
         return response as AgentChatResponse;
       } catch (error) {
@@ -635,7 +711,7 @@ export function createAgent({
         });
 
         toolCalls.push({
-          result: { reason: isTimeoutError(error) ? 'tool_timeout' : 'tool_failure' },
+          result: { reason: isTimeoutError(error) ? 'tool_timeout' : 'tool_failure', errorMessage: errMsg },
           success: false,
           toolName: selectedTools[0] ?? 'transaction_categorize'
         });
@@ -655,6 +731,13 @@ export function createAgent({
           response: failureResponse,
           toolCalls
         });
+        logger.debug('[agent.chat] LATENCY', {
+          routeDurationMs,
+          selectedToolsCount: selectedTools.length,
+          synthesisDurationMs,
+          toolExecutionDurationMs,
+          totalDurationMs: Date.now() - chatStartedAt
+        });
 
         return failureResponse;
       }
@@ -665,4 +748,8 @@ export function createAgent({
   return {
     chat: tracedChat
   };
+}
+
+function sanitizeToolErrorMessage(message: string): string {
+  return message.replace(/^TOOL_EXECUTION_(FAILED|TIMEOUT):\s*/i, '').trim();
 }

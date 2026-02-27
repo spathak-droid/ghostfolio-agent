@@ -182,12 +182,38 @@ export async function executeTool({
     );
   }
 
+  if (tool === 'holdings_analysis') {
+    return runToolWithTimeout(() =>
+      traceable(tools.holdingsAnalysis, {
+        name: `tool.holdings_analysis.turn_${traceContext.turnId}`,
+        run_type: 'tool'
+      })(runtimeTrace, { impersonationId, message, token })
+    );
+  }
+
   if (tool === 'market_data') {
     return runToolWithTimeout(() =>
       traceable(tools.marketData, {
         name: `tool.market_data.turn_${traceContext.turnId}`,
         run_type: 'tool'
       })(runtimeTrace, { impersonationId, message, metrics, symbols, token })
+    );
+  }
+
+  if (tool === 'analyze_stock_trend') {
+    if (!tools.analyzeStockTrend) {
+      return runToolWithTimeout(() =>
+        traceable(tools.marketData, {
+          name: `tool.market_data.turn_${traceContext.turnId}`,
+          run_type: 'tool'
+        })(runtimeTrace, { impersonationId, message, range, symbol, token })
+      );
+    }
+    return runToolWithTimeout(() =>
+      traceable(tools.analyzeStockTrend, {
+        name: `tool.analyze_stock_trend.turn_${traceContext.turnId}`,
+        run_type: 'tool'
+      })(runtimeTrace, { impersonationId, message, range, symbol, token })
     );
   }
 
@@ -287,6 +313,23 @@ export async function executeTool({
         name: `tool.get_orders.turn_${traceContext.turnId}`,
         run_type: 'tool'
       })(runtimeTrace, { impersonationId, message, token })
+    );
+  }
+
+  if (tool === 'fact_check') {
+    if (!tools.factCheck) {
+      return runToolWithTimeout(() =>
+        traceable(tools.marketData, {
+          name: `tool.market_data.turn_${traceContext.turnId}`,
+          run_type: 'tool'
+        })(runtimeTrace, { impersonationId, message, symbols, token })
+      );
+    }
+    return runToolWithTimeout(() =>
+      traceable(tools.factCheck, {
+        name: `tool.fact_check.turn_${traceContext.turnId}`,
+        run_type: 'tool'
+      })(runtimeTrace, { impersonationId, message, symbols, token })
     );
   }
 

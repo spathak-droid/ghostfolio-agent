@@ -1,5 +1,23 @@
-import { AgentToolName } from '../types';
 import { logger } from '../logger';
+import type { AgentFeedbackMemory, AgentToolName } from '../types';
+import {
+  buildDeterministicToolSummary,
+  enforceTransactionConsistency,
+  enrichNextStepsWithFeedback,
+  extractBalanceAndCashFindings,
+  extractComplianceFindings,
+  extractHoldingPerformerFindings,
+  extractPerformanceFindings,
+  extractPortfolioEvolutionFindings,
+  extractTopAllocation,
+  filterFindingsForUserIntent,
+  hasProvenance,
+  isObject,
+  isPortfolioLikeTool,
+  numberOrUndefined,
+  stringOrUndefined,
+  unwrapToolPayload
+} from './tool-result-synthesizer-helpers';
 
 export interface ToolExecutionResult {
   result: Record<string, unknown>;
@@ -9,20 +27,24 @@ export interface ToolExecutionResult {
 
 /**
  * Purpose: Build a coherent finance response from allowlisted tool payload fields.
- * Uses tool registry output_schema to prefer tool-provided fields (e.g. answer) when present.
  * Inputs: executed tool results and accumulated verification flags.
  * Outputs: structured natural-language synthesis and extra validation flags.
  * Failure modes: missing payload fields return conservative fallback text and flags.
  */
 export function synthesizeToolResults({
+  feedbackMemory,
   existingFlags,
+  userMessage,
   toolCalls
 }: {
+  feedbackMemory?: AgentFeedbackMemory;
   existingFlags: string[];
+  userMessage?: string;
   toolCalls: ToolExecutionResult[];
 }) {
   logger.debug('[agent.synthesize_tool_results] INPUT', {
     existingFlags,
+    hasFeedbackMemory: Boolean(feedbackMemory),
     toolCallCount: toolCalls.length,
     toolNames: toolCalls.map((c) => c.toolName),
     successCount: toolCalls.filter((c) => c.success).length
@@ -35,304 +57,166 @@ export function synthesizeToolResults({
   const dataAsOfValues: string[] = [];
   const missingDataPoints: string[] = [];
   const transactionListLines: string[] = [];
+  const toolErrors: { toolName: AgentToolName; message: string }[] = [];
   const flags = [...existingFlags];
 
   for (const call of toolCalls) {
     if (!call.success) {
-      risks.push(`Tool ${call.toolName} failed; results may be incomplete.`);
+      // Extract error message with fallback chain
+      let errorMessage: string;
+
+      if (typeof call.result?.errorMessage === 'string' && call.result.errorMessage.trim()) {
+        errorMessage = call.result.errorMessage.trim();
+      } else if (typeof call.result?.reason === 'string' && call.result.reason.trim()) {
+        errorMessage = `Tool ${call.toolName} returned: ${call.result.reason.trim()}`;
+      } else if (typeof call.result?.error === 'string' && call.result.error.trim()) {
+        errorMessage = `Tool ${call.toolName} returned: ${call.result.error.trim()}`;
+      } else if (isObject(call.result?.error) && typeof call.result.error.message === 'string') {
+        errorMessage = `Tool ${call.toolName} returned: ${call.result.error.message.trim()}`;
+      } else {
+        errorMessage = `Tool ${call.toolName} failed; results may be incomplete.`;
+      }
+
+      logger.debug('[agent.synthesize_tool_results] TOOL_FAILURE', {
+        toolName: call.toolName,
+        errorMessage: errorMessage.slice(0, 200)
+      });
+
       flags.push('tool_failure');
+      toolErrors.push({ toolName: call.toolName, message: errorMessage });
       continue;
     }
 
     const rawPayload = isObject(call.result) ? call.result : {};
     const payload = unwrapToolPayload(rawPayload);
-    const primarySummary = buildDeterministicToolSummary({
-      payload,
-      rawPayload,
-      toolName: call.toolName
-    });
+    collectPrimarySummary({ payload, rawPayload, toolName: call.toolName, summaryParts, risks, flags });
+    collectProvenanceAndMetadata({ payload, dataAsOfValues, flags, missingDataPoints, risks });
 
-    if (primarySummary) {
-      summaryParts.push(primarySummary);
-    } else {
-      risks.push(`Tool ${call.toolName} returned no summary.`);
-      flags.push('incomplete_tool_payload');
-    }
-
-    if (!hasProvenance(payload)) {
-      risks.push(`Tool ${call.toolName} is missing provenance fields (sources, data_as_of).`);
-      flags.push('missing_provenance');
-    }
-
-    const dataAsOf = stringOrUndefined(payload.data_as_of);
-    if (dataAsOf) {
-      dataAsOfValues.push(dataAsOf);
-    }
-
-    const missingData = payload.missing_data;
-    if (Array.isArray(missingData)) {
-      for (const item of missingData) {
-        if (typeof item === 'string' && item.trim().length > 0) {
-          missingDataPoints.push(item.trim());
-        }
-      }
-    }
-
-    if (call.toolName === 'portfolio_analysis') {
-      const usdRemoved = rawPayload.usd_removed_from_holdings === true;
-      if (usdRemoved) {
-        flags.push('USD_SHOULD_BE_CASH_NOT_HOLDING');
-      }
-      const topAllocation = extractTopAllocation(payload);
-      if (topAllocation.length > 0) {
-        keyFindings.push(`Top allocation: ${topAllocation.join(', ')}.`);
-      }
-
-      const performanceFindings = extractPerformanceFindings(payload);
-      keyFindings.push(...performanceFindings);
-
-      const balanceFindings = extractBalanceAndCashFindings(payload);
-      keyFindings.push(...balanceFindings);
-
-      nextSteps.push('Review position sizing against your target allocation and rebalance if needed.');
-    }
-
-    if (call.toolName === 'market_data') {
-      const symbols = payload.symbols;
-      if (Array.isArray(symbols) && symbols.length > 0) {
-        const entries = symbols
-          .slice(0, 5)
-          .map((item) => {
-            if (!isObject(item)) return undefined;
-            const sym = stringOrUndefined(item.symbol) ?? 'unknown';
-            const err =
-              stringOrUndefined(item.error) ??
-              (isObject(item.error) ? stringOrUndefined(item.error.message) : undefined);
-            if (err) return `${sym}: ${err}`;
-            const price = numberOrUndefined(item.currentPrice);
-            const currency = stringOrUndefined(item.currency) ?? '';
-            const pct1w = numberOrUndefined(item.changePercent1w);
-            const pct = numberOrUndefined(item.changePercent1m);
-            if (price !== undefined) {
-              if (pct1w !== undefined) {
-                return `${sym}: ${currency} ${price} (${pct1w >= 0 ? '+' : ''}${pct1w}% vs 1w ago)`;
-              }
-              return pct !== undefined
-                ? `${sym}: ${currency} ${price} (${pct >= 0 ? '+' : ''}${pct}% vs 1m ago)`
-                : `${sym}: ${currency} ${price}`;
-            }
-            return undefined;
-          })
-          .filter((s): s is string => Boolean(s));
-        if (entries.length > 0) {
-          keyFindings.push(`Market data: ${entries.join('; ')}.`);
-        }
-      }
-      nextSteps.push('Confirm price moves with your watchlist thresholds before trading.');
-    }
-
-    if (call.toolName === 'market_overview') {
-      const overview = payload.overview;
-      if (isObject(overview)) {
-        const stocks = isObject(overview.stocks) ? overview.stocks : undefined;
-        const crypto = isObject(overview.cryptocurrencies)
-          ? overview.cryptocurrencies
-          : undefined;
-        const stocksLabel = stringOrUndefined(stocks?.label);
-        const stocksValue = numberOrUndefined(stocks?.value);
-        const cryptoLabel = stringOrUndefined(crypto?.label);
-        const cryptoValue = numberOrUndefined(crypto?.value);
-        const parts: string[] = [];
-        if (stocksLabel || stocksValue !== undefined) {
-          parts.push(
-            `Stocks sentiment: ${stocksLabel ?? 'unknown'}${
-              stocksValue !== undefined ? ` (${stocksValue})` : ''
-            }`
-          );
-        }
-        if (cryptoLabel || cryptoValue !== undefined) {
-          parts.push(
-            `Crypto sentiment: ${cryptoLabel ?? 'unknown'}${
-              cryptoValue !== undefined ? ` (${cryptoValue})` : ''
-            }`
-          );
-        }
-        if (parts.length > 0) {
-          keyFindings.push(`Market overview: ${parts.join('; ')}.`);
-        }
-      }
-      nextSteps.push('Use sentiment as context only; confirm trend with price and breadth data.');
-    }
-
-    if (call.toolName === 'market_data_lookup') {
-      const prices = payload.prices;
-      if (Array.isArray(prices) && prices.length > 0) {
-        const entries = prices
-          .slice(0, 3)
-          .map((item) => {
-            if (!isObject(item)) {
-              return undefined;
-            }
-
-            const symbol = stringOrUndefined(item.symbol) ?? 'unknown';
-            const value = numberOrUndefined(item.value);
-            return value === undefined ? symbol : `${symbol} ${value}`;
-          })
-          .filter((item): item is string => Boolean(item));
-
-        if (entries.length > 0) {
-          keyFindings.push(`Latest prices: ${entries.join(', ')}.`);
-        }
-      }
-
-      nextSteps.push('Confirm price moves with your watchlist thresholds before trading.');
-    }
-
-    if (call.toolName === 'transaction_categorize') {
-      const categories = payload.categories;
-      if (Array.isArray(categories) && categories.length > 0) {
-        const entries = categories
-          .slice(0, 3)
-          .map((item) => {
-            if (!isObject(item)) {
-              return undefined;
-            }
-
-            const category = stringOrUndefined(item.category) ?? 'unknown';
-            const count = numberOrUndefined(item.count);
-            return count === undefined ? category : `${category} (${count})`;
-          })
-          .filter((item): item is string => Boolean(item));
-
-        if (entries.length > 0) {
-          keyFindings.push(`Transaction categories: ${entries.join(', ')}.`);
-        }
-      }
-
-      const patterns = isObject(payload.patterns) ? payload.patterns : undefined;
-      if (patterns) {
-        const patternParts: string[] = [];
-        const buySellRatio = numberOrUndefined(patterns.buySellRatio);
-        const activityTrend = numberOrUndefined(patterns.activityTrend30dVsPrev30dPercent);
-        const topSymbol = isObject(patterns.topSymbolByCount) ? patterns.topSymbolByCount : undefined;
-        const topSymbolName = stringOrUndefined(topSymbol?.symbol);
-        const topSymbolShare = numberOrUndefined(topSymbol?.sharePercent);
-        if (buySellRatio !== undefined) {
-          patternParts.push(`buy/sell ratio ${buySellRatio}`);
-        }
-        if (activityTrend !== undefined) {
-          patternParts.push(`30d activity trend ${activityTrend}%`);
-        }
-        if (topSymbolName) {
-          patternParts.push(
-            `top symbol ${topSymbolName}${topSymbolShare !== undefined ? ` (${topSymbolShare}%)` : ''}`
-          );
-        }
-        if (patternParts.length > 0) {
-          keyFindings.push(`Transaction patterns: ${patternParts.join(', ')}.`);
-        }
-      }
-
-      nextSteps.push('Validate uncategorized transactions and update category rules.');
-      enforceTransactionConsistency({
-        categories: payload.categories,
+    if (isPortfolioLikeTool(call.toolName)) {
+      collectPortfolioFindings({
         flags,
         keyFindings,
-        patterns: payload.patterns,
+        nextSteps,
+        payload,
+        rawPayload,
+        toolName: call.toolName
+      });
+    } else if (call.toolName === 'market_data') {
+      collectMarketDataFindings({ keyFindings, nextSteps, payload });
+    } else if (call.toolName === 'market_overview') {
+      collectMarketOverviewFindings({ keyFindings, nextSteps, payload });
+    } else if (call.toolName === 'market_data_lookup') {
+      collectMarketLookupFindings({ keyFindings, nextSteps, payload });
+    } else if (call.toolName === 'transaction_categorize') {
+      collectTransactionCategorizationFindings({
+        flags,
+        keyFindings,
+        nextSteps,
+        payload,
         risks
       });
-    }
-
-    if (call.toolName === 'transaction_timeline') {
-      const timeline = payload.timeline;
-      if (Array.isArray(timeline) && timeline.length > 0) {
-        // Key findings: first 3 for summary
-        const entries = timeline
-          .slice(0, 3)
-          .map((item) => {
-            if (!isObject(item)) {
-              return undefined;
-            }
-
-            const symbol = stringOrUndefined(item.symbol) ?? 'unknown';
-            const type = stringOrUndefined(item.type) ?? 'UNKNOWN';
-            const date = stringOrUndefined(item.date) ?? 'unknown-date';
-            const unitPrice = numberOrUndefined(item.unitPrice);
-            return unitPrice === undefined
-              ? `${symbol} ${type} on ${date}`
-              : `${symbol} ${type} on ${date} at ${unitPrice}`;
-          })
-          .filter((item): item is string => Boolean(item));
-
-        if (entries.length > 0) {
-          keyFindings.push(`Transaction timeline: ${entries.join(', ')}.`);
-        }
-
-        // Full list for LLM date filtering: one line per transaction, date first (YYYY-MM-DD)
-        for (const item of timeline) {
-          if (!isObject(item)) continue;
-          const date = stringOrUndefined(item.date) ?? '';
-          const symbol = stringOrUndefined(item.symbol) ?? 'unknown';
-          const type = stringOrUndefined(item.type) ?? 'UNKNOWN';
-          const qty = numberOrUndefined(item.quantity);
-          const unitPrice = numberOrUndefined(item.unitPrice);
-          const qtyStr = qty !== undefined ? String(qty) : '';
-          const priceStr = unitPrice !== undefined ? String(unitPrice) : '';
-          transactionListLines.push(`${date} | ${symbol} | ${type} | ${qtyStr} | ${priceStr}`);
-        }
+    } else if (call.toolName === 'transaction_timeline') {
+      collectTransactionTimelineFindings({
+        keyFindings,
+        nextSteps,
+        payload,
+        transactionListLines
+      });
+    } else if (call.toolName === 'compliance_check') {
+      collectComplianceFindings({ keyFindings, nextSteps, payload, risks });
+    } else if (call.toolName === 'fact_check') {
+      const answer = typeof payload.answer === 'string' ? payload.answer : '';
+      if (answer) keyFindings.push(answer);
+      if (payload.match === false) {
+        risks.push('Fact check reported a price discrepancy between Ghostfolio and second source.');
       }
-
-      nextSteps.push('Compare entry prices to current market prices before your next rebalance.');
-    }
-
-    if (call.toolName === 'compliance_check') {
-      const complianceFindings = extractComplianceFindings(payload);
-      keyFindings.push(
-        `Compliance check: ${complianceFindings.violations.length} violation(s), ${complianceFindings.warnings.length} warning(s).`
-      );
-      risks.push(...complianceFindings.violations);
-      if (complianceFindings.warnings.length > 0) {
-        risks.push(...complianceFindings.warnings);
-      }
-      nextSteps.push(
-        complianceFindings.violations.length > 0
-          ? 'Resolve compliance violations before executing this trade.'
-          : 'No blocking compliance issues found; validate assumptions before execution.'
-      );
     }
   }
 
   const dedupedFlags = [...new Set(flags)];
+  if (toolErrors.length > 0) {
+    risks.push('One or more tool calls failed. See Tool errors for details.');
+  }
   const summary = summaryParts.length > 0 ? summaryParts.join(' | ') : 'No reliable tool summary available.';
-  const findings = keyFindings.length > 0 ? keyFindings : ['No material findings from the returned tool payload.'];
+  const findings = filterFindingsForUserIntent({
+    findings: keyFindings.length > 0 ? keyFindings : ['No material findings from the returned tool payload.'],
+    toolCalls,
+    userMessage
+  });
+  const dedupedFindings = [...new Set(findings)];
   const riskLines = risks.length > 0 ? risks : ['No critical risks flagged by current checks.'];
-  const steps = nextSteps.length > 0 ? [...new Set(nextSteps)] : ['Provide more detail to refine analysis.'];
+  const directAnswer = buildDirectAnswer({
+    findings: dedupedFindings,
+    riskLines,
+    userMessage
+  });
+  const hasNoHoldingsFinding = dedupedFindings.some((line) =>
+    line.includes('No holdings found in portfolio.')
+  );
+  const steps = enrichNextStepsWithFeedback({
+    feedbackMemory,
+    fallbackSteps: hasNoHoldingsFinding
+      ? []
+      : ['Provide more detail to refine analysis.'],
+    nextSteps,
+    toolCalls
+  });
   const freshestDataAsOf =
     dataAsOfValues.length > 0
       ? [...new Set(dataAsOfValues)].sort((a, b) => (a < b ? 1 : a > b ? -1 : 0))[0]
       : undefined;
   const missingDataLine =
-    missingDataPoints.length > 0
-      ? [...new Set(missingDataPoints)].join(' | ')
-      : 'None.';
+    missingDataPoints.length > 0 ? [...new Set(missingDataPoints)].join(' | ') : 'None.';
+  const dataAsOfLines = formatDataAsOfLines(freshestDataAsOf);
+  const includeDataFreshnessSection = shouldIncludeDataFreshnessSection(freshestDataAsOf);
 
-  const sections: string[] = [
+  const sections: string[] = [];
+  if (directAnswer) {
+    sections.push(`Answer: ${directAnswer}`, '');
+  }
+  sections.push(
     `Summary: ${summary}`,
-    `Key findings: ${findings.join(' ')}`,
-    `Data as of: ${freshestDataAsOf ?? 'unknown'}`,
-    `Missing data: ${missingDataLine}`,
-    `Risks/flags: ${riskLines.join(' ')}`,
-    `Actionable next steps: ${steps.join(' ')}`
-  ];
+    '',
+    'Key findings:',
+    ...dedupedFindings.map((line) => `- ${line}`)
+  );
 
-  if (keyFindings.some((f) => f.includes('Holdings value') || f.includes('Cash (USD)'))) {
+  if (includeDataFreshnessSection) {
     sections.push(
-      'Portfolio vs cash (critical): Report holdings/investments separately from cash. Do not include cash in "portfolio" when describing allocation or holdings. State holdings value and Cash (USD) separately; e.g. "Your holdings are worth X. Cash (USD): Y. Total value: Z."'
+      '',
+      'Data as of:',
+      ...dataAsOfLines.map((line) => `- ${line}`),
+      `Missing data: ${missingDataLine}`
+    );
+  }
+
+  if (!hasNoHoldingsFinding) {
+    sections.push(
+      '',
+      'Risks/flags:',
+      ...riskLines.map((line) => `- ${line}`)
+    );
+  }
+
+  if (toolErrors.length > 0) {
+    sections.push(
+      '',
+      'Tool errors (ground your answer in these, do not speculate about portfolio state):',
+      ...toolErrors.map((error) => `- ${error.toolName}: ${error.message}`)
+    );
+  }
+
+  if (!hasNoHoldingsFinding && steps.length > 0) {
+    sections.push(
+      '',
+      'Actionable next steps:',
+      ...steps.map((line) => `- ${line}`)
     );
   }
 
   if (transactionListLines.length > 0) {
     sections.push(
+      '',
       'Transaction list (date | symbol | type | quantity | unitPrice — include in your answer only rows that match the user\'s requested time period):',
       ...transactionListLines
     );
@@ -352,357 +236,539 @@ export function synthesizeToolResults({
   };
 }
 
-function buildDeterministicToolSummary({
+function buildDirectAnswer({
+  findings,
+  riskLines,
+  userMessage
+}: {
+  findings: string[];
+  riskLines: string[];
+  userMessage?: string;
+}): string | undefined {
+  const normalizedMessage = (userMessage ?? '').toLowerCase();
+  const asksHoldingsStatus =
+    /\bhow\b.*\bholding(s)?\b.*\bdoing\b/.test(normalizedMessage) ||
+    /\bhow\b.*\bportfolio\b.*\bdoing\b/.test(normalizedMessage) ||
+    /\bany risk\b/.test(normalizedMessage) ||
+    /\brisk(s)?\b/.test(normalizedMessage);
+  const asksDiversification = /\b(diverse|diversity|diversified|concentrat)\b/.test(
+    normalizedMessage
+  );
+  if (!asksDiversification && !asksHoldingsStatus) {
+    return undefined;
+  }
+
+  if (findings.some((line) => line.includes('No holdings found in portfolio.'))) {
+    return asksDiversification
+      ? 'Your portfolio currently has no holdings, so diversification is not applicable yet.'
+      : 'Your portfolio currently has no holdings, so I cannot assess holding performance or risk yet.';
+  }
+
+  if (asksHoldingsStatus && !asksDiversification) {
+    const topAllocationLine = findings.find((line) => line.startsWith('Top allocation:'));
+    const statusLine = findings.find((line) => line.startsWith('Portfolio status:'));
+    const topPerformerLine = findings.find((line) => line.startsWith('Top performers:'));
+    const bottomPerformerLine = findings.find((line) => line.startsWith('Bottom performers:'));
+    const noCriticalRisk = riskLines.some((line) =>
+      line.toLowerCase().includes('no critical risks flagged')
+    );
+    const riskSummary = noCriticalRisk
+      ? 'No critical risks were flagged by current checks.'
+      : `Risk flags: ${riskLines
+          .filter((line) => !line.toLowerCase().includes('no critical risks flagged'))
+          .slice(0, 2)
+          .join(' | ')}.`;
+
+    const parts: string[] = [];
+    if (statusLine) {
+      parts.push(statusLine.replace(/^Portfolio status:\s*/i, 'Your holdings are '));
+    }
+    if (topAllocationLine) {
+      parts.push(
+        `Largest concentration is ${topAllocationLine.replace(/^Top allocation:\s*/i, '')}`
+      );
+    }
+    if (topPerformerLine) {
+      parts.push(topPerformerLine);
+    }
+    if (bottomPerformerLine) {
+      parts.push(bottomPerformerLine);
+    }
+    parts.push(riskSummary);
+    return parts.join(' ');
+  }
+
+  const topAllocationLine = findings.find((line) => line.startsWith('Top allocation:'));
+  if (!topAllocationLine) {
+    return 'I could not determine diversification from the available holdings data.';
+  }
+
+  const percentages = [...topAllocationLine.matchAll(/(\d+(?:\.\d+)?)%/g)].map((match) =>
+    Number(match[1])
+  );
+  if (percentages.length === 0) {
+    return 'I could not determine diversification from the available holdings data.';
+  }
+
+  const top1 = percentages[0] ?? 0;
+  const top3 = percentages.slice(0, 3).reduce((sum, value) => sum + value, 0);
+
+  if (top1 >= 50) {
+    return `Your portfolio is highly concentrated; your largest position is ${roundTwo(
+      top1
+    )}% and top 3 positions are ${roundTwo(top3)}%.`;
+  }
+  if (top1 >= 35) {
+    return `Your portfolio is concentrated; your largest position is ${roundTwo(
+      top1
+    )}% and top 3 positions are ${roundTwo(top3)}%.`;
+  }
+  if (top1 >= 20) {
+    return `Your portfolio is moderately concentrated; your largest position is ${roundTwo(
+      top1
+    )}% and top 3 positions are ${roundTwo(top3)}%.`;
+  }
+
+  return `Your portfolio appears fairly diversified; your largest position is ${roundTwo(
+    top1
+  )}% and top 3 positions are ${roundTwo(top3)}%.`;
+}
+
+function roundTwo(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function formatDataAsOfLines(dataAsOf?: string): string[] {
+  if (!dataAsOf) {
+    return ['Date: unknown', 'Time: unknown', 'Timezone: unknown'];
+  }
+
+  const isoPattern =
+    /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}(?:\.\d+)?)(Z|[+-]\d{2}:\d{2})$/;
+  const isoMatch = isoPattern.exec(dataAsOf);
+  if (isoMatch) {
+    return [
+      `Date: ${isoMatch[1]}`,
+      `Time: ${isoMatch[2]}`,
+      `Timezone: ${isoMatch[3]}`
+    ];
+  }
+
+  const parsed = new Date(dataAsOf);
+  if (Number.isNaN(parsed.getTime())) {
+    return [`Raw: ${dataAsOf}`];
+  }
+
+  return [
+    `Date: ${parsed.toISOString().slice(0, 10)}`,
+    `Time: ${parsed.toISOString().slice(11, 23)}`,
+    'Timezone: Z'
+  ];
+}
+
+function shouldIncludeDataFreshnessSection(dataAsOf?: string): boolean {
+  if (!dataAsOf) {
+    return true;
+  }
+
+  const parsed = new Date(dataAsOf);
+  if (Number.isNaN(parsed.getTime())) {
+    return true;
+  }
+
+  const todayUtc = new Date().toISOString().slice(0, 10);
+  const dataDateUtc = parsed.toISOString().slice(0, 10);
+  return dataDateUtc !== todayUtc;
+}
+
+function collectPrimarySummary({
   payload,
   rawPayload,
-  toolName
+  toolName,
+  summaryParts,
+  risks,
+  flags
 }: {
   payload: Record<string, unknown>;
   rawPayload: Record<string, unknown>;
   toolName: AgentToolName;
+  summaryParts: string[];
+  risks: string[];
+  flags: string[];
 }) {
-  if (toolName === 'portfolio_analysis') {
-    const allocation = Array.isArray(payload.allocation) ? payload.allocation : [];
-    const holdings = isObject(payload.holdings) ? payload.holdings : undefined;
-    const count =
-      allocation.length > 0
-        ? allocation.length
-        : holdings
-          ? Object.keys(holdings).filter((symbol) => symbol !== 'USD').length
-          : undefined;
-    return count === undefined
-      ? 'Portfolio analysis completed from structured portfolio payload.'
-      : `Portfolio analysis completed for ${count} holding(s).`;
+  const primarySummary = buildDeterministicToolSummary({ payload, rawPayload, toolName });
+  if (primarySummary) {
+    summaryParts.push(primarySummary);
+    return;
   }
-
-  if (toolName === 'market_data') {
-    const symbols = Array.isArray(payload.symbols) ? payload.symbols : [];
-    return `Market data returned for ${symbols.length} symbol(s).`;
-  }
-
-  if (toolName === 'market_overview') {
-    return 'Market overview returned sentiment snapshots for available asset classes.';
-  }
-
-  if (toolName === 'market_data_lookup') {
-    const prices = Array.isArray(payload.prices) ? payload.prices : [];
-    return `Market price lookup returned ${prices.length} price point(s).`;
-  }
-
-  if (toolName === 'transaction_categorize') {
-    const patterns = isObject(payload.patterns) ? payload.patterns : undefined;
-    const patternCount = numberOrUndefined(patterns?.totalTransactions);
-    const categoryCount = sumCategoryCount(payload.categories);
-    const total = patternCount ?? categoryCount;
-    return total === undefined
-      ? 'Transaction categorization completed from structured transaction payload.'
-      : `Categorized ${total} transactions.`;
-  }
-
-  if (toolName === 'transaction_timeline') {
-    const timeline = Array.isArray(payload.timeline) ? payload.timeline : [];
-    return `Transaction timeline returned ${timeline.length} event(s).`;
-  }
-
-  if (toolName === 'compliance_check') {
-    return 'Compliance check completed.';
-  }
-
-  return stringOrUndefined(rawPayload.summary) ?? stringOrUndefined(payload.summary);
+  risks.push(`Tool ${toolName} returned no summary.`);
+  flags.push('incomplete_tool_payload');
 }
 
-function extractComplianceFindings(payload: Record<string, unknown>): {
-  violations: string[];
-  warnings: string[];
-} {
-  const violations = normalizeComplianceItems(payload.violations, 'Violation');
-  const warnings = normalizeComplianceItems(payload.warnings, 'Warning');
-
-  return { violations, warnings };
-}
-
-function normalizeComplianceItems(items: unknown, label: 'Violation' | 'Warning'): string[] {
-  if (!Array.isArray(items)) {
-    return [];
-  }
-
-  return items
-    .map((item) => {
-      if (!isObject(item)) {
-        return undefined;
-      }
-      const ruleId = stringOrUndefined(item.rule_id) ?? 'unknown_rule';
-      const message = stringOrUndefined(item.message) ?? 'No details provided.';
-      return `${label} (${ruleId}): ${message}`;
-    })
-    .filter((entry): entry is string => Boolean(entry));
-}
-
-function sumCategoryCount(categories: unknown): number | undefined {
-  if (!Array.isArray(categories)) {
-    return undefined;
-  }
-
-  let total = 0;
-  let hasValue = false;
-  for (const item of categories) {
-    if (!isObject(item)) continue;
-    const count = numberOrUndefined(item.count);
-    if (count === undefined) continue;
-    total += count;
-    hasValue = true;
-  }
-
-  return hasValue ? total : undefined;
-}
-
-function enforceTransactionConsistency({
-  categories,
+function collectProvenanceAndMetadata({
+  payload,
+  dataAsOfValues,
   flags,
-  keyFindings,
-  patterns,
+  missingDataPoints,
   risks
 }: {
-  categories: unknown;
+  payload: Record<string, unknown>;
+  dataAsOfValues: string[];
   flags: string[];
-  keyFindings: string[];
-  patterns: unknown;
+  missingDataPoints: string[];
   risks: string[];
 }) {
-  const sellCount = resolveCategoryCount(categories, 'SELL');
-  const patternObject = isObject(patterns) ? patterns : undefined;
-  const ratio = numberOrUndefined(patternObject?.buySellRatio);
-
-  if (sellCount > 0 && ratio === undefined) {
-    flags.push('transaction_ratio_inconsistent');
-    risks.push('Structured transaction payload has SELL transactions but no buy/sell ratio.');
+  if (!hasProvenance(payload)) {
+    risks.push('Tool is missing provenance fields (sources, data_as_of).');
+    flags.push('missing_provenance');
   }
 
-  if (sellCount > 0) {
-    for (let i = 0; i < keyFindings.length; i++) {
-      keyFindings[i] = keyFindings[i].replace(/buy\/sell ratio unavailable[^,.]*/gi, '').trim();
+  const dataAsOf = stringOrUndefined(payload.data_as_of);
+  if (dataAsOf) {
+    dataAsOfValues.push(dataAsOf);
+  }
+
+  const missingData = payload.missing_data;
+  if (!Array.isArray(missingData)) {
+    return;
+  }
+  for (const item of missingData) {
+    if (typeof item === 'string' && item.trim().length > 0) {
+      missingDataPoints.push(item.trim());
     }
   }
 }
 
-function resolveCategoryCount(categories: unknown, type: string): number {
-  if (!Array.isArray(categories)) {
-    return 0;
+function collectPortfolioFindings({
+  flags,
+  keyFindings,
+  nextSteps,
+  payload,
+  rawPayload,
+  toolName
+}: {
+  flags: string[];
+  keyFindings: string[];
+  nextSteps: string[];
+  payload: Record<string, unknown>;
+  rawPayload: Record<string, unknown>;
+  toolName: AgentToolName;
+}) {
+  if (rawPayload.usd_removed_from_holdings === true) {
+    flags.push('USD_SHOULD_BE_CASH_NOT_HOLDING');
   }
 
-  for (const item of categories) {
-    if (!isObject(item)) continue;
-    const category = stringOrUndefined(item.category);
-    if (category !== type) continue;
-    const count = numberOrUndefined(item.count);
-    return count ?? 0;
+  if (toolName === 'holdings_analysis' && getNonCashHoldingState(payload) === 'empty') {
+    keyFindings.push('No holdings found in portfolio.');
+    return;
   }
 
-  return 0;
-}
-
-function hasProvenance(payload: Record<string, unknown>) {
-  const sources = payload.sources;
-  const source = payload.source;
-  const dataAsOf = payload.data_as_of;
-
-  const hasSources =
-    (Array.isArray(sources) && sources.length > 0) || typeof source === 'string';
-
-  return hasSources && typeof dataAsOf === 'string';
-}
-
-function unwrapToolPayload(payload: Record<string, unknown>) {
-  const nestedData = payload.data;
-
-  if (isObject(nestedData)) {
-    return {
-      ...payload,
-      ...nestedData
-    };
+  const topAllocation = extractTopAllocation(payload);
+  if (topAllocation.length > 0) {
+    keyFindings.push(`Top allocation: ${topAllocation.join(', ')}.`);
   }
 
-  return payload;
+  keyFindings.push(...extractPerformanceFindings(payload));
+  keyFindings.push(...extractBalanceAndCashFindings(payload));
+  keyFindings.push(...extractPortfolioEvolutionFindings(payload));
+  keyFindings.push(...extractHoldingPerformerFindings(payload));
+  nextSteps.push('Review position sizing against your target allocation and rebalance if needed.');
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function stringOrUndefined(value: unknown) {
-  return typeof value === 'string' ? value : undefined;
-}
-
-function numberOrUndefined(value: unknown) {
-  return typeof value === 'number' ? value : undefined;
-}
-
-function extractBalanceAndCashFindings(payload: Record<string, unknown>): string[] {
-  const findings: string[] = [];
-  const summary = payload.summary;
-  if (isObject(summary)) {
-    const cash = numberOrUndefined(summary.cash);
-    const totalValue = numberOrUndefined(summary.totalValueInBaseCurrency);
-    if (cash !== undefined && Number.isFinite(cash)) {
-      findings.push(`Cash (USD): ${roundToTwo(cash)}.`);
-    }
-    if (totalValue !== undefined && Number.isFinite(totalValue)) {
-      const holdingsOnly =
-        cash !== undefined && Number.isFinite(cash)
-          ? totalValue - cash
-          : totalValue;
-      findings.push(`Holdings value (investments only, excluding cash): ${roundToTwo(holdingsOnly)}.`);
-      findings.push(`Total value (holdings + cash): ${roundToTwo(totalValue)}.`);
-    } else if (cash === undefined || !Number.isFinite(cash)) {
-      if (totalValue !== undefined && Number.isFinite(totalValue)) {
-        findings.push(`Total portfolio value (base currency): ${roundToTwo(totalValue)}.`);
-      }
-    }
-  }
-  const accounts = payload.accounts;
-  if (isObject(accounts)) {
-    const entries = Object.entries(accounts)
-      .map(([, acc]) => {
-        if (!isObject(acc)) return undefined;
-        const name = stringOrUndefined(acc.name) ?? 'Account';
-        const balance = numberOrUndefined(acc.balance);
-        const currency = stringOrUndefined(acc.currency) ?? '';
-        const valueInBase = numberOrUndefined(acc.valueInBaseCurrency);
-        if (balance !== undefined && Number.isFinite(balance)) {
-          return `${name}: balance ${roundToTwo(balance)} ${currency}` +
-            (valueInBase !== undefined && Number.isFinite(valueInBase) ? ` (${roundToTwo(valueInBase)} base)` : '');
-        }
-        return undefined;
-      })
-      .filter((s): s is string => Boolean(s));
-    if (entries.length > 0) {
-      findings.push(`Account balances: ${entries.join('; ')}.`);
-    }
-  }
-  const platforms = payload.platforms;
-  if (isObject(platforms)) {
-    const entries = Object.entries(platforms)
-      .map(([, p]) => {
-        if (!isObject(p)) return undefined;
-        const name = stringOrUndefined(p.name) ?? 'Platform';
-        const balance = numberOrUndefined(p.balance);
-        const currency = stringOrUndefined(p.currency) ?? '';
-        if (balance !== undefined && Number.isFinite(balance)) {
-          return `${name}: ${roundToTwo(balance)} ${currency}`;
-        }
-        return undefined;
-      })
-      .filter((s): s is string => Boolean(s));
-    if (entries.length > 0) {
-      findings.push(`Platform balances: ${entries.join('; ')}.`);
-    }
-  }
-  return findings;
-}
-
-function extractTopAllocation(payload: Record<string, unknown>) {
-  const normalized = extractAllocationFromArray(payload.allocation);
-  if (normalized.length > 0) {
-    return normalized;
-  }
-
-  return extractAllocationFromHoldings(payload.holdings);
-}
-
-function extractAllocationFromArray(allocation: unknown) {
-  if (!Array.isArray(allocation)) {
-    return [];
-  }
-
-  return allocation
-    .slice(0, 3)
-    .map((item) => {
-      if (!isObject(item)) {
-        return undefined;
-      }
-
-      const symbol = stringOrUndefined(item.symbol) ?? 'unknown';
-      if (isCashSymbol(symbol)) {
-        return undefined;
-      }
+function getNonCashHoldingState(
+  payload: Record<string, unknown>
+): 'empty' | 'has_holdings' | 'unknown' {
+  let sawExplicitStructure = false;
+  const allocation = payload.allocation;
+  if (Array.isArray(allocation)) {
+    sawExplicitStructure = true;
+    const nonCashAllocation = allocation.some((item) => {
+      if (!isObject(item)) return false;
+      const symbol = stringOrUndefined(item.symbol);
       const percentage = numberOrUndefined(item.percentage);
-      return percentage === undefined ? symbol : `${symbol} ${percentage}%`;
-    })
-    .filter((item): item is string => Boolean(item));
-}
-
-function extractAllocationFromHoldings(holdings: unknown) {
-  if (!isObject(holdings)) {
-    return [];
+      if (!symbol || isCashSymbol(symbol)) return false;
+      return percentage === undefined || percentage > 0;
+    });
+    if (nonCashAllocation) return 'has_holdings';
   }
 
-  return Object.values(holdings)
-    .filter(isObject)
-    .map((holding) => {
-      const symbol = stringOrUndefined(holding.symbol) ?? 'unknown';
-      if (isCashSymbol(symbol)) {
-        return undefined;
-      }
-      const allocationShare = numberOrUndefined(holding.allocationInPercentage);
-      const percentage =
-        allocationShare === undefined ? undefined : roundToTwo(allocationShare * 100);
-      return percentage === undefined ? undefined : { percentage, symbol };
-    })
-    .filter((item): item is { percentage: number; symbol: string } => Boolean(item))
-    .sort((a, b) => b.percentage - a.percentage)
-    .slice(0, 3)
-    .map(({ percentage, symbol }) => `${symbol} ${percentage}%`);
-}
-
-function extractPerformanceFindings(payload: Record<string, unknown>) {
-  const findings: string[] = [];
-  const performanceSource = resolvePerformanceSource(payload);
-
-  if (!performanceSource) {
-    return findings;
+  const holdings = payload.holdings;
+  if (isObject(holdings)) {
+    sawExplicitStructure = true;
+    const hasFromHoldings = Object.values(holdings).some((item) => {
+      if (!isObject(item)) return false;
+      const symbol = stringOrUndefined(item.symbol);
+      if (!symbol || isCashSymbol(symbol)) return false;
+      const allocationShare = numberOrUndefined(item.allocationInPercentage);
+      const quantity = numberOrUndefined(item.quantity);
+      return (
+        (allocationShare !== undefined && allocationShare > 0) ||
+        (quantity !== undefined && quantity > 0)
+      );
+    });
+    if (hasFromHoldings) return 'has_holdings';
   }
 
-  const netPerformance = numberOrUndefined(performanceSource.netPerformance);
-  if (netPerformance !== undefined) {
-    findings.push(`Net performance: ${roundToTwo(netPerformance)}.`);
-    if (netPerformance > 0) {
-      findings.push('Portfolio status: in profit.');
-    } else if (netPerformance < 0) {
-      findings.push('Portfolio status: in loss.');
-    } else {
-      findings.push('Portfolio status: break-even.');
+  return sawExplicitStructure ? 'empty' : 'unknown';
+}
+
+function isCashSymbol(symbol: string): boolean {
+  const normalized = symbol.trim().toUpperCase();
+  return normalized === 'USD' || normalized === 'CASH';
+}
+
+function collectMarketDataFindings({
+  keyFindings,
+  nextSteps,
+  payload
+}: {
+  keyFindings: string[];
+  nextSteps: string[];
+  payload: Record<string, unknown>;
+}) {
+  const symbols = payload.symbols;
+  if (Array.isArray(symbols) && symbols.length > 0) {
+    const entries = symbols
+      .slice(0, 5)
+      .map((item) => formatMarketEntry(item))
+      .filter((s): s is string => Boolean(s));
+    if (entries.length > 0) {
+      keyFindings.push(`Market data: ${entries.join('; ')}.`);
+    }
+  }
+  nextSteps.push('Confirm price moves with your watchlist thresholds before trading.');
+}
+
+function formatMarketEntry(item: unknown): string | undefined {
+  if (!isObject(item)) return undefined;
+  const sym = stringOrUndefined(item.symbol) ?? 'unknown';
+  const err =
+    stringOrUndefined(item.error) ??
+    (isObject(item.error) ? stringOrUndefined(item.error.message) : undefined);
+  if (err) return `${sym}: ${err}`;
+  const price = numberOrUndefined(item.currentPrice);
+  const currency = stringOrUndefined(item.currency) ?? '';
+  if (price === undefined) return undefined;
+  const pct5d = numberOrUndefined(item.changePercent5d);
+  const pct1w = numberOrUndefined(item.changePercent1w);
+  const pct1m = numberOrUndefined(item.changePercent1m);
+  const pct1y = numberOrUndefined(item.changePercent1y);
+  if (pct5d !== undefined) return `${sym}: ${currency} ${price} (${withSign(pct5d)}% vs 5d ago)`;
+  if (pct1w !== undefined) return `${sym}: ${currency} ${price} (${withSign(pct1w)}% vs 1w ago)`;
+  if (pct1y !== undefined) return `${sym}: ${currency} ${price} (${withSign(pct1y)}% vs 1y ago)`;
+  if (pct1m !== undefined) return `${sym}: ${currency} ${price} (${withSign(pct1m)}% vs 1m ago)`;
+  return `${sym}: ${currency} ${price}`;
+}
+
+function withSign(value: number): string {
+  return `${value >= 0 ? '+' : ''}${value}`;
+}
+
+function collectMarketOverviewFindings({
+  keyFindings,
+  nextSteps,
+  payload
+}: {
+  keyFindings: string[];
+  nextSteps: string[];
+  payload: Record<string, unknown>;
+}) {
+  const overview = payload.overview;
+  if (isObject(overview)) {
+    const stocks = isObject(overview.stocks) ? overview.stocks : undefined;
+    const crypto = isObject(overview.cryptocurrencies) ? overview.cryptocurrencies : undefined;
+    const parts: string[] = [];
+    pushSentimentPart(parts, 'Stocks', stocks);
+    pushSentimentPart(parts, 'Crypto', crypto);
+    if (parts.length > 0) {
+      keyFindings.push(`Market overview: ${parts.join('; ')}.`);
+    }
+  }
+  nextSteps.push('Use sentiment as context only; confirm trend with price and breadth data.');
+}
+
+function pushSentimentPart(
+  parts: string[],
+  labelPrefix: 'Stocks' | 'Crypto',
+  entry: Record<string, unknown> | undefined
+) {
+  if (!entry) return;
+  const label = stringOrUndefined(entry.label);
+  const value = numberOrUndefined(entry.value);
+  if (!label && value === undefined) return;
+  parts.push(`${labelPrefix} sentiment: ${label ?? 'unknown'}${value !== undefined ? ` (${value})` : ''}`);
+}
+
+function collectMarketLookupFindings({
+  keyFindings,
+  nextSteps,
+  payload
+}: {
+  keyFindings: string[];
+  nextSteps: string[];
+  payload: Record<string, unknown>;
+}) {
+  const prices = payload.prices;
+  if (Array.isArray(prices) && prices.length > 0) {
+    const entries = prices
+      .slice(0, 3)
+      .map((item) => {
+        if (!isObject(item)) return undefined;
+        const symbol = stringOrUndefined(item.symbol) ?? 'unknown';
+        const value = numberOrUndefined(item.value);
+        return value === undefined ? symbol : `${symbol} ${value}`;
+      })
+      .filter((item): item is string => Boolean(item));
+    if (entries.length > 0) {
+      keyFindings.push(`Latest prices: ${entries.join(', ')}.`);
+    }
+  }
+  nextSteps.push('Confirm price moves with your watchlist thresholds before trading.');
+}
+
+function collectTransactionCategorizationFindings({
+  flags,
+  keyFindings,
+  nextSteps,
+  payload,
+  risks
+}: {
+  flags: string[];
+  keyFindings: string[];
+  nextSteps: string[];
+  payload: Record<string, unknown>;
+  risks: string[];
+}) {
+  const categories = payload.categories;
+  if (Array.isArray(categories) && categories.length > 0) {
+    const entries = categories
+      .slice(0, 3)
+      .map((item) => {
+        if (!isObject(item)) return undefined;
+        const category = stringOrUndefined(item.category) ?? 'unknown';
+        const count = numberOrUndefined(item.count);
+        return count === undefined ? category : `${category} (${count})`;
+      })
+      .filter((item): item is string => Boolean(item));
+    if (entries.length > 0) {
+      keyFindings.push(`Transaction categories: ${entries.join(', ')}.`);
     }
   }
 
-  const netPerformancePercentage = numberOrUndefined(
-    performanceSource.netPerformancePercentage
+  const patternLine = formatTransactionPatternLine(payload.patterns);
+  if (patternLine) {
+    keyFindings.push(patternLine);
+  }
+
+  nextSteps.push('Validate uncategorized transactions and update category rules.');
+  enforceTransactionConsistency({
+    categories: payload.categories,
+    flags,
+    keyFindings,
+    patterns: payload.patterns,
+    risks
+  });
+}
+
+function formatTransactionPatternLine(patterns: unknown): string | undefined {
+  const patternObject = isObject(patterns) ? patterns : undefined;
+  if (!patternObject) return undefined;
+  const parts: string[] = [];
+  const buySellRatio = numberOrUndefined(patternObject.buySellRatio);
+  if (buySellRatio !== undefined) parts.push(`buy/sell ratio ${buySellRatio}`);
+  const activityTrend = numberOrUndefined(patternObject.activityTrend30dVsPrev30dPercent);
+  if (activityTrend !== undefined) parts.push(`30d activity trend ${activityTrend}%`);
+  const topSymbol = isObject(patternObject.topSymbolByCount) ? patternObject.topSymbolByCount : undefined;
+  const topSymbolName = stringOrUndefined(topSymbol?.symbol);
+  const topSymbolShare = numberOrUndefined(topSymbol?.sharePercent);
+  if (topSymbolName) {
+    parts.push(`top symbol ${topSymbolName}${topSymbolShare !== undefined ? ` (${topSymbolShare}%)` : ''}`);
+  }
+  return parts.length > 0 ? `Transaction patterns: ${parts.join(', ')}.` : undefined;
+}
+
+function collectTransactionTimelineFindings({
+  keyFindings,
+  nextSteps,
+  payload,
+  transactionListLines
+}: {
+  keyFindings: string[];
+  nextSteps: string[];
+  payload: Record<string, unknown>;
+  transactionListLines: string[];
+}) {
+  const timeline = payload.timeline;
+  if (Array.isArray(timeline) && timeline.length > 0) {
+    const entries = timeline
+      .slice(0, 3)
+      .map((item) => formatTimelineSummaryLine(item))
+      .filter((item): item is string => Boolean(item));
+    if (entries.length > 0) {
+      keyFindings.push(`Transaction timeline: ${entries.join(', ')}.`);
+    }
+    for (const item of timeline) {
+      const fullLine = formatTimelineFullLine(item);
+      if (fullLine) {
+        transactionListLines.push(fullLine);
+      }
+    }
+  }
+  nextSteps.push('Compare entry prices to current market prices before your next rebalance.');
+}
+
+function formatTimelineSummaryLine(item: unknown): string | undefined {
+  if (!isObject(item)) return undefined;
+  const symbol = stringOrUndefined(item.symbol) ?? 'unknown';
+  const type = stringOrUndefined(item.type) ?? 'UNKNOWN';
+  const date = stringOrUndefined(item.date) ?? 'unknown-date';
+  const unitPrice = numberOrUndefined(item.unitPrice);
+  return unitPrice === undefined
+    ? `${symbol} ${type} on ${date}`
+    : `${symbol} ${type} on ${date} at ${unitPrice}`;
+}
+
+function formatTimelineFullLine(item: unknown): string | undefined {
+  if (!isObject(item)) return undefined;
+  const date = stringOrUndefined(item.date) ?? '';
+  const symbol = stringOrUndefined(item.symbol) ?? 'unknown';
+  const type = stringOrUndefined(item.type) ?? 'UNKNOWN';
+  const qty = numberOrUndefined(item.quantity);
+  const unitPrice = numberOrUndefined(item.unitPrice);
+  const qtyStr = qty !== undefined ? String(qty) : '';
+  const priceStr = unitPrice !== undefined ? String(unitPrice) : '';
+  return `${date} | ${symbol} | ${type} | ${qtyStr} | ${priceStr}`;
+}
+
+function collectComplianceFindings({
+  keyFindings,
+  nextSteps,
+  payload,
+  risks
+}: {
+  keyFindings: string[];
+  nextSteps: string[];
+  payload: Record<string, unknown>;
+  risks: string[];
+}) {
+  const complianceFindings = extractComplianceFindings(payload);
+  const blockingCount = complianceFindings.violations.length;
+  if (blockingCount > 0) {
+    keyFindings.push(
+      `No, you should not proceed yet because compliance check found ${blockingCount} blocking violation(s).`
+    );
+  } else {
+    keyFindings.push(
+      'Yes, there are no blocking compliance violations based on the available policy checks.'
+    );
+  }
+  keyFindings.push(
+    `Compliance check: ${blockingCount} violation(s), ${complianceFindings.warnings.length} warning(s).`
   );
-  if (netPerformancePercentage !== undefined) {
-    findings.push(`Net performance %: ${roundToTwo(netPerformancePercentage * 100)}%.`);
-  }
-
-  return findings;
-}
-
-function resolvePerformanceSource(payload: Record<string, unknown>) {
-  const performance = payload.performance;
-  if (isObject(performance)) {
-    return performance;
-  }
-
-  const summary = payload.summary;
-  if (isObject(summary)) {
-    return summary;
-  }
-
-  return undefined;
-}
-
-function roundToTwo(value: number) {
-  return Math.round(value * 100) / 100;
-}
-
-/** USD is CASH, not a holding. Exclude from allocation/holdings display. */
-function isCashSymbol(symbol: string): boolean {
-  return symbol.toUpperCase() === 'USD';
+  risks.push(...complianceFindings.violations, ...complianceFindings.warnings);
+  nextSteps.push(
+    complianceFindings.violations.length > 0
+      ? 'Resolve compliance violations before executing this trade.'
+      : 'No blocking compliance issues found; validate assumptions before execution.'
+  );
 }

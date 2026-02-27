@@ -116,15 +116,15 @@ function normalizeComplianceItems(items: unknown): string[] {
 
 export async function selectTools({
   conversation,
-  llm,
   message,
   traceContext
 }: {
   conversation: AgentConversationMessage[];
-  llm?: AgentLlm;
   message: string;
   traceContext: AgentTraceContext;
 }): Promise<AgentToolName[]> {
+  void conversation;
+  void traceContext;
   const inferred = selectToolsByKeyword(message);
   const allowOrderTools = isExplicitOrderExecutionIntent(message);
   const inferredWithoutNonExplicitOrders = allowOrderTools
@@ -133,28 +133,6 @@ export async function selectTools({
   if (classifyIntent(message) === 'general') {
     return [];
   }
-
-  if (llm) {
-    try {
-      const selected = await withOperationTimeout({
-        operation: 'llm.select_tool',
-        task: () => llm.selectTool(message, conversation, traceContext)
-      });
-
-      if (selected.tool === 'none') {
-        return inferredWithoutNonExplicitOrders;
-      }
-
-      const merged = [...new Set([selected.tool, ...inferredWithoutNonExplicitOrders])];
-      if (!allowOrderTools) {
-        return removeOrderTools(merged);
-      }
-      return merged;
-    } catch {
-      return inferredWithoutNonExplicitOrders;
-    }
-  }
-
   return inferredWithoutNonExplicitOrders;
 }
 
@@ -169,10 +147,14 @@ export async function decideRoute({
   message: string;
   traceContext: AgentTraceContext;
 }) {
+  const applyPriceFactCheckRouting = (tools: AgentToolName[]) =>
+    routePriceQueriesWithFactCheckChain({
+      message,
+      tools
+    });
   const inferredIntent = classifyIntent(message);
   const inferredTools = await selectTools({
     conversation,
-    llm,
     message,
     traceContext
   });
@@ -180,7 +162,7 @@ export async function decideRoute({
   if (!llm?.reasonAboutQuery) {
     return {
       intent: inferredIntent,
-      tools: inferredTools
+      tools: applyPriceFactCheckRouting(inferredTools)
     };
   }
 
@@ -199,16 +181,16 @@ export async function decideRoute({
 
     if (decision.mode === 'direct_reply') {
       if (inferredTools.includes('compliance_check')) {
-        return { intent: decision.intent, tools: inferredTools };
+        return { intent: decision.intent, tools: applyPriceFactCheckRouting(inferredTools) };
       }
       if (messageMatchesRetrievalPatterns(message) && inferredTools.length > 0) {
-        return { intent: decision.intent, tools: inferredTools };
+        return { intent: decision.intent, tools: applyPriceFactCheckRouting(inferredTools) };
       }
       const hasOrderTool = inferredTools.some(
         (t) => t === 'create_order' || t === 'create_other_activities'
       );
       if (hasOrderTool && isExplicitOrderExecutionIntent(message)) {
-        return { intent: decision.intent, tools: inferredTools };
+        return { intent: decision.intent, tools: applyPriceFactCheckRouting(inferredTools) };
       }
       return {
         intent: decision.intent,
@@ -219,27 +201,61 @@ export async function decideRoute({
     if (Array.isArray(decision.tools) && decision.tools.length > 0) {
       return {
         intent: decision.intent,
-        tools: [...new Set([...decision.tools, ...inferredTools])]
+        tools: applyPriceFactCheckRouting([...new Set([...decision.tools, ...inferredTools])])
       };
     }
 
     if (decision.tool && decision.tool !== 'none') {
       return {
         intent: decision.intent,
-        tools: [...new Set([decision.tool, ...inferredTools])]
+        tools: applyPriceFactCheckRouting([...new Set([decision.tool, ...inferredTools])])
       };
     }
   } catch {
     return {
       intent: inferredIntent,
-      tools: inferredTools
+      tools: applyPriceFactCheckRouting(inferredTools)
     };
   }
 
   return {
     intent: inferredIntent,
-    tools: inferredTools
+    tools: applyPriceFactCheckRouting(inferredTools)
   };
+}
+
+function routePriceQueriesWithFactCheckChain({
+  message,
+  tools
+}: {
+  message: string;
+  tools: AgentToolName[];
+}): AgentToolName[] {
+  if (!isPriceQuery(message)) {
+    return tools;
+  }
+
+  const withoutMarketDataAndFactCheck = tools.filter(
+    (tool) => tool !== 'market_data' && tool !== 'fact_check'
+  );
+  const hasMarketData = tools.includes('market_data');
+  const hasFactCheck = tools.includes('fact_check');
+
+  // Price flow should always be market_data first, then fact_check.
+  if (hasMarketData || hasFactCheck) {
+    return ['market_data', 'fact_check', ...withoutMarketDataAndFactCheck];
+  }
+
+  return tools;
+}
+
+function isPriceQuery(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    /\b(price|quote|current price|trading at|how much is|what is .* price)\b/.test(
+      normalized
+    ) || /\b[A-Z]{2,5}\b/.test(message)
+  );
 }
 
 export async function handleNoToolRoute({
@@ -276,10 +292,18 @@ export async function handleNoToolRoute({
     baseAnswer =
       'There is no pending order to confirm. Please share a new order request (symbol, buy/sell, and quantity).';
   } else if (llm) {
+    const answerStartedAt = Date.now();
     try {
       baseAnswer = await withOperationTimeout({
         operation: 'llm.answer_finance_question',
         task: () => llm.answerFinanceQuestion(message, llmConversation, traceContext)
+      });
+      trace.push({
+        type: 'llm',
+        durationMs: Date.now() - answerStartedAt,
+        name: 'answer',
+        input: { messagePreview: message.slice(0, 200) },
+        output: { answerPreview: baseAnswer.slice(0, 500) }
       });
     } catch (error) {
       if (isTimeoutError(error)) {
@@ -304,14 +328,28 @@ export async function handleNoToolRoute({
     }
   } else {
     baseAnswer = 'I can help with portfolio, market data, or transaction categorization questions.';
+    trace.push({
+      type: 'llm',
+      durationMs: 0,
+      name: 'answer',
+      input: { messagePreview: message.slice(0, 200) },
+      output: { answerPreview: baseAnswer.slice(0, 500) }
+    });
   }
 
-  trace.push({
-    type: 'llm',
-    name: 'answer',
-    input: { messagePreview: message.slice(0, 200) },
-    output: { answerPreview: baseAnswer.slice(0, 500) }
-  });
+  if (
+    trace.length === 0 ||
+    trace[trace.length - 1]?.type !== 'llm' ||
+    trace[trace.length - 1]?.name !== 'answer'
+  ) {
+    trace.push({
+      type: 'llm',
+      durationMs: 0,
+      name: 'answer',
+      input: { messagePreview: message.slice(0, 200) },
+      output: { answerPreview: baseAnswer.slice(0, 500) }
+    });
+  }
 
   const outputValidation = validateOutput(baseAnswer);
   const inputFlags = detectInputFlags(message);
@@ -386,6 +424,8 @@ export async function finalizeDirectResponse({
   verificationFlags: string[];
 }): Promise<AgentChatResponse> {
   let baseAnswer: string;
+  const answerStartedAt = Date.now();
+
   try {
     baseAnswer = await withOperationTimeout({
       operation: 'llm.answer_finance_question',
@@ -411,6 +451,7 @@ export async function finalizeDirectResponse({
   }
   trace.push({
     type: 'llm',
+    durationMs: Date.now() - answerStartedAt,
     name: 'answer',
     input: { messagePreview: message.slice(0, 200) },
     output: { answerPreview: baseAnswer.slice(0, 500) }

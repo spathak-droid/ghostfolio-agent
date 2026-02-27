@@ -82,6 +82,17 @@ export function createEvalTools(captures: ToolCapture[]): AgentTools {
         summary: 'Market data lookup from Ghostfolio API'
       });
     },
+    factCheck: async (inputOrRun, input) => {
+      track('fact_check', inputOrRun, input);
+      return buildResult({
+        match: true,
+        primary: { symbols: [{ symbol: 'bitcoin', currentPrice: 97000, currency: 'USD' }] },
+        secondary: { data: { bitcoin: { usd: 96950 } } },
+        answer: 'Fact check: prices match between Ghostfolio and CoinGecko within tolerance.',
+        sources: ['ghostfolio_api', 'coingecko'],
+        summary: 'Fact check: 1 symbol(s) verified; prices match.'
+      });
+    },
     marketOverview: async (inputOrRun, input) => {
       track('market_overview', inputOrRun, input);
       return buildResult({
@@ -96,8 +107,20 @@ export function createEvalTools(captures: ToolCapture[]): AgentTools {
     portfolioAnalysis: async (inputOrRun, input) => {
       track('portfolio_analysis', inputOrRun, input);
       return buildResult({
+        performance: {
+          currentNetWorth: 100000,
+          netPerformance: 2500,
+          netPerformancePercentage: 0.025,
+          totalValueInBaseCurrency: 95000
+        },
+        summary: 'Portfolio analysis from Ghostfolio performance data'
+      });
+    },
+    holdingsAnalysis: async (inputOrRun, input) => {
+      track('holdings_analysis', inputOrRun, input);
+      return buildResult({
         allocation: [{ percentage: 60, symbol: 'AAPL' }],
-        summary: 'Portfolio analysis from Ghostfolio data'
+        summary: 'Holdings analysis from Ghostfolio data'
       });
     },
     transactionCategorize: async (inputOrRun, input) => {
@@ -173,6 +196,11 @@ export function createTrackedTools(baseTools: AgentTools, captures: ToolCapture[
       track('get_transactions', inputOrRun, input);
       return baseTools.getTransactions(inputOrRun, input);
     },
+    factCheck: async (inputOrRun, input) => {
+      track('fact_check', inputOrRun, input);
+      if (baseTools.factCheck) return baseTools.factCheck(inputOrRun, input);
+      return { match: true, answer: 'Fact check not available.', summary: 'Fact check skipped.', sources: [] };
+    },
     marketData: async (inputOrRun, input) => {
       track('market_data', inputOrRun, input);
       return baseTools.marketData(inputOrRun, input);
@@ -190,6 +218,10 @@ export function createTrackedTools(baseTools: AgentTools, captures: ToolCapture[
     portfolioAnalysis: async (inputOrRun, input) => {
       track('portfolio_analysis', inputOrRun, input);
       return baseTools.portfolioAnalysis(inputOrRun, input);
+    },
+    holdingsAnalysis: async (inputOrRun, input) => {
+      track('holdings_analysis', inputOrRun, input);
+      return baseTools.holdingsAnalysis(inputOrRun, input);
     },
     transactionCategorize: async (inputOrRun, input) => {
       track('transaction_categorize', inputOrRun, input);
@@ -227,12 +259,7 @@ export function createEvalLlm(trace: LlmTrace): AgentLlm {
       }
       return { intent: 'finance', mode: 'tool_call', tool: 'none' };
     },
-    selectTool: async () => ({ tool: 'none' }),
-    synthesizeFromToolResults: async (...args) => {
-      const [, , toolSummary] = args;
-      trace.synthesisCalls += 1;
-      return toolSummary;
-    }
+    selectTool: async () => ({ tool: 'none' })
   };
 }
 

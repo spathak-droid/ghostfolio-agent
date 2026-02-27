@@ -13,10 +13,16 @@ export interface AgentToolCall {
     | 'compliance_check'
     | 'get_transactions'
     | 'market_data'
+    | 'analyze_stock_trend'
     | 'market_data_lookup'
+    | 'market_overview'
     | 'portfolio_analysis'
+    | 'holdings_analysis'
     | 'transaction_categorize'
-    | 'transaction_timeline';
+    | 'transaction_timeline'
+    | 'create_order'
+    | 'create_other_activities'
+    | 'get_orders';
   success: boolean;
   result: Record<string, unknown>;
 }

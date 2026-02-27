@@ -35,7 +35,7 @@ describe('eval checkDoc support', () => {
       captures: [],
       durationMs: 1,
       llm: undefined,
-      llmTrace: { answerCalls: 0, reasoningCalls: 0, synthesisCalls: 0 },
+      llmTrace: { answerCalls: 0, reasoningCalls: 0 },
       options: {},
       response: {
         answer: 'hi',

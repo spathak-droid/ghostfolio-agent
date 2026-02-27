@@ -4,9 +4,11 @@ import { createOrderTool } from '../tools/create-order';
 import { getOrdersTool } from '../tools/get-orders';
 import { getTransactionsTool } from '../tools/get-transactions';
 import { complianceCheckTool } from '../tools/compliance-check';
+import { factCheckTool } from '../tools/fact-check';
 import { marketDataLookupTool } from '../tools/market-data-lookup';
 import { marketDataTool } from '../tools/market-data';
 import { marketOverviewTool } from '../tools/market-overview';
+import { holdingsAnalysisTool } from '../tools/holdings-analysis';
 import { portfolioAnalysisTool } from '../tools/portfolio-analysis';
 import { transactionCategorizeTool } from '../tools/transaction-categorize';
 import { transactionTimelineTool } from '../tools/transaction-timeline';
@@ -51,6 +53,16 @@ export function createLiveEvalTools({
         llmFactExtractor: llm?.extractComplianceFacts,
         message,
         regulations
+      });
+    },
+    factCheck: (a, b) => {
+      const { impersonationId, message, symbols, token } = resolveToolInput(a, b);
+      return factCheckTool({
+        client,
+        impersonationId,
+        message,
+        symbols,
+        token
       });
     },
     createOrder: (a, b) => {
@@ -106,6 +118,15 @@ export function createLiveEvalTools({
     portfolioAnalysis: (a, b) => {
       const { impersonationId, message, token } = resolveToolInput(a, b);
       return portfolioAnalysisTool({
+        client,
+        impersonationId,
+        message,
+        token
+      });
+    },
+    holdingsAnalysis: (a, b) => {
+      const { impersonationId, message, token } = resolveToolInput(a, b);
+      return holdingsAnalysisTool({
         client,
         impersonationId,
         message,

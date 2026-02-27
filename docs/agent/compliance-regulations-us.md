@@ -112,6 +112,87 @@ Not legal advice.
       "requires": ["quote_is_fresh"],
       "message": "Quoted market data appears stale for a current trade decision; refresh prices before execution.",
       "source_url": "https://www.sec.gov/investor/pubs/tenthingstoconsider.htm"
+    },
+    {
+      "rule_id": "R-IRS-CAPITAL-GAINS",
+      "severity": "warning",
+      "applies_when": {
+        "capital_gains_topic": true
+      },
+      "message": "Capital gains treatment depends on holding period and tax lot details; confirm short-term vs long-term classification and Schedule D reporting assumptions.",
+      "source_url": "https://www.irs.gov/taxtopics/tc409"
+    },
+    {
+      "rule_id": "R-IRS-QUALIFIED-DIVIDENDS",
+      "severity": "warning",
+      "applies_when": {
+        "qualified_dividends_topic": true
+      },
+      "message": "Qualified dividend tax rates require holding-period and issuer eligibility checks; verify before applying preferential rates.",
+      "source_url": "https://www.irs.gov/taxtopics/tc404"
+    },
+    {
+      "rule_id": "R-IRS-TAX-LOSS-HARVESTING",
+      "severity": "warning",
+      "applies_when": {
+        "tax_loss_harvesting_topic": true
+      },
+      "message": "Tax-loss harvesting plans should verify wash-sale exposure and lot-level realization assumptions before execution.",
+      "source_url": "https://www.irs.gov/publications/p550"
+    },
+    {
+      "rule_id": "R-IRS-COST-BASIS",
+      "severity": "warning",
+      "applies_when": {
+        "cost_basis_topic": true
+      },
+      "message": "Cost basis method selection (e.g., specific identification vs FIFO) materially changes taxable gains/losses; verify method and records.",
+      "source_url": "https://www.irs.gov/taxtopics/tc703"
+    },
+    {
+      "rule_id": "R-IRS-IRA-LIMITS",
+      "severity": "warning",
+      "applies_when": {
+        "ira_contribution_limits_topic": true
+      },
+      "message": "IRA contribution limits and phase-out rules vary by filing status and income; validate annual eligibility before acting.",
+      "source_url": "https://www.irs.gov/retirement-plans/plan-participant-employee/retirement-topics-ira-contribution-limits"
+    },
+    {
+      "rule_id": "R-IRS-RMD",
+      "severity": "warning",
+      "applies_when": {
+        "required_minimum_distributions_topic": true
+      },
+      "message": "Required minimum distribution obligations depend on account type, age, and year-specific rules; verify applicable deadline and amount.",
+      "source_url": "https://www.irs.gov/retirement-plans/retirement-plan-and-ira-required-minimum-distributions-faqs"
+    },
+    {
+      "rule_id": "R-IRS-NIIT",
+      "severity": "warning",
+      "applies_when": {
+        "net_investment_income_tax_topic": true
+      },
+      "message": "Net Investment Income Tax (3.8%) applicability depends on modified AGI thresholds and investment income definition; validate NIIT exposure.",
+      "source_url": "https://www.irs.gov/individuals/net-investment-income-tax"
+    },
+    {
+      "rule_id": "R-IRS-AMT",
+      "severity": "warning",
+      "applies_when": {
+        "alternative_minimum_tax_topic": true
+      },
+      "message": "Alternative Minimum Tax treatment can differ from regular tax calculations; verify AMT applicability before estimating after-tax outcome.",
+      "source_url": "https://www.irs.gov/taxtopics/tc556"
+    },
+    {
+      "rule_id": "R-SEC-ETF-TAX-EFFICIENCY",
+      "severity": "warning",
+      "applies_when": {
+        "etf_tax_efficiency_topic": true
+      },
+      "message": "ETF tax efficiency claims are product- and account-dependent; confirm distribution and turnover characteristics before relying on tax assumptions.",
+      "source_url": "https://www.sec.gov/investor/pubs/sec-guide-to-etfs.htm"
     }
   ]
 }

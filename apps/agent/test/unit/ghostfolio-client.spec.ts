@@ -1,5 +1,6 @@
 import { GhostfolioClient } from '../../server/ghostfolio-client';
 import { GhostfolioApiError } from '../../server/ghostfolio-api-error';
+import { logger } from '../../server/logger';
 
 describe('GhostfolioClient', () => {
   const originalFetch = global.fetch;
@@ -50,8 +51,55 @@ describe('GhostfolioClient', () => {
     expect(typeof (result as Record<string, unknown>).createdAt).toBe('string');
   });
 
+  it('returns empty portfolio fallback when GET /portfolio/holdings returns 200 with empty body', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => ''
+    }) as unknown as typeof fetch;
+
+    const client = new GhostfolioClient('http://localhost:3333');
+    const result = await client.getPortfolioHoldings({ range: 'max', token: 'abc' });
+
+    expect(result).toMatchObject({
+      hasError: false,
+      accounts: {},
+      holdings: {},
+      platforms: {}
+    });
+    expect(typeof (result as Record<string, unknown>).createdAt).toBe('string');
+  });
+
+  it('fetches portfolio performance from /api/v2/portfolio/performance endpoint', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          chart: [{ date: '2026-02-26', netWorth: 123 }],
+          performance: { netPerformance: 10 }
+        })
+    }) as unknown as typeof fetch;
+
+    const client = new GhostfolioClient('http://localhost:3333');
+    const result = await client.getPortfolioPerformance({ range: 'max', token: 'abc' });
+
+    expect(result).toEqual({
+      chart: [{ date: '2026-02-26', netWorth: 123 }],
+      performance: { netPerformance: 10 }
+    });
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://localhost:3333/api/v2/portfolio/performance?range=max',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer abc'
+        })
+      })
+    );
+  });
+
   it('logs API call metadata for successful POST requests', async () => {
-    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    const debugSpy = jest.spyOn(logger, 'debug').mockImplementation(() => undefined);
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -72,11 +120,11 @@ describe('GhostfolioClient', () => {
       { token: 'abc' }
     );
 
-    expect(consoleSpy).toHaveBeenCalledWith(
+    expect(debugSpy).toHaveBeenCalledWith(
       '[ghostfolio-api]',
       expect.stringContaining('"method":"POST"')
     );
-    expect(consoleSpy).toHaveBeenCalledWith(
+    expect(debugSpy).toHaveBeenCalledWith(
       '[ghostfolio-api]',
       expect.stringContaining('"path":"/api/v1/order"')
     );

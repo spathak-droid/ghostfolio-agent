@@ -169,6 +169,37 @@ function normalizeExtractedFacts(
   if (typeof extractedFacts.concentration_risk === 'boolean') {
     normalized.concentration_risk = extractedFacts.concentration_risk;
   }
+  if (typeof extractedFacts.capital_gains_topic === 'boolean') {
+    normalized.capital_gains_topic = extractedFacts.capital_gains_topic;
+  }
+  if (typeof extractedFacts.qualified_dividends_topic === 'boolean') {
+    normalized.qualified_dividends_topic = extractedFacts.qualified_dividends_topic;
+  }
+  if (typeof extractedFacts.tax_loss_harvesting_topic === 'boolean') {
+    normalized.tax_loss_harvesting_topic = extractedFacts.tax_loss_harvesting_topic;
+  }
+  if (typeof extractedFacts.cost_basis_topic === 'boolean') {
+    normalized.cost_basis_topic = extractedFacts.cost_basis_topic;
+  }
+  if (typeof extractedFacts.ira_contribution_limits_topic === 'boolean') {
+    normalized.ira_contribution_limits_topic =
+      extractedFacts.ira_contribution_limits_topic;
+  }
+  if (typeof extractedFacts.required_minimum_distributions_topic === 'boolean') {
+    normalized.required_minimum_distributions_topic =
+      extractedFacts.required_minimum_distributions_topic;
+  }
+  if (typeof extractedFacts.net_investment_income_tax_topic === 'boolean') {
+    normalized.net_investment_income_tax_topic =
+      extractedFacts.net_investment_income_tax_topic;
+  }
+  if (typeof extractedFacts.alternative_minimum_tax_topic === 'boolean') {
+    normalized.alternative_minimum_tax_topic =
+      extractedFacts.alternative_minimum_tax_topic;
+  }
+  if (typeof extractedFacts.etf_tax_efficiency_topic === 'boolean') {
+    normalized.etf_tax_efficiency_topic = extractedFacts.etf_tax_efficiency_topic;
+  }
   if (typeof extractedFacts.constraints === 'boolean') {
     normalized.constraints = extractedFacts.constraints;
   }
@@ -268,24 +299,48 @@ function inferFacts({
     quoteDate !== undefined;
 
   return {
+    alternative_minimum_tax_topic:
+      /\b(amt|alternative minimum tax|form 6251)\b/.test(normalized),
+    capital_gains_topic:
+      /\b(capital gains?|short[- ]term gains?|long[- ]term gains?|schedule d)\b/.test(
+        normalized
+      ),
     concentration_risk:
       /\b(all (my|your) money|all-in|all in|100%|entire portfolio|one coin|single coin|single stock)\b/.test(
         normalized
       ),
     constraints:
       /\b(constraints?|restrict|restriction|no leverage|no options|no margin)\b/.test(normalized),
+    cost_basis_topic:
+      /\b(cost basis|basis method|fifo|lifo|average cost|specific identification)\b/.test(
+        normalized
+      ),
+    etf_tax_efficiency_topic:
+      /\b(etf tax|etf tax efficiency|in-kind creation|in-kind redemption)\b/.test(normalized),
     horizon:
       /\b(horizon|years?|months?|long term|short term)\b/.test(normalized),
+    ira_contribution_limits_topic:
+      /\b(ira contributions?|contribute to (my )?ira|ira limits?|traditional ira|roth ira)\b/.test(
+        normalized
+      ),
     is_recommendation:
       /\b(should i|recommend|what should i|advise me|buy or sell)\b/.test(normalized),
+    net_investment_income_tax_topic:
+      /\b(niit|net investment income tax|3\.8% surtax|form 8960)\b/.test(normalized),
     quote_is_fresh: quoteAgeDays === undefined ? undefined : quoteAgeDays <= 3,
     quote_staleness_check: quoteStalenessCheck,
+    qualified_dividends_topic:
+      /\b(qualified dividends?|dividend tax|topic 404)\b/.test(normalized),
+    required_minimum_distributions_topic:
+      /\b(required minimum distribution|rmd|publication 590-b)\b/.test(normalized),
     replacement_buy_signal:
       /\b(bought (it )?back|buy back|repurchase|re-bought|reentered)\b/.test(normalized),
     realized_pnl:
       /\bloss\b/.test(normalized) ? 'LOSS' : /\bgain\b/.test(normalized) ? 'GAIN' : undefined,
     risk_tolerance:
       /\b(risk tolerance|risk profile|conservative|moderate|aggressive)\b/.test(normalized),
+    tax_loss_harvesting_topic:
+      /\b(tax[- ]loss harvesting|harvest losses?|realize losses?)\b/.test(normalized),
     transaction_type: createOrderParams?.type ?? inferTransactionTypeFromMessage(normalized)
   };
 }
@@ -361,22 +416,40 @@ function buildComplianceNarrativeAnswer({
   warnings: ComplianceFinding[];
 }): string {
   if (violations.length > 0) {
-    const violationDetails = violations
-      .map(({ message, rule_id }) => `${rule_id}: ${message}`)
-      .join(' | ');
-    const warningDetails =
-      warnings.length > 0
-        ? ` Warnings: ${warnings.map(({ message, rule_id }) => `${rule_id}: ${message}`).join(' | ')}`
-        : '';
-    return `I ran a compliance check and found ${violations.length} blocking violation(s). You should not execute this trade yet. Violations: ${violationDetails}.${warningDetails}`;
+    const violationLines = violations.map(
+      ({ message, rule_id }) => `- ${rule_id}: ${message}`
+    );
+    const warningLines = warnings.map(({ message, rule_id }) => `- ${rule_id}: ${message}`);
+    const sections = [
+      `I ran a compliance check and found ${violations.length} blocking violation(s). You should not execute this trade yet.`,
+      '',
+      'Violations:',
+      ...violationLines
+    ];
+    if (warningLines.length > 0) {
+      sections.push('', 'Warnings:', ...warningLines);
+    }
+    sections.push('', 'Next step:', '- Resolve the blocking violations before executing this trade.');
+    return sections.join('\n');
   }
 
   if (warnings.length > 0) {
-    const warningDetails = warnings
-      .map(({ message, rule_id }) => `${rule_id}: ${message}`)
-      .join(' | ');
-    return `I ran a compliance check and found no blocking violations, but ${warnings.length} warning(s): ${warningDetails}.`;
+    const warningLines = warnings.map(({ message, rule_id }) => `- ${rule_id}: ${message}`);
+    return [
+      `I ran a compliance check and found no blocking violations, but ${warnings.length} warning(s).`,
+      '',
+      'Warnings:',
+      ...warningLines,
+      '',
+      'Next step:',
+      '- Review these warnings before executing the trade.'
+    ].join('\n');
   }
 
-  return 'I ran a compliance check and found no blocking violations or warnings.';
+  return [
+    'I ran a compliance check and found no blocking violations or warnings.',
+    '',
+    'Next step:',
+    '- You may proceed, but still verify position sizing and constraints.'
+  ].join('\n');
 }

@@ -1,4 +1,5 @@
 import { traceable } from 'langsmith/traceable';
+import { createHash } from 'crypto';
 
 import {
   AgentLlm,
@@ -15,12 +16,12 @@ import {
 } from './tools/tool-registry';
 import { logger } from './logger';
 import {
+  enforceFinanceScopeAnswer,
   enforceGreetingCapabilityAnswer,
   extractMessageContent,
   fallbackDirectAnswer,
   getUtcContext,
   isValidAbsoluteHttpUrl,
-  normalizeStructuredMarkdown,
   parseFlexibleNumber
 } from './openai-client-helpers';
 import {
@@ -28,6 +29,7 @@ import {
   parseToolSelection,
   runWithOptionalTrace
 } from './openai-client-runtime';
+import { createLlmCacheStoreFromEnv, type LlmCacheStore } from './llm-cache';
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -46,6 +48,8 @@ const TOOL_NAMES_FOR_PARSE: AgentToolName[] = [...SELECTABLE_TOOL_NAMES];
 
 export function createOpenAiClient({
   apiKey,
+  cache,
+  cacheTtlSeconds = {},
   model,
   modelFallbacks = {},
   models,
@@ -53,6 +57,8 @@ export function createOpenAiClient({
   toolDefinitions = getSelectableToolDefinitions()
 }: {
   apiKey: string;
+  cache?: LlmCacheStore;
+  cacheTtlSeconds?: Partial<Record<'extractComplianceFacts' | 'selectTool', number>>;
   model: string;
   modelFallbacks?: Partial<Record<'balanced' | 'fast' | 'premium', string[]>>;
   models?: Partial<Record<'balanced' | 'fast' | 'premium', string>>;
@@ -65,6 +71,10 @@ export function createOpenAiClient({
     balanced: models?.balanced ?? model,
     fast: models?.fast ?? model,
     premium: models?.premium ?? model
+  };
+  const effectiveCacheTtlSeconds = {
+    extractComplianceFacts: normalizePositiveInt(cacheTtlSeconds.extractComplianceFacts, 300),
+    selectTool: normalizePositiveInt(cacheTtlSeconds.selectTool, 120)
   };
 
   const callByTier = async ({
@@ -137,7 +147,10 @@ export function createOpenAiClient({
               ]
             });
             if (content) {
-              const normalizedContent = enforceGreetingCapabilityAnswer(message, content);
+              const normalizedContent = enforceFinanceScopeAnswer(
+                message,
+                enforceGreetingCapabilityAnswer(message, content)
+              );
               logger.debug('[llm.answer_finance_question] OUTPUT', {
                 resultLength: normalizedContent.length,
                 resultPreview:
@@ -160,7 +173,10 @@ export function createOpenAiClient({
               ]
             });
             if (retryContent) {
-              const normalizedRetryContent = enforceGreetingCapabilityAnswer(message, retryContent);
+              const normalizedRetryContent = enforceFinanceScopeAnswer(
+                message,
+                enforceGreetingCapabilityAnswer(message, retryContent)
+              );
               logger.debug('[llm.answer_finance_question] OUTPUT (retry)', {
                 resultLength: normalizedRetryContent.length,
                 resultPreview:
@@ -253,6 +269,20 @@ Return strict JSON with exactly these fields:
       return runWithOptionalTrace({
         fn: async () => {
           logger.debug('[llm.select_tool] INPUT', { message, conversationLength: conversation.length });
+          const conversationWindow = conversation.slice(-6);
+          const cacheKey = buildCacheKey({
+            message,
+            model: tierModels.fast,
+            operation: 'select_tool',
+            requestUrl,
+            toolNames: toolDefinitions.map((d) => d.name),
+            window: conversationWindow.map(({ content: c, role }) => ({ content: c, role }))
+          });
+          const cachedSelection = await getCachedJson<{ tool: AgentToolName | 'none' }>(cache, cacheKey);
+          if (cachedSelection) {
+            logger.debug('[llm.select_tool] CACHE_HIT', { cacheKey });
+            return cachedSelection;
+          }
           const { todayUtc, nowUtc } = getUtcContext();
           let content: string | undefined;
           try {
@@ -273,7 +303,7 @@ ${toolsDescription}
 Return strict JSON: {"tool":"${toolList}|none"}`,
                   role: 'system'
                 },
-                ...conversation.slice(-6).map(({ content: pastContent, role }) => ({
+                ...conversationWindow.map(({ content: pastContent, role }) => ({
                   content: pastContent,
                   role
                 })),
@@ -284,72 +314,11 @@ Return strict JSON: {"tool":"${toolList}|none"}`,
             return { tool: 'none' };
           }
           const selection = parseToolSelection(content, TOOL_NAMES_FOR_PARSE);
+          await setCachedJson(cache, cacheKey, selection, effectiveCacheTtlSeconds.selectTool);
           logger.debug('[llm.select_tool] OUTPUT', { rawContent: content?.slice(0, 150), tool: selection?.tool });
           return selection;
         },
         step: 'llm.select_tool',
-        traceContext
-      });
-    },
-    async synthesizeFromToolResults(message, conversation, toolSummary, traceContext) {
-      return runWithOptionalTrace({
-        fn: async () => {
-          logger.debug('[llm.synthesize_from_tool_results] INPUT', {
-            message,
-            toolSummaryLength: toolSummary.length,
-            toolSummaryPreview: toolSummary.slice(0, 600) + (toolSummary.length > 600 ? '...' : '')
-          });
-          const todayIso = new Date().toISOString().slice(0, 10);
-          const systemPrompt =
-            'You are a finance assistant. The user asked a question and we ran tools. Below is the structured output from those tools. ' +
-            'Turn it into a concise, natural reply that answers the user. Do not invent data. ' +
-            'Output format requirements (always follow): ' +
-            'Return plain text only (no markdown syntax). ' +
-            'Use section labels with ":" and line breaks. ' +
-            'Use "-" bullets for facts and metrics. ' +
-            'Use numbered items only for actionable next steps when there are at least two concrete steps. ' +
-            'Do not return one dense paragraph. ' +
-            'Use this section order when relevant: "Summary:", "Key Metrics:", "Breakdown:", "Risks & Gaps:", "Next Steps:". ' +
-            'Keep each bullet short and data-first (metric then value). Keep formatting clean with one blank line between sections. ' +
-            'Avoid heavy styling and avoid repeating the same number in multiple sections unless necessary. ' +
-            'For ordinary factual queries, keep to 2-5 bullets total and at most one short next-step bullet unless the user explicitly asks for a detailed plan. ' +
-            'Portfolio vs cash (critical): USD is cash, not a holding. When the tool output mentions holdings, allocation, or portfolio: report investments (holdings) only separately from Cash (USD). Do not describe "portfolio" as including cash in the same phrase. Use wording like: "Your holdings are worth X. Cash (USD): Y. Total value: Z." Never say "your portfolio has X in cash" or "portfolio has total value X with Y in cash"; instead say "Holdings: X. Cash (USD): Y. Total value: Z." ' +
-            'Add "Not financial advice." at the end only when your response could be construed as personalized investment advice or when you are uncertain; do not add it for simple factual answers (e.g. listing balances, transactions, or reporting data). ' +
-            'Respect the user\'s question: only include data that matches what they asked. ' +
-            'Time periods: Today\'s date is ' +
-            todayIso +
-            '. "Last year" means the previous calendar year (e.g. if today is 2026, last year = 2025). "This year" means the current calendar year. ' +
-            'If the user asked about a specific time period, include only transactions or facts whose date falls in that period; omit anything outside it. ' +
-            'When a "Transaction list" is provided, use only the rows whose date matches the user\'s requested period; ignore rows outside that period. ' +
-            'If they asked about a symbol or type (e.g. only buys), restrict your answer to that. Do not list or imply data that does not match the user\'s intent.';
-          const content = await callByTier({
-            tier: 'balanced',
-            traceContext,
-            requireJson: false,
-            messages: [
-              {
-                content: systemPrompt,
-                role: 'system'
-              },
-              ...conversation.slice(-6).map(({ content: pastContent, role }) => ({
-                content: pastContent,
-                role
-              })),
-              { content: message, role: 'user' },
-              {
-                content: `Tool output to summarize:\n${toolSummary}`,
-                role: 'user'
-              }
-            ]
-          });
-          const result = normalizeStructuredMarkdown(content ?? '');
-          logger.debug('[llm.synthesize_from_tool_results] OUTPUT', {
-            resultLength: result.length,
-            resultPreview: result.slice(0, 400) + (result.length > 400 ? '...' : '')
-          });
-          return result;
-        },
-        step: 'llm.synthesize_from_tool_results',
         traceContext
       });
     },
@@ -412,6 +381,17 @@ Return strict JSON: {"tool":"${toolList}|none"}`,
     async extractComplianceFacts(message, traceContext) {
       return runWithOptionalTrace({
         fn: async () => {
+          const cacheKey = buildCacheKey({
+            message,
+            model: tierModels.fast,
+            operation: 'extract_compliance_facts',
+            requestUrl
+          });
+          const cachedFacts = await getCachedJson<Partial<ComplianceFacts> | undefined>(cache, cacheKey);
+          if (cachedFacts) {
+            logger.debug('[llm.extract_compliance_facts] CACHE_HIT', { cacheKey });
+            return cachedFacts;
+          }
           const content = await callByTier({
             tier: 'fast',
             traceContext,
@@ -420,9 +400,12 @@ Return strict JSON: {"tool":"${toolList}|none"}`,
               {
                 content:
                   'Extract only compliance signal facts from the user message. Return strict JSON only with these keys: ' +
-                  '{"concentration_risk":boolean,"constraints":boolean,"horizon":boolean,"is_recommendation":boolean,' +
+                  '{"alternative_minimum_tax_topic":boolean,"capital_gains_topic":boolean,"concentration_risk":boolean,"constraints":boolean,' +
+                  '"cost_basis_topic":boolean,"etf_tax_efficiency_topic":boolean,"horizon":boolean,"ira_contribution_limits_topic":boolean,"is_recommendation":boolean,' +
+                  '"net_investment_income_tax_topic":boolean,' +
                   '"quote_is_fresh":boolean|null,"quote_staleness_check":boolean,"replacement_buy_signal":boolean,' +
-                  '"realized_pnl":"LOSS"|"GAIN"|null,"risk_tolerance":boolean,"transaction_type":"BUY"|"SELL"|null}. ' +
+                  '"qualified_dividends_topic":boolean,"required_minimum_distributions_topic":boolean,' +
+                  '"realized_pnl":"LOSS"|"GAIN"|null,"risk_tolerance":boolean,"tax_loss_harvesting_topic":boolean,"transaction_type":"BUY"|"SELL"|null}. ' +
                   'Do not add extra keys.',
                 role: 'system'
               },
@@ -434,12 +417,83 @@ Return strict JSON: {"tool":"${toolList}|none"}`,
           }
           try {
             const parsed = JSON.parse(content) as Record<string, unknown>;
-            return parseComplianceFacts(parsed);
+            const facts = parseComplianceFacts(parsed);
+            if (facts) {
+              await setCachedJson(
+                cache,
+                cacheKey,
+                facts,
+                effectiveCacheTtlSeconds.extractComplianceFacts
+              );
+            }
+            return facts;
           } catch {
             return undefined;
           }
         },
         step: 'llm.extract_compliance_facts',
+        traceContext
+      });
+    },
+    async synthesizeToolErrors(toolErrors, userMessage, traceContext) {
+      return runWithOptionalTrace({
+        fn: async () => {
+          logger.debug('[llm.synthesize_tool_errors] INPUT', {
+            toolErrorCount: toolErrors.length,
+            userMessage: userMessage.slice(0, 100),
+            toolNames: toolErrors.map((e) => e.toolName)
+          });
+
+          try {
+            const toolErrorList = toolErrors
+              .map((error) => `${error.toolName}: ${error.message}`)
+              .join('\n');
+
+            const content = await callByTier({
+              tier: 'fast',
+              traceContext,
+              requireJson: false,
+              messages: [
+                {
+                  content:
+                    'You are a finance AI assistant explaining tool failures to users. When given tool error messages, produce one concise sentence per error describing what failed and what the user should do. Trust error messages completely — do not speculate about portfolio state. If an asset is not found in the portfolio, say so clearly. Do not mention internal system details.',
+                  role: 'system'
+                },
+                {
+                  content: `The user asked: "${userMessage}"\n\nThese tools failed:\n${toolErrorList}\n\nProvide one concise sentence per error explaining what failed and what to do next.`,
+                  role: 'user'
+                }
+              ]
+            });
+
+            if (!content) {
+              logger.debug('[llm.synthesize_tool_errors] OUTPUT (empty)', {});
+              return '';
+            }
+
+            const normalized = extractMessageContent(content);
+            logger.debug('[llm.synthesize_tool_errors] OUTPUT', {
+              resultLength: normalized.length,
+              resultPreview: normalized.slice(0, 200)
+            });
+            return normalized;
+          } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            const code = (error as Error & { code?: string }).code;
+
+            logger.warn('[llm.synthesize_tool_errors] API_FAILED', {
+              errorCode: code,
+              errorMessage: errorMsg,
+              toolErrorCount: toolErrors.length
+            });
+
+            // Graceful fallback: return formatted tool errors without LLM synthesis
+            return toolErrors
+              .map((error) => `${error.toolName}: ${error.message}`)
+              .join('\n');
+          }
+        },
+        step: 'llm.synthesize_tool_errors',
         traceContext
       });
     }
@@ -448,23 +502,47 @@ Return strict JSON: {"tool":"${toolList}|none"}`,
 
 function parseComplianceFacts(input: Record<string, unknown>): Partial<ComplianceFacts> | undefined {
   const result: Partial<ComplianceFacts> = {};
+  if (typeof input.alternative_minimum_tax_topic === 'boolean') {
+    result.alternative_minimum_tax_topic = input.alternative_minimum_tax_topic;
+  }
+  if (typeof input.capital_gains_topic === 'boolean') {
+    result.capital_gains_topic = input.capital_gains_topic;
+  }
   if (typeof input.concentration_risk === 'boolean') {
     result.concentration_risk = input.concentration_risk;
   }
   if (typeof input.constraints === 'boolean') {
     result.constraints = input.constraints;
   }
+  if (typeof input.cost_basis_topic === 'boolean') {
+    result.cost_basis_topic = input.cost_basis_topic;
+  }
+  if (typeof input.etf_tax_efficiency_topic === 'boolean') {
+    result.etf_tax_efficiency_topic = input.etf_tax_efficiency_topic;
+  }
   if (typeof input.horizon === 'boolean') {
     result.horizon = input.horizon;
   }
+  if (typeof input.ira_contribution_limits_topic === 'boolean') {
+    result.ira_contribution_limits_topic = input.ira_contribution_limits_topic;
+  }
   if (typeof input.is_recommendation === 'boolean') {
     result.is_recommendation = input.is_recommendation;
+  }
+  if (typeof input.net_investment_income_tax_topic === 'boolean') {
+    result.net_investment_income_tax_topic = input.net_investment_income_tax_topic;
   }
   if (typeof input.quote_is_fresh === 'boolean') {
     result.quote_is_fresh = input.quote_is_fresh;
   }
   if (typeof input.quote_staleness_check === 'boolean') {
     result.quote_staleness_check = input.quote_staleness_check;
+  }
+  if (typeof input.qualified_dividends_topic === 'boolean') {
+    result.qualified_dividends_topic = input.qualified_dividends_topic;
+  }
+  if (typeof input.required_minimum_distributions_topic === 'boolean') {
+    result.required_minimum_distributions_topic = input.required_minimum_distributions_topic;
   }
   if (typeof input.replacement_buy_signal === 'boolean') {
     result.replacement_buy_signal = input.replacement_buy_signal;
@@ -475,11 +553,79 @@ function parseComplianceFacts(input: Record<string, unknown>): Partial<Complianc
   if (typeof input.risk_tolerance === 'boolean') {
     result.risk_tolerance = input.risk_tolerance;
   }
+  if (typeof input.tax_loss_harvesting_topic === 'boolean') {
+    result.tax_loss_harvesting_topic = input.tax_loss_harvesting_topic;
+  }
   if (input.transaction_type === 'BUY' || input.transaction_type === 'SELL') {
     result.transaction_type = input.transaction_type;
   }
 
   return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function normalizePositiveInt(value: number | undefined, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
+  }
+  return fallback;
+}
+
+function normalizeText(input: string): string {
+  return input.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function buildCacheKey({
+  message,
+  model,
+  operation,
+  requestUrl,
+  toolNames,
+  window
+}: {
+  message: string;
+  model: string;
+  operation: 'extract_compliance_facts' | 'select_tool';
+  requestUrl: string;
+  toolNames?: string[];
+  window?: { content: string; role: 'assistant' | 'user' }[];
+}): string {
+  const payload = {
+    message: normalizeText(message),
+    model,
+    operation,
+    requestUrl,
+    toolNames: toolNames?.slice().sort(),
+    window: window?.map(({ content, role }) => ({ content: normalizeText(content), role }))
+  };
+  const digest = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+  return `llm_cache:${operation}:${digest}`;
+}
+
+async function getCachedJson<T>(cache: LlmCacheStore | undefined, key: string): Promise<T | undefined> {
+  if (!cache) return undefined;
+  try {
+    const value = await cache.get(key);
+    if (typeof value !== 'string' || value.length === 0) {
+      return undefined;
+    }
+    return JSON.parse(value) as T;
+  } catch {
+    return undefined;
+  }
+}
+
+async function setCachedJson(
+  cache: LlmCacheStore | undefined,
+  key: string,
+  value: unknown,
+  ttlSeconds: number
+): Promise<void> {
+  if (!cache) return;
+  try {
+    await cache.set(key, JSON.stringify(value), ttlSeconds);
+  } catch {
+    // Ignore cache write errors to keep LLM path fail-open.
+  }
 }
 
 async function callOpenAi({
@@ -672,6 +818,10 @@ export function createOpenAiClientFromEnv(): AgentLlm | undefined {
       ? configuredOpenRouterUrl
       : OPENROUTER_URL;
   const requestUrl = usingOpenRouter ? openRouterRequestUrl : OPENAI_URL;
+  const cache = createLlmCacheStoreFromEnv({
+    enabled: process.env.AGENT_LLM_CACHE_ENABLED === 'true',
+    redisUrl: process.env.AGENT_LLM_CACHE_REDIS_URL ?? process.env.AGENT_REDIS_URL ?? process.env.REDIS_URL
+  });
 
   if (!apiKey) {
     return undefined;
@@ -689,6 +839,14 @@ export function createOpenAiClientFromEnv(): AgentLlm | undefined {
 
   return createOpenAiClient({
     apiKey,
+    cache,
+    cacheTtlSeconds: {
+      extractComplianceFacts: parseInt(
+        process.env.AGENT_LLM_CACHE_TTL_EXTRACT_COMPLIANCE_FACTS_SEC ?? '300',
+        10
+      ),
+      selectTool: parseInt(process.env.AGENT_LLM_CACHE_TTL_SELECT_TOOL_SEC ?? '120', 10)
+    },
     model,
     modelFallbacks,
     models,

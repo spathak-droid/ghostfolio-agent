@@ -51,6 +51,51 @@ export function enforceGreetingCapabilityAnswer(message: string, answer: string)
   return fallbackDirectAnswer(message);
 }
 
+function isFinanceScopedMessage(message: string): boolean {
+  const normalized = message.toLowerCase();
+  const financeKeywords = [
+    'finance',
+    'financial',
+    'portfolio',
+    'allocation',
+    'market',
+    'price',
+    'stock',
+    'crypto',
+    'bitcoin',
+    'transaction',
+    'buy',
+    'sell',
+    'holding',
+    'holdings',
+    'performance',
+    'return',
+    'invest',
+    'ticker',
+    'dividend',
+    'fee',
+    'interest',
+    'liability',
+    'loan',
+    'debt',
+    'balance'
+  ];
+
+  return financeKeywords.some((keyword) => normalized.includes(keyword));
+}
+
+export function enforceFinanceScopeAnswer(message: string, answer: string): string {
+  if (isGreetingMessage(message)) {
+    return enforceGreetingCapabilityAnswer(message, answer);
+  }
+
+  if (isFinanceScopedMessage(message)) {
+    return answer;
+  }
+
+  return fallbackDirectAnswer(message);
+}
+
 export function extractMessageContent(content: unknown): string | undefined {
   if (typeof content === 'string') {
     const trimmed = content.trim();

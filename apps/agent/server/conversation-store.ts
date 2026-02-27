@@ -27,6 +27,8 @@ export interface AgentConversationStore {
   setConversation(conversationId: string, conversation: AgentConversationMessage[]): Promise<void>;
   getState(conversationId: string): Promise<AgentWorkflowState | undefined>;
   setState(conversationId: string, state: AgentWorkflowState): Promise<void>;
+  /** Clears conversation messages and workflow state for this conversation (e.g. "new chat"). */
+  clearConversation(conversationId: string): Promise<void>;
 }
 
 export function createInMemoryConversationStore(): AgentConversationStore {
@@ -67,6 +69,10 @@ export function createInMemoryConversationStore(): AgentConversationStore {
         pinnedFacts: Array.isArray(state.pinnedFacts) ? [...state.pinnedFacts] : undefined,
         verificationFlags: [...state.verificationFlags]
       });
+    },
+    async clearConversation(conversationId: string) {
+      conversations.delete(conversationId);
+      states.delete(conversationId);
     }
   };
 }
@@ -100,6 +106,12 @@ export function createRedisConversationStore({
     },
     async setState(conversationId: string, state: AgentWorkflowState) {
       await keyv.set(stateKey(conversationId), state, effectiveTtlMs);
+    },
+    async clearConversation(conversationId: string) {
+      await Promise.all([
+        keyv.delete(conversationKey(conversationId)),
+        keyv.delete(stateKey(conversationId))
+      ]);
     }
   };
 }

@@ -7,6 +7,7 @@ function createTools(overrides: Partial<AgentTools> = {}): AgentTools {
     complianceCheck: jest.fn().mockResolvedValue({}),
     createOrder: jest.fn().mockResolvedValue({}),
     createOtherActivities: jest.fn().mockResolvedValue({}),
+    factCheck: jest.fn().mockResolvedValue({}),
     getOrders: jest.fn().mockResolvedValue({}),
     getTransactions: jest.fn().mockResolvedValue({
       data: {
@@ -33,6 +34,7 @@ function createTools(overrides: Partial<AgentTools> = {}): AgentTools {
     }),
     marketData: jest.fn().mockResolvedValue({}),
     marketDataLookup: jest.fn().mockResolvedValue({}),
+    holdingsAnalysis: jest.fn().mockResolvedValue({}),
     portfolioAnalysis: jest.fn().mockResolvedValue({}),
     transactionCategorize: jest.fn().mockResolvedValue({}),
     transactionTimeline: jest.fn().mockResolvedValue({
@@ -506,8 +508,7 @@ describe('agent tool params plumbing', () => {
         answerFinanceQuestion: jest.fn().mockResolvedValue('fallback'),
         getToolParametersForOrder,
         reasonAboutQuery,
-        selectTool: jest.fn().mockResolvedValue({ tool: 'none' }),
-        synthesizeFromToolResults: jest.fn().mockResolvedValue('Order created.')
+        selectTool: jest.fn().mockResolvedValue({ tool: 'none' })
       },
       tools
     });

@@ -373,10 +373,8 @@ function checkSafetyAndEdge(
   if (testCase.requireLlmSynthesis) {
     checks.push({
       dimension,
-      message: 'llm synthesis path was invoked',
-      passed:
-        llmTrace.synthesisCalls > 0 ||
-        trace.some((step) => step.type === 'llm' && step.name === 'synthesize')
+      message: 'synthesis path was invoked',
+      passed: trace.some((step) => step.type === 'llm' && step.name === 'synthesize')
     });
   }
 

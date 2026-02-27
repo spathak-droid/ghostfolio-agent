@@ -92,7 +92,6 @@ export interface ToolCapture {
 export interface LlmTrace {
   answerCalls: number;
   reasoningCalls: number;
-  synthesisCalls: number;
 }
 
 export const DEFAULT_MIN_PASS_RATE = 0.9;

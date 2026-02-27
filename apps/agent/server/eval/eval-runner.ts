@@ -31,8 +31,7 @@ export async function runEvalCases(
       const captures: ToolCapture[] = [];
       const llmTrace: LlmTrace = {
         answerCalls: 0,
-        reasoningCalls: 0,
-        synthesisCalls: 0
+        reasoningCalls: 0
       };
       const llm =
         options.llm ?? (options.useFixtureLlm === false ? undefined : createEvalLlm(llmTrace));
@@ -66,7 +65,6 @@ export async function runEvalCases(
         });
         llmTrace.answerCalls = 0;
         llmTrace.reasoningCalls = 0;
-        llmTrace.synthesisCalls = 0;
         results.push({
           caseId: testCase.id,
           checks,

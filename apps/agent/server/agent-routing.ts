@@ -4,6 +4,14 @@ import { SELECTABLE_TOOL_NAMES } from './tools/tool-registry';
 
 /** Keyword hints per selectable tool; used when LLM is unavailable. Registry is source of truth for tool names. */
 const SELECTABLE_KEYWORD_HINTS: Readonly<Record<string, string[]>> = {
+  fact_check: [
+    'fact check',
+    'verify',
+    'verify price',
+    'double-check',
+    'confirm price',
+    'cross-check'
+  ],
   compliance_check: [
     'compliance',
     'regulation',
@@ -20,13 +28,21 @@ const SELECTABLE_KEYWORD_HINTS: Readonly<Record<string, string[]>> = {
   ],
   portfolio_analysis: [
     'portfolio',
+    'performance',
+    'return',
+    'net performance',
+    'net worth',
+    'p&l'
+  ],
+  holdings_analysis: [
     'allocation',
     'balance',
     'cash',
     'deposit',
     'deposited',
     'available',
-    'net worth',
+    'holdings',
+    'what do i hold',
     'how much do i have'
   ],
   market_data: [
@@ -39,6 +55,16 @@ const SELECTABLE_KEYWORD_HINTS: Readonly<Record<string, string[]>> = {
     'last week',
     'last month',
     'price from today'
+  ],
+  analyze_stock_trend: [
+    'how is my',
+    'how is bitcoin doing',
+    'trend',
+    'doing',
+    'last 7 days',
+    'last 30 days',
+    'past week',
+    'past month'
   ],
   market_data_lookup: ['market data', 'fear and greed index'],
   market_overview: [
@@ -449,6 +475,73 @@ export function sanitizeOrderToolsForNonOrderRequests({
 
   return selectedTools.filter(
     (tool) => tool !== 'create_order' && tool !== 'create_other_activities'
+  );
+}
+
+export function sanitizeAnalyzeStockTrendForScope({
+  message,
+  selectedTools
+}: {
+  message: string;
+  selectedTools: AgentToolName[];
+}): AgentToolName[] {
+  if (!selectedTools.includes('analyze_stock_trend')) {
+    return selectedTools;
+  }
+
+  const normalized = message.toLowerCase();
+  const asksPortfolioWide =
+    /\b(all|overall|entire)\b.*\b(holding|holdings|portfolio)\b/.test(normalized) ||
+    /\bhow are all my holdings\b/.test(normalized) ||
+    /\bhow are my holdings\b/.test(normalized) ||
+    /\bany risk\b/.test(normalized);
+
+  if (asksPortfolioWide) {
+    return selectedTools.filter((tool) => tool !== 'analyze_stock_trend');
+  }
+
+  if (!hasSpecificAssetReference(message)) {
+    return selectedTools.filter((tool) => tool !== 'analyze_stock_trend');
+  }
+
+  return selectedTools;
+}
+
+export function sanitizePortfolioHoldingsToolScope({
+  message,
+  selectedTools
+}: {
+  message: string;
+  selectedTools: AgentToolName[];
+}): AgentToolName[] {
+  const hasPortfolioTool = selectedTools.includes('portfolio_analysis');
+  const hasHoldingsTool = selectedTools.includes('holdings_analysis');
+  if (!hasPortfolioTool && !hasHoldingsTool) {
+    return selectedTools;
+  }
+
+  const normalized = message.toLowerCase();
+  const mentionsAllocation = /\ballocation\b/.test(normalized);
+  const mentionsHoldings = /\bholding(s)?\b/.test(normalized);
+  const mentionsPortfolio = /\bportfolio\b/.test(normalized);
+
+  if (mentionsHoldings || mentionsAllocation) {
+    return selectedTools.filter((tool) => tool !== 'portfolio_analysis');
+  }
+
+  if (mentionsPortfolio) {
+    return selectedTools.filter((tool) => tool !== 'holdings_analysis');
+  }
+
+  return selectedTools;
+}
+
+function hasSpecificAssetReference(message: string): boolean {
+  const normalized = message.toLowerCase();
+  if (/\b[A-Z]{2,5}(?:-[A-Z]{2,5})?\b/.test(message)) return true;
+  if (/\b[a-z]{2,10}-[a-z]{2,10}\b/.test(normalized)) return true;
+  return /\b(bitcoin|btc|ethereum|eth|solana|sol|tesla|tsla|apple|aapl|nvidia|nvda)\b/.test(
+    normalized
   );
 }
 
