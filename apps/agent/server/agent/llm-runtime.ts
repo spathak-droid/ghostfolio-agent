@@ -219,8 +219,26 @@ export async function decideRoute({
     });
   const inferredIntent = classifyIntent(message);
 
-  // If reasonAboutQuery is available, use it exclusively for routing
-  if (llm?.reasonAboutQuery) {
+  // Detect clear portfolio/transaction retrieval patterns to bypass reasonAboutQuery
+  const keywordTools = selectToolsByKeyword(message);
+  const shouldBypassReasoning = isClearPortfolioOrTransactionRetrieval(message, keywordTools);
+
+  // For clear transaction retrieval, filter out order creation tools
+  let toolsToUse = keywordTools;
+  if (shouldBypassReasoning) {
+    const isClearTransaction =
+      /\b(what|when|which)\b.*\b(did i|have i)?\b.*\b(buy|bought|sell|sold)\b/.test(
+        message.toLowerCase()
+      ) || /\b(last year|last month|last week|this year|in 20\d{2}|during 20\d{2})\b/.test(message.toLowerCase());
+    if (isClearTransaction) {
+      toolsToUse = keywordTools.filter(
+        (tool) => tool !== 'create_order' && tool !== 'create_other_activities'
+      );
+    }
+  }
+
+  // If reasonAboutQuery is available and not a clear retrieval prompt, use it exclusively for routing
+  if (llm?.reasonAboutQuery && !shouldBypassReasoning) {
     try {
       const decision = await withOperationTimeout({
         operation: 'llm.reason_about_query',
@@ -229,18 +247,17 @@ export async function decideRoute({
 
       if (decision.mode === 'direct_reply') {
         // For direct_reply, use keyword matching as fallback
-        const keywordTools = selectToolsByKeyword(message);
-        if (keywordTools.includes('compliance_check')) {
-          return { intent: decision.intent, tools: applyPriceFactCheckRouting(keywordTools) };
+        if (toolsToUse.includes('compliance_check')) {
+          return { intent: decision.intent, tools: applyPriceFactCheckRouting(toolsToUse) };
         }
-        if (messageMatchesRetrievalPatterns(message) && keywordTools.length > 0) {
-          return { intent: decision.intent, tools: applyPriceFactCheckRouting(keywordTools) };
+        if (messageMatchesRetrievalPatterns(message) && toolsToUse.length > 0) {
+          return { intent: decision.intent, tools: applyPriceFactCheckRouting(toolsToUse) };
         }
-        const hasOrderTool = keywordTools.some(
+        const hasOrderTool = toolsToUse.some(
           (t) => t === 'create_order' || t === 'create_other_activities'
         );
         if (hasOrderTool && isExplicitOrderExecutionIntent(message)) {
-          return { intent: decision.intent, tools: applyPriceFactCheckRouting(keywordTools) };
+          return { intent: decision.intent, tools: applyPriceFactCheckRouting(toolsToUse) };
         }
         return {
           intent: decision.intent,
@@ -249,34 +266,40 @@ export async function decideRoute({
       }
 
       // For tool_call mode, combine reasonAboutQuery result with keyword tools
-      const keywordTools = selectToolsByKeyword(message);
       if (Array.isArray(decision.tools) && decision.tools.length > 0) {
         return {
           intent: decision.intent,
-          tools: applyPriceFactCheckRouting([...new Set([...decision.tools, ...keywordTools])])
+          tools: applyPriceFactCheckRouting([...new Set([...decision.tools, ...toolsToUse])])
         };
       }
 
       if (decision.tool && decision.tool !== 'none') {
         return {
           intent: decision.intent,
-          tools: applyPriceFactCheckRouting([...new Set([decision.tool, ...keywordTools])])
+          tools: applyPriceFactCheckRouting([...new Set([decision.tool, ...toolsToUse])])
         };
       }
 
       // If reasonAboutQuery returns 'none', fall back to keyword tools
       return {
         intent: decision.intent,
-        tools: applyPriceFactCheckRouting(keywordTools)
+        tools: applyPriceFactCheckRouting(toolsToUse)
       };
     } catch {
       // If reasonAboutQuery fails, use keyword matching
-      const keywordTools = selectToolsByKeyword(message);
       return {
         intent: inferredIntent,
-        tools: applyPriceFactCheckRouting(keywordTools)
+        tools: applyPriceFactCheckRouting(toolsToUse)
       };
     }
+  }
+
+  // For clear retrieval prompts or when reasonAboutQuery is not available, use keyword matching
+  if (shouldBypassReasoning) {
+    return {
+      intent: inferredIntent,
+      tools: applyPriceFactCheckRouting(toolsToUse)
+    };
   }
 
   // If reasonAboutQuery is not available, use selectTool
@@ -291,6 +314,33 @@ export async function decideRoute({
     intent: inferredIntent,
     tools: applyPriceFactCheckRouting(inferredTools)
   };
+}
+
+function isClearPortfolioOrTransactionRetrieval(
+  message: string,
+  keywordTools: AgentToolName[]
+): boolean {
+  const hasPortfolioFamilyTool =
+    keywordTools.includes('portfolio_analysis') || keywordTools.includes('holdings_analysis');
+  const hasTransactionRetrievalTool =
+    keywordTools.includes('transaction_timeline') || keywordTools.includes('transaction_categorize');
+
+  const normalized = message.toLowerCase();
+  const clearlyPortfolioRetrieval = /\b(portfolio|holdings?|allocation|balance|net worth|performance|cash)\b/.test(
+    normalized
+  );
+  const clearlyTransactionRetrieval =
+    /\b(what|when|which)\b.*\b(did i|have i)?\b.*\b(buy|bought|sell|sold)\b/.test(normalized) ||
+    /\b(last year|last month|last week|this year|in 20\d{2}|during 20\d{2})\b/.test(normalized);
+
+  if (hasPortfolioFamilyTool && clearlyPortfolioRetrieval) {
+    return true;
+  }
+  if (hasTransactionRetrievalTool && clearlyTransactionRetrieval) {
+    return true;
+  }
+
+  return false;
 }
 
 function routePriceQueriesWithFactCheckChain({
