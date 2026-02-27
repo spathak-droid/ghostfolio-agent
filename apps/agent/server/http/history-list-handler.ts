@@ -74,8 +74,8 @@ export function createHistoryListHandler({
 
       const limit =
         typeof request.query.limit === 'string' && /^\d+$/.test(request.query.limit)
-          ? Math.min(100, Math.max(1, parseInt(request.query.limit, 10)))
-          : 50;
+          ? Math.min(10, Math.max(1, parseInt(request.query.limit, 10)))
+          : 10;
       const conversations = await conversationHistoryStore.listByUser(userId, limit);
       response.status(200).json({ conversations });
     } catch (error) {

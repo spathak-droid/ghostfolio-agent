@@ -58,7 +58,7 @@ class DisabledConversationHistoryStore implements ConversationHistoryStore {
   }
 }
 
-const DEFAULT_LIST_LIMIT = 50;
+const DEFAULT_LIST_LIMIT = 10;
 const MAX_TITLE_LENGTH = 512;
 
 function deriveTitle(messages: AgentConversationMessage[]): string | null {

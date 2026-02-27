@@ -1,9 +1,13 @@
 /**
  * Purpose: Estimate federal tax impact from portfolio activities (realized gains/losses and income).
- * Inputs: Ghostfolio activities via GET /api/v1/order and user message hints (filing status, tax year, ordinary income).
- * Outputs: Deterministic tax estimate with realized P/L breakdown, assumptions, sources, and data_as_of.
+ * Inputs: Ghostfolio activities via GET /api/v1/order and user message hints (filing status, tax year, ordinary income,
+ *         qualified dividends, self-employment income, state).
+ * Outputs: Detailed federal tax estimate with realized P/L breakdown, AMT, wash sales, assumptions, sources, and data_as_of.
  * Failure modes: missing/invalid activity fields are skipped and surfaced in assumptions; missing tax table returns structured error.
  * When the user does not provide ordinary income, we return a concrete example scenario (single, $60k/year) so the response is never all zeros.
+ * DISCLAIMER: This is an estimate based on user-provided data and detected activities. It does not account for all tax situations
+ * (entity types, alternative minimum tax adjustments, state/local taxes, self-employment tax nuances, etc.).
+ * Users MUST consult a qualified tax professional before filing.
  */
 
 /** Default annual income for the illustrative scenario when user does not provide income (single filer, 2026). */
@@ -32,6 +36,14 @@ interface ParsedActivity {
   symbol: string;
   type: 'BUY' | 'SELL' | 'DIVIDEND' | 'INTEREST' | 'FEE' | 'LIABILITY';
   unitPrice: number;
+  assetClass?: string;     // 'EQUITY' | 'LIQUIDITY' | ...
+  assetSubClass?: string;  // 'STOCK' | 'CRYPTOCURRENCY' | ...
+  isUSEquity: boolean;     // true if assetSubClass=STOCK and countries includes US
+}
+
+interface WashSaleDetection {
+  disallowedLosses: number;
+  affectedSymbols: string[];
 }
 
 export async function taxEstimateTool({
@@ -65,6 +77,9 @@ export async function taxEstimateTool({
     const ordinaryIncome = parsedOrdinaryIncome ?? 0;
     const hasExplicitOrdinaryIncome = parsedOrdinaryIncome !== undefined;
 
+    const parsedQualifiedDividends = parseQualifiedDividends(message);
+    const hasExplicitQualifiedDividends = parsedQualifiedDividends !== undefined;
+
     const taxTable = loadFederalTaxTable(taxYear);
     const raw = await client.getTransactions({ impersonationId, range, take, token });
     const activities = Array.isArray(raw.activities) ? raw.activities : [];
@@ -73,19 +88,46 @@ export async function taxEstimateTool({
       .filter((item): item is ParsedActivity => item !== undefined)
       .sort((a, b) => a.dateMs - b.dateMs);
 
-    const totals = calculateTaxFromActivities({ activities: taxActivities, assumptions });
+    const { totals, washSales, byAssetClass, openPositions } = calculateTaxFromActivities({
+      activities: taxActivities,
+      assumptions
+    });
+    if (washSales.disallowedLosses > 0) {
+      assumptions.push(
+        `Wash sale detected: $${washSales.disallowedLosses.toFixed(2)} in losses disallowed for symbols: ${washSales.affectedSymbols.join(', ')}.`
+      );
+    }
+
+    // Use auto-detected qualified dividends if available, otherwise use parsed or 0
+    const finalQualifiedDividends = hasExplicitQualifiedDividends ? parsedQualifiedDividends : totals.qualifiedDividends;
+    const hasAutoDetectedQualified = totals.qualifiedDividends > 0 && !hasExplicitQualifiedDividends;
+
+    // Only add the non-qualified assumption if there are dividends and none were auto-detected as qualified
+    if (!hasExplicitQualifiedDividends && totals.dividends > 0 && !hasAutoDetectedQualified) {
+      assumptions.push('All dividends assumed non-qualified ordinary dividend income.');
+    }
+
     const estimate = calculateFederalEstimate({
       filingStatus,
       ordinaryIncome,
       taxTable,
-      totals
+      totals,
+      qualifiedDividends: finalQualifiedDividends
+    });
+
+    const amt = calculateAMT({
+      filingStatus,
+      ordinaryIncome,
+      totals,
+      taxTable
     });
     const scenarioEstimate = !hasExplicitOrdinaryIncome
       ? calculateFederalEstimate({
           filingStatus,
           ordinaryIncome: DEFAULT_SCENARIO_ANNUAL_INCOME,
           taxTable,
-          totals
+          totals,
+          qualifiedDividends: finalQualifiedDividends
         })
       : undefined;
 
@@ -124,6 +166,23 @@ export async function taxEstimateTool({
           'What is your approximate annual ordinary income in USD? (e.g. from W-2, self-employment, other taxable income)'
       });
     }
+    // Only ask about qualified dividends if there are dividends and they weren't auto-detected
+    if (totals.dividends > 0 && !hasExplicitQualifiedDividends && !hasAutoDetectedQualified) {
+      missingParams.push({
+        param: 'qualified_dividends',
+        question:
+          'Do you have any qualified dividends? (e.g. from US stocks held >60 days, taxed at capital gains rates)'
+      });
+    }
+
+    // Generate tax insights
+    const insights = generateTaxInsights({
+      washSales,
+      openPositions,
+      byAssetClass,
+      qualifiedDividends: finalQualifiedDividends,
+      totals
+    });
 
     const exampleBlock =
       hasExplicitOrdinaryIncome
@@ -136,6 +195,18 @@ export async function taxEstimateTool({
           '\n\n' +
           exampleBlock
         : exampleBlock;
+
+    const disclaimer = `
+
+**IMPORTANT DISCLAIMER:** Not financial advice. This is an educational estimate based only on the data provided and portfolio activities detected. It is NOT a substitute for professional tax advice. This estimate:
+
+• Does NOT account for state/local taxes, self-employment taxes, AMT adjustments, and other complex tax situations
+• May UNDERESTIMATE your actual tax liability
+• Should NOT be used for filing tax returns or making financial decisions
+
+**You MUST consult a qualified tax professional (CPA, tax attorney, enrolled agent) before filing your tax return.**
+
+Please consult with your financial advisor and a qualified tax professional before making decisions.`;
 
     return {
       success: true,
@@ -154,8 +225,37 @@ export async function taxEstimateTool({
       },
       income: {
         dividends: round2(totals.dividends),
+        qualified_dividends: round2(finalQualifiedDividends),
         interest: round2(totals.interest)
       },
+      by_asset_class: {
+        equity: {
+          short_term_gains: round2(byAssetClass.equity.shortTermGains),
+          short_term_losses: round2(byAssetClass.equity.shortTermLosses),
+          long_term_gains: round2(byAssetClass.equity.longTermGains),
+          long_term_losses: round2(byAssetClass.equity.longTermLosses)
+        },
+        crypto: {
+          short_term_gains: round2(byAssetClass.crypto.shortTermGains),
+          short_term_losses: round2(byAssetClass.crypto.shortTermLosses),
+          long_term_gains: round2(byAssetClass.crypto.longTermGains),
+          long_term_losses: round2(byAssetClass.crypto.longTermLosses)
+        },
+        other: {
+          short_term_gains: round2(byAssetClass.other.shortTermGains),
+          short_term_losses: round2(byAssetClass.other.shortTermLosses),
+          long_term_gains: round2(byAssetClass.other.longTermGains),
+          long_term_losses: round2(byAssetClass.other.longTermLosses)
+        }
+      },
+      open_positions: openPositions.map((pos) => ({
+        symbol: pos.symbol,
+        quantity: pos.quantity,
+        days_held: pos.daysHeld,
+        is_long_term: pos.isLongTerm,
+        days_until_long_term: pos.daysUntilLongTerm
+      })),
+      insights,
       estimate: {
         taxable_ordinary_income: round2(displayEstimate.taxableOrdinaryIncome),
         taxable_long_term_gains: round2(displayEstimate.taxableLongTermGains),
@@ -163,7 +263,8 @@ export async function taxEstimateTool({
         long_term_capital_gains_tax: round2(displayEstimate.longTermTax),
         niit: round2(displayEstimate.niitTax),
         total_estimated_federal_tax: round2(displayEstimate.totalEstimatedFederalTax),
-        effective_tax_rate: round4(effectiveRate)
+        effective_tax_rate: round4(effectiveRate),
+        ...(amt.amt > 0 ? { amt_due: round2(Math.max(0, amt.amt - displayEstimate.totalEstimatedFederalTax)) } : {})
       },
       ...(scenarioEstimate
         ? {
@@ -183,20 +284,27 @@ export async function taxEstimateTool({
           ? `Tax estimate (${taxYear}, ${filingStatus}): `
           : `Example scenario (${taxYear}, ${filingStatus}, $${DEFAULT_SCENARIO_ANNUAL_INCOME.toLocaleString()}/year): `) +
         `total federal tax ${round2(displayEstimate.totalEstimatedFederalTax)} USD ` +
-        `(ordinary ${round2(displayEstimate.ordinaryTax)} + LT gains ${round2(displayEstimate.longTermTax)} + NIIT ${round2(displayEstimate.niitTax)}).`,
-      answer:
-        askBlock +
-        'Not financial advice. Please consult with your financial advisor and a qualified tax professional before making decisions.',
+        `(ordinary ${round2(displayEstimate.ordinaryTax)} + LT gains ${round2(displayEstimate.longTermTax)} + NIIT ${round2(displayEstimate.niitTax)}).` +
+        (amt.amt > 0 ? ` AMT may apply (${round2(amt.amt)} USD).` : ''),
+      answer: askBlock + disclaimer,
       data_as_of: new Date().toISOString(),
       sources: ['ghostfolio_api', `docs/agent/tax/us/federal/${taxYear}.json`]
     };
   } catch (error) {
     const toolError = toToolErrorPayload(error);
+    const disclaimer = `
+
+Not financial advice. Please consult with your financial advisor and a qualified tax professional before making decisions.
+
+**IMPORTANT DISCLAIMER:** This tool could not generate an estimate due to technical issues. If you need a tax estimate:
+
+• Consult a qualified tax professional (CPA, tax attorney, enrolled agent)
+• Use official IRS tools and resources
+• Do NOT rely on incomplete or failed estimates`;
+
     return {
       success: false,
-      answer:
-        `Could not estimate taxes: ${toolError.message}` +
-        '\n\nNot financial advice.\n\nPlease consult with your financial advisor and a qualified tax professional before making decisions.',
+      answer: `Could not estimate taxes: ${toolError.message}${disclaimer}`,
       summary: `Tax estimate failed: ${toolError.message}`,
       error: toolError,
       data_as_of: new Date().toISOString(),
@@ -205,24 +313,133 @@ export async function taxEstimateTool({
   }
 }
 
+function generateTaxInsights({
+  washSales,
+  openPositions,
+  byAssetClass,
+  qualifiedDividends,
+  totals
+}: {
+  washSales: WashSaleDetection;
+  openPositions: { symbol: string; quantity: number; daysHeld: number; isLongTerm: boolean; daysUntilLongTerm: number }[];
+  byAssetClass: Record<
+    string,
+    { shortTermGains: number; shortTermLosses: number; longTermGains: number; longTermLosses: number }
+  >;
+  qualifiedDividends: number;
+  totals: {
+    shortTermGains: number;
+    shortTermLosses: number;
+    longTermGains: number;
+    longTermLosses: number;
+    dividends: number;
+    qualifiedDividends: number;
+    interest: number;
+    netCapital: number;
+  };
+}): string[] {
+  const insights: string[] = [];
+
+  // Insight 1: Wash sale detection
+  if (washSales.disallowedLosses > 0) {
+    insights.push(
+      `Wash sale detected on ${washSales.affectedSymbols.join(', ')}: $${washSales.disallowedLosses.toFixed(2)} in losses disallowed.`
+    );
+  }
+
+  // Insight 2: Qualified dividends
+  if (qualifiedDividends > 0) {
+    const nonQualifiedDividends = totals.dividends - qualifiedDividends;
+    if (nonQualifiedDividends > 0) {
+      insights.push(
+        `You have $${qualifiedDividends.toFixed(2)} in qualified dividends (taxed at capital gains rates) and $${nonQualifiedDividends.toFixed(2)} in non-qualified dividends (taxed as ordinary income).`
+      );
+    } else {
+      insights.push(
+        `Your $${qualifiedDividends.toFixed(2)} in dividends are from US equities and treated as qualified — taxed at preferred capital gains rates.`
+      );
+    }
+  }
+
+  // Insight 3: Open positions approaching long-term
+  const closestToLongTerm = openPositions.find((p) => !p.isLongTerm && p.daysUntilLongTerm > 0 && p.daysUntilLongTerm <= 90);
+  if (closestToLongTerm) {
+    const daysHeldPercentage = Math.round((closestToLongTerm.daysHeld / 365) * 100);
+    insights.push(
+      `${closestToLongTerm.symbol} has been held ${closestToLongTerm.daysHeld} days (${daysHeldPercentage}% of long-term threshold). Holding ${closestToLongTerm.daysUntilLongTerm} more days would shift it to long-term rates.`
+    );
+  }
+
+  // Insight 4: Crypto allocation in gains
+  const cryptoGains = byAssetClass.crypto.longTermGains + byAssetClass.crypto.shortTermGains;
+  const equityGains = byAssetClass.equity.longTermGains + byAssetClass.equity.shortTermGains;
+  const totalGains = cryptoGains + equityGains + byAssetClass.other.longTermGains + byAssetClass.other.shortTermGains;
+  if (cryptoGains > 0 && totalGains > 0) {
+    const cryptoPercent = Math.round((cryptoGains / totalGains) * 100);
+    insights.push(
+      `Cryptocurrency gains represent ${cryptoPercent}% of your total realized gains ($${cryptoGains.toFixed(2)}). Consider tax-loss harvesting in down markets.`
+    );
+  }
+
+  return insights;
+}
+
 function calculateTaxFromActivities({
   activities,
   assumptions
 }: {
   activities: ParsedActivity[];
   assumptions: string[];
-}) {
-  const lotsBySymbol = new Map<string, Lot[]>();
+}): {
+  totals: {
+    shortTermGains: number;
+    shortTermLosses: number;
+    longTermGains: number;
+    longTermLosses: number;
+    dividends: number;
+    qualifiedDividends: number;
+    interest: number;
+    netCapital: number;
+  };
+  washSales: WashSaleDetection;
+  byAssetClass: Record<
+    string,
+    { shortTermGains: number; shortTermLosses: number; longTermGains: number; longTermLosses: number }
+  >;
+  openPositions: {
+    symbol: string;
+    quantity: number;
+    daysHeld: number;
+    isLongTerm: boolean;
+    daysUntilLongTerm: number;
+  }[];
+} {
+  const lotsBySymbol = new Map<string, (Lot & { assetSubClass?: string; isUSEquity: boolean })[]>();
   let shortTermGains = 0;
   let shortTermLosses = 0;
   let longTermGains = 0;
   let longTermLosses = 0;
   let dividends = 0;
+  let qualifiedDividends = 0;
   let interest = 0;
+  const washSalesBySymbol = new Map<string, number>();
+  const byAssetClass: Record<
+    string,
+    { shortTermGains: number; shortTermLosses: number; longTermGains: number; longTermLosses: number }
+  > = {
+    equity: { shortTermGains: 0, shortTermLosses: 0, longTermGains: 0, longTermLosses: 0 },
+    crypto: { shortTermGains: 0, shortTermLosses: 0, longTermGains: 0, longTermLosses: 0 },
+    other: { shortTermGains: 0, shortTermLosses: 0, longTermGains: 0, longTermLosses: 0 }
+  };
 
   for (const activity of activities) {
     if (activity.type === 'DIVIDEND') {
-      dividends += activity.unitPrice * activity.quantity;
+      const dividendAmount = activity.unitPrice * activity.quantity;
+      dividends += dividendAmount;
+      // Auto-detect qualified dividends for US equities
+      if (activity.isUSEquity) {
+        qualifiedDividends += dividendAmount;
+      }
       continue;
     }
     if (activity.type === 'INTEREST') {
@@ -231,10 +448,12 @@ function calculateTaxFromActivities({
     }
     if (activity.type === 'BUY') {
       const totalCost = activity.unitPrice * activity.quantity + activity.fee;
-      const lot: Lot = {
+      const lot: Lot & { assetSubClass?: string; isUSEquity: boolean } = {
         acquiredAtMs: activity.dateMs,
         quantityRemaining: activity.quantity,
-        unitCost: totalCost / activity.quantity
+        unitCost: totalCost / activity.quantity,
+        assetSubClass: activity.assetSubClass,
+        isUSEquity: activity.isUSEquity
       };
       const list = lotsBySymbol.get(activity.symbol) ?? [];
       list.push(lot);
@@ -247,6 +466,7 @@ function calculateTaxFromActivities({
 
     const lots = lotsBySymbol.get(activity.symbol) ?? [];
     let quantityToMatch = activity.quantity;
+
     while (quantityToMatch > 0 && lots.length > 0) {
       const lot = lots[0];
       const consumed = Math.min(quantityToMatch, lot.quantityRemaining);
@@ -254,13 +474,47 @@ function calculateTaxFromActivities({
       const realized = consumed * proceedsUnit - consumed * lot.unitCost;
       const heldDays = Math.floor((activity.dateMs - lot.acquiredAtMs) / 86_400_000);
       const isLongTerm = heldDays >= 365;
+
+      // Determine asset class bucket for tracking
+      let bucket = 'other';
+      if (lot.assetSubClass === 'STOCK') {
+        bucket = 'equity';
+      } else if (lot.assetSubClass === 'CRYPTOCURRENCY') {
+        bucket = 'crypto';
+      }
+
+      // Check for wash sale: loss within 30 days before/after sell
+      if (realized < 0) {
+        const buyWindowStart = activity.dateMs - 30 * 86_400_000;
+        const buyWindowEnd = activity.dateMs + 30 * 86_400_000;
+        const hasRecentBuy = activities.some(
+          (a) =>
+            a.type === 'BUY' &&
+            a.symbol === activity.symbol &&
+            a.dateMs >= buyWindowStart &&
+            a.dateMs <= buyWindowEnd &&
+            a.dateMs > activity.dateMs
+        );
+        if (hasRecentBuy) {
+          const loss = Math.abs(realized);
+          washSalesBySymbol.set(activity.symbol, (washSalesBySymbol.get(activity.symbol) ?? 0) + loss);
+        }
+      }
+
       if (realized >= 0) {
-        if (isLongTerm) longTermGains += realized;
-        else shortTermGains += realized;
+        if (isLongTerm) {
+          longTermGains += realized;
+          byAssetClass[bucket].longTermGains += realized;
+        } else {
+          shortTermGains += realized;
+          byAssetClass[bucket].shortTermGains += realized;
+        }
       } else if (isLongTerm) {
         longTermLosses += Math.abs(realized);
+        byAssetClass[bucket].longTermLosses += Math.abs(realized);
       } else {
         shortTermLosses += Math.abs(realized);
+        byAssetClass[bucket].shortTermLosses += Math.abs(realized);
       }
       lot.quantityRemaining -= consumed;
       quantityToMatch -= consumed;
@@ -278,22 +532,59 @@ function calculateTaxFromActivities({
     const sellProceeds = activity.unitPrice * activity.quantity - activity.fee;
     const feeAdjustment = sellProceeds - (activity.unitPrice * activity.quantity);
     if (feeAdjustment < 0) {
-      // Treat sell fee as additional loss (or reduced gain) in short-term bucket by default.
       shortTermLosses += Math.abs(feeAdjustment);
+      byAssetClass['other'].shortTermLosses += Math.abs(feeAdjustment);
     }
   }
 
+  // Build open positions list from remaining lots
+  const openPositions: {
+    symbol: string;
+    quantity: number;
+    daysHeld: number;
+    isLongTerm: boolean;
+    daysUntilLongTerm: number;
+  }[] = [];
+  const now = Date.now();
+  for (const [symbol, lots] of lotsBySymbol.entries()) {
+    for (const lot of lots) {
+      if (lot.quantityRemaining > 0) {
+        const daysHeld = Math.floor((now - lot.acquiredAtMs) / 86_400_000);
+        const isLongTerm = daysHeld >= 365;
+        const daysUntilLongTerm = isLongTerm ? 0 : 365 - daysHeld;
+        openPositions.push({
+          symbol,
+          quantity: round4(lot.quantityRemaining),
+          daysHeld,
+          isLongTerm,
+          daysUntilLongTerm
+        });
+      }
+    }
+  }
+  // Sort by days_until_long_term ascending (positions closest to long-term first)
+  openPositions.sort((a, b) => a.daysUntilLongTerm - b.daysUntilLongTerm);
+
   const netCapital = shortTermGains - shortTermLosses + (longTermGains - longTermLosses);
   assumptions.push('FIFO lot matching used for cost basis.');
-  assumptions.push('All dividends treated as non-qualified unless explicitly classified.');
+
   return {
-    shortTermGains,
-    shortTermLosses,
-    longTermGains,
-    longTermLosses,
-    dividends,
-    interest,
-    netCapital
+    totals: {
+      shortTermGains,
+      shortTermLosses,
+      longTermGains,
+      longTermLosses,
+      dividends,
+      qualifiedDividends,
+      interest,
+      netCapital
+    },
+    washSales: {
+      disallowedLosses: Array.from(washSalesBySymbol.values()).reduce((a, b) => a + b, 0),
+      affectedSymbols: Array.from(washSalesBySymbol.keys())
+    },
+    byAssetClass,
+    openPositions
   };
 }
 
@@ -301,7 +592,8 @@ function calculateFederalEstimate({
   filingStatus,
   ordinaryIncome,
   taxTable,
-  totals
+  totals,
+  qualifiedDividends = 0
 }: {
   filingStatus: FilingStatus;
   ordinaryIncome: number;
@@ -315,10 +607,12 @@ function calculateFederalEstimate({
     interest: number;
     netCapital: number;
   };
+  qualifiedDividends?: number;
 }) {
   const stNet = totals.shortTermGains - totals.shortTermLosses;
   const ltNet = totals.longTermGains - totals.longTermLosses;
-  const taxableLongTermGains = Math.max(0, ltNet + Math.min(0, stNet));
+  const nonQualifiedDividends = Math.max(0, totals.dividends - qualifiedDividends);
+  const taxableLongTermGains = Math.max(0, ltNet + Math.min(0, stNet) + qualifiedDividends);
   const taxableShortTermComponent = Math.max(0, stNet + Math.min(0, ltNet));
   const maxOffset = taxTable.capitalLossRules.maxOrdinaryOffset;
   const ordinaryLossOffset =
@@ -327,7 +621,7 @@ function calculateFederalEstimate({
   const standardDeduction = taxTable.standardDeduction[filingStatus];
   const taxableOrdinaryIncome = Math.max(
     0,
-    ordinaryIncome - standardDeduction + taxableShortTermComponent + totals.dividends + totals.interest - ordinaryLossOffset
+    ordinaryIncome - standardDeduction + taxableShortTermComponent + nonQualifiedDividends + totals.interest - ordinaryLossOffset
   );
 
   const ordinaryTax = calculateTaxFromBrackets(
@@ -384,6 +678,58 @@ function calculateLongTermGainsTax({
   return tax;
 }
 
+function calculateAMT({
+  filingStatus,
+  ordinaryIncome,
+  totals,
+  taxTable
+}: {
+  filingStatus: FilingStatus;
+  ordinaryIncome: number;
+  totals: {
+    shortTermGains: number;
+    shortTermLosses: number;
+    longTermGains: number;
+    longTermLosses: number;
+    dividends: number;
+    interest: number;
+    netCapital: number;
+  };
+  taxTable: ReturnType<typeof loadFederalTaxTable>;
+}): { amt: number } {
+  // Simplified AMT calculation (full AMT is complex with many adjustments)
+  // Return 0 if AMT data not available in tax table
+  if (!taxTable.optional?.AMT) {
+    return { amt: 0 };
+  }
+
+  const amtExemption = taxTable.optional.AMT.exemptionAmount[filingStatus];
+  const amtIncome = ordinaryIncome + Math.max(0, totals.netCapital) + totals.dividends + totals.interest;
+  const phaseoutStarts = taxTable.optional.AMT.phaseoutStartsAt[filingStatus];
+  const phaseoutRate = 0.25; // 25% phaseout
+
+  let exemptionUsed = amtExemption;
+  if (amtIncome > phaseoutStarts) {
+    const phaseoutAmount = Math.floor((amtIncome - phaseoutStarts) / 1000) * 1000;
+    exemptionUsed = Math.max(0, amtExemption - phaseoutAmount * phaseoutRate);
+  }
+
+  const amtTaxableIncome = Math.max(0, amtIncome - exemptionUsed);
+  // AMT uses two rates: 26% and 28%
+  const amtRate1 = 0.26;
+  const amtRate2 = 0.28;
+  const amtThreshold = 200000;
+
+  let amtTax = 0;
+  if (amtTaxableIncome <= amtThreshold) {
+    amtTax = amtTaxableIncome * amtRate1;
+  } else {
+    amtTax = amtThreshold * amtRate1 + (amtTaxableIncome - amtThreshold) * amtRate2;
+  }
+
+  return { amt: amtTax };
+}
+
 function parseActivity(value: unknown): ParsedActivity | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const activity = value as Record<string, unknown>;
@@ -396,13 +742,15 @@ function parseActivity(value: unknown): ParsedActivity | undefined {
     return undefined;
   }
 
-  const symbolFromProfile =
+  const symbolProfile =
     activity.SymbolProfile &&
     typeof activity.SymbolProfile === 'object' &&
-    !Array.isArray(activity.SymbolProfile) &&
-    typeof (activity.SymbolProfile as Record<string, unknown>).symbol === 'string'
-      ? String((activity.SymbolProfile as Record<string, unknown>).symbol)
+    !Array.isArray(activity.SymbolProfile)
+      ? (activity.SymbolProfile as Record<string, unknown>)
       : undefined;
+
+  const symbolFromProfile =
+    symbolProfile && typeof symbolProfile.symbol === 'string' ? String(symbolProfile.symbol) : undefined;
 
   const symbol =
     symbolFromProfile ??
@@ -410,14 +758,32 @@ function parseActivity(value: unknown): ParsedActivity | undefined {
     (typeof activity.symbolProfileId === 'string' ? activity.symbolProfileId : undefined);
 
   if (!symbol) return undefined;
+
+  // Extract asset class metadata from SymbolProfile
+  const assetClass = symbolProfile && typeof symbolProfile.assetClass === 'string' ? symbolProfile.assetClass : undefined;
+  const assetSubClass =
+    symbolProfile && typeof symbolProfile.assetSubClass === 'string' ? symbolProfile.assetSubClass : undefined;
+
+  // Determine if this is a US equity (STOCK assetSubClass with US in countries)
+  const countries = symbolProfile && Array.isArray(symbolProfile.countries) ? symbolProfile.countries : [];
+  const isUSEquity =
+    assetSubClass === 'STOCK' && countries.some((c) => isObject(c) && (c as Record<string, unknown>).code === 'US');
+
   return {
     type,
     quantity,
     unitPrice,
     fee,
     dateMs,
-    symbol
+    symbol,
+    assetClass,
+    assetSubClass,
+    isUSEquity
   };
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function parseTaxYear(message: string): number | undefined {
@@ -439,6 +805,16 @@ function parseFilingStatus(message: string): FilingStatus | undefined {
 function parseOrdinaryIncome(message: string): number | undefined {
   const match =
     /\b(?:ordinary income|income)\s*(?:is|=|:)?\s*\$?([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)\b/i.exec(
+      message
+    );
+  if (!match?.[1]) return undefined;
+  const parsed = Number(match[1].replace(/,/g, ''));
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function parseQualifiedDividends(message: string): number | undefined {
+  const match =
+    /\b(?:qualified dividends?)\s*(?:is|=|:)?\s*\$?([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)\b/i.exec(
       message
     );
   if (!match?.[1]) return undefined;

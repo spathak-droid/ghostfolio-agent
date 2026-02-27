@@ -35,6 +35,16 @@ interface CapitalLossRules {
   maxOrdinaryOffset: number;
 }
 
+interface AmtConfig {
+  exemptionAmount: StandardDeduction;
+  phaseoutStartsAt: StandardDeduction;
+  rates: TaxBracket[];
+}
+
+interface OptionalConfig {
+  AMT: AmtConfig;
+}
+
 export interface FederalTaxTable {
   taxYear: number;
   standardDeduction: StandardDeduction;
@@ -42,6 +52,7 @@ export interface FederalTaxTable {
   longTermCapitalGainsBrackets: Record<FilingStatus, TaxBracket[]>;
   niit: NiitConfig;
   capitalLossRules: CapitalLossRules;
+  optional?: OptionalConfig;
 }
 
 export function loadFederalTaxTable(year: number): FederalTaxTable {

@@ -20,16 +20,21 @@ export const SELECTABLE_KEYWORD_HINTS: Readonly<Record<string, string[]>> = {
   tax_estimate: [
     'tax estimate',
     'estimate tax',
+    'calculate tax',
+    'calculate my tax',
+    'my taxes',
     'capital gains tax',
     'tax liability',
     'taxes on gains',
-    'dividend tax'
+    'dividend tax',
+    'how much tax',
+    'what are my taxes',
+    'what is my tax'
   ],
   compliance_check: [
     'compliance',
     'compliant',
     'regulation',
-    'tax',
     'regulatory',
     'suitability',
     'finra',
@@ -38,7 +43,10 @@ export const SELECTABLE_KEYWORD_HINTS: Readonly<Record<string, string[]>> = {
     'should i buy',
     'should i sell',
     'what should i buy',
-    'what should i sell'
+    'what should i sell',
+    'is it allowed',
+    'can i buy',
+    'can i sell'
   ],
   portfolio_analysis: [
     'portfolio',
