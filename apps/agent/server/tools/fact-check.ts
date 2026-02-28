@@ -89,10 +89,11 @@ export async function factCheckTool({
       ? inputSymbols.filter(Boolean).slice(0, MAX_SYMBOLS)
       : extractSymbolsFromMessage(message ?? '');
 
-    console.log('[fact-check] INPUT', {
-      inputSymbols,
+    console.log('[fact-check] STARTING', {
+      inputSymbols: inputSymbols || 'undefined',
       resolvedInputSymbols,
-      message: message?.slice(0, 100)
+      message: message?.slice(0, 100),
+      extractedFromMessage: !Array.isArray(inputSymbols) || inputSymbols.length === 0
     });
 
     // Pass explicit symbols to market_data for resolution
@@ -105,7 +106,20 @@ export async function factCheckTool({
       metrics: ['price']
     };
 
+    console.log('[fact-check] Calling market_data with params:', {
+      hasSymbols: !!marketDataParams.symbols,
+      symbols: marketDataParams.symbols,
+      message: marketDataParams.message.slice(0, 50)
+    });
+
     const primaryResult = await marketDataTool(marketDataParams);
+
+    console.log('[fact-check] market_data result:', {
+      success: primaryResult.success || 'unknown',
+      symbolsCount: Array.isArray(primaryResult.symbols) ? primaryResult.symbols.length : 0,
+      symbols: Array.isArray(primaryResult.symbols) ? primaryResult.symbols.map((s: any) => ({ symbol: s.symbol, hasError: !!s.error })) : 'N/A',
+      summary: primaryResult.summary
+    });
 
     const primarySymbols = Array.isArray(primaryResult.symbols) ? primaryResult.symbols : [];
     const primaryItems = primarySymbols as PrimarySymbolItem[];
@@ -139,7 +153,21 @@ export async function factCheckTool({
     // Try Finnhub first (most reliable), then fall back to CoinGecko for crypto symbols
     let secondary: (FinnhubClientResponse | CoinGeckoClientResponse) | null = null;
     if (symbolsToFetch.length > 0) {
+      console.log('[fact-check] Calling Finnhub with symbolsToFetch:', {
+        symbolsToFetch,
+        count: symbolsToFetch.length,
+        primaryItemsCount: primaryItems.length,
+        primarySymbols: primaryItems.map(item => ({ symbol: item.symbol, hasError: !!item.error, price: item.currentPrice }))
+      });
+
       secondary = await getFinnhubQuote(symbolsToFetch);
+
+      console.log('[fact-check] Finnhub response:', {
+        ok: secondary.ok,
+        error_code: (secondary as any).error_code,
+        message: (secondary as any).message,
+        dataKeys: secondary.ok ? Object.keys(secondary.data || {}) : 'N/A'
+      });
 
       // If Finnhub failed, try CoinGecko for crypto symbols
       if (!secondary.ok) {
@@ -148,10 +176,25 @@ export async function factCheckTool({
           .map(item => symbolToCoinGeckoId(item.symbol))
           .filter((id): id is string => !!id);
 
+        console.log('[fact-check] Finnhub failed, trying CoinGecko with cryptoIds:', {
+          cryptoIds,
+          count: cryptoIds.length
+        });
+
         if (cryptoIds.length > 0) {
           secondary = await getSimplePrice(cryptoIds, 'usd');
+          console.log('[fact-check] CoinGecko response:', {
+            ok: secondary.ok,
+            dataKeys: secondary.ok ? Object.keys(secondary.data || {}) : 'N/A'
+          });
         }
       }
+    } else {
+      console.log('[fact-check] No symbols to fetch - symbolsToFetch is empty', {
+        resolvedInputSymbols,
+        primaryItems: primaryItems.map(i => i.symbol),
+        validItems: validItems.map(i => i.symbol)
+      });
     }
 
     const comparisons: { symbol: string; primaryPrice: number; secondaryPrice?: number; match: boolean; note?: string }[] = [];
