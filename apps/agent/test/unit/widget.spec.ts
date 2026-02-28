@@ -86,11 +86,13 @@ describe('agent widget mount', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const init = fetchMock.mock.calls[0]?.[1] as {
-      body: string;
-      headers: Record<string, string>;
-    };
+    // Two calls: one for /chat/acknowledge (fire-and-forget) and one for /chat
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const chatCall = fetchMock.mock.calls.find((c: unknown[]) =>
+      String(c[0]).endsWith('/chat')
+    ) as [string, { body: string; headers: Record<string, string> }] | undefined;
+    expect(chatCall).toBeTruthy();
+    const init = chatCall![1];
     const body = JSON.parse(init.body) as Record<string, unknown>;
 
     expect(init.headers.Authorization).toBe('Bearer abc.def.ghi');
@@ -153,6 +155,12 @@ describe('agent widget mount', () => {
   it('renders symbol option buttons and submits selected symbol', async () => {
     const fetchMock = jest
       .fn()
+      // First call: /chat/acknowledge (fire-and-forget)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ forWidget: 'Looking that up...' })
+      })
+      // Second call: /chat — returns symbol options
       .mockResolvedValueOnce({
         ok: true,
         json: () =>
@@ -173,6 +181,12 @@ describe('agent widget mount', () => {
             ]
           })
       })
+      // Third call: /chat/acknowledge for second submit (symbol selection)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ forWidget: 'Processing your order...' })
+      })
+      // Fourth call: /chat — final answer
       .mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({ answer: 'How many shares do you want to buy?' })
@@ -204,13 +218,18 @@ describe('agent widget mount', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const secondCallBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body)) as {
+    // 4 calls total: acknowledge + chat (first submit) + acknowledge + chat (symbol selection)
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    // Find the second /chat call (the symbol selection one)
+    const chatCalls = fetchMock.mock.calls.filter((c: unknown[]) =>
+      !String(c[0]).endsWith('/acknowledge')
+    ) as [string, { body: string }][];
+    const secondChatBody = JSON.parse(String(chatCalls[1]?.[1]?.body)) as {
       createOrderParams?: { dataSource?: string; symbol?: string };
       message: string;
     };
-    expect(secondCallBody.message).toBe('SOL-USD');
-    expect(secondCallBody.createOrderParams).toEqual(
+    expect(secondChatBody.message).toBe('SOL-USD');
+    expect(secondChatBody.createOrderParams).toEqual(
       expect.objectContaining({ dataSource: 'YAHOO', symbol: 'SOL-USD' })
     );
   });
@@ -325,10 +344,17 @@ describe('agent widget mount', () => {
 
     const fetchMock = jest
       .fn()
+      // First call: /chat/acknowledge
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ forWidget: 'On it...' })
+      })
+      // Second call: /chat
       .mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({ answer: 'Feedback test reply' })
       })
+      // Third call: /feedback
       .mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({ ok: true })
@@ -360,9 +386,10 @@ describe('agent widget mount', () => {
 
     await Promise.resolve();
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(String(fetchMock.mock.calls[1]?.[0])).toBe('/api/v1/agent/feedback');
-    const feedbackBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)) as {
+    // 3 calls: acknowledge + chat + feedback
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(String(fetchMock.mock.calls[2]?.[0])).toBe('/api/v1/agent/feedback');
+    const feedbackBody = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body)) as {
       answer?: string;
       message?: string;
       rating?: string;
@@ -375,10 +402,17 @@ describe('agent widget mount', () => {
   it('opens correction popup when downvoting feedback', async () => {
     const fetchMock = jest
       .fn()
+      // First call: /chat/acknowledge
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ forWidget: 'On it...' })
+      })
+      // Second call: /chat
       .mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({ answer: 'Feedback test reply' })
       })
+      // Third call: /feedback
       .mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({ ok: true })
@@ -419,8 +453,9 @@ describe('agent widget mount', () => {
 
     await Promise.resolve();
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const feedbackBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)) as {
+    // 3 calls: acknowledge + chat + feedback
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const feedbackBody = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body)) as {
       correction?: string;
       rating?: string;
     };

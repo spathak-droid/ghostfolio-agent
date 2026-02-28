@@ -5,6 +5,8 @@ import type { RequestHandler } from 'express';
 import { resolveWidgetCorsOrigin, resolveWidgetDistPath } from '../utils';
 
 export function createAgentApp({
+  acknowledgeHandler,
+  acknowledgeRateLimiter,
   chatHandler,
   chatRateLimiter,
   clearHandler,
@@ -17,6 +19,8 @@ export function createAgentApp({
   widgetCorsOrigin,
   widgetDistPath
 }: {
+  acknowledgeHandler: RequestHandler;
+  acknowledgeRateLimiter?: RequestHandler;
   chatHandler: RequestHandler;
   chatRateLimiter?: RequestHandler;
   clearHandler: RequestHandler;
@@ -54,6 +58,7 @@ export function createAgentApp({
     response.status(200).json({ status: 'ok' });
   });
 
+  app.post('/chat/acknowledge', acknowledgeRateLimiter ?? ((_req, _res, next) => next()), acknowledgeHandler);
   app.post('/chat/clear', clearRateLimiter ?? ((_req, _res, next) => next()), clearHandler);
   app.post('/chat', chatRateLimiter ?? ((_req, _res, next) => next()), chatHandler);
   app.get('/chat/history', historyRateLimiter ?? ((_req, _res, next) => next()), historyListHandler);

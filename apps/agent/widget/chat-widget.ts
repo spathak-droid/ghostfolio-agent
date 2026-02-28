@@ -7,6 +7,7 @@ import { injectWidgetStyles } from './styles';
 import { clearAuthToken, getAuthToken, getImpersonationId } from './auth';
 import {
   generateConversationId,
+  resolveAcknowledgeApiUrl,
   resolveAuthApiUrl,
   resolveChatApiUrl,
   resolveClearConversationApiUrl,
@@ -43,6 +44,7 @@ export function mountChatWidget(container: HTMLElement) {
 
   let currentConversationId = generateConversationId();
   const chatApiUrl = resolveChatApiUrl();
+  const acknowledgeApiUrl = resolveAcknowledgeApiUrl(chatApiUrl);
   const authApiUrl = resolveAuthApiUrl();
   const feedbackApiUrl = resolveFeedbackApiUrl(chatApiUrl);
   const clearApiUrl = resolveClearConversationApiUrl(chatApiUrl);
@@ -442,6 +444,20 @@ export function mountChatWidget(container: HTMLElement) {
       if (impersonationId) {
         headers[IMPERSONATION_HEADER] = impersonationId;
       }
+
+      // Fire-and-forget: get a quick acknowledgment from the LLM (~300ms)
+      // Will be replaced by the final answer when /chat responds
+      fetch(acknowledgeApiUrl, {
+        method: 'POST',
+        headers,
+        credentials: 'same-origin',
+        body: JSON.stringify({ conversationId: currentConversationId, message: value })
+      })
+        .then((r) => r.json())
+        .then((ack: { forWidget?: string }) => {
+          if (ack?.forWidget) setMessageContent(loadingLi, ack.forWidget);
+        })
+        .catch(() => undefined); // non-critical: widget still works without acknowledgment
 
       const res = await fetch(chatApiUrl, {
         method: 'POST',

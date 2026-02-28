@@ -35,6 +35,7 @@ import {
 import { GhostfolioClient } from './clients';
 import { createOpenAiClientFromEnv } from './llm';
 import { createAgentApp, resolveWidgetRuntimeConfig } from './http/app-factory';
+import { createAcknowledgeHandler } from './http/acknowledge-handler';
 import { createChatHandler } from './http/chat-handler';
 import { createClearHandler } from './http/clear-handler';
 import { createFeedbackHandler } from './http/feedback-handler';
@@ -506,6 +507,17 @@ function createAgentWithClient(ghostfolioClient: GhostfolioClient, storeScopeId:
   );
 
   const app = createAgentApp({
+    acknowledgeHandler: createAcknowledgeHandler({
+      allowBodyAccessToken,
+      allowInsecureGhostfolioHttp,
+      conversationHistoryStore,
+      ghostfolioAllowedHosts,
+      ghostfolioBaseUrl
+    }),
+    acknowledgeRateLimiter: createRateLimitMiddleware({
+      maxRequests: 120,
+      windowMs: 60_000
+    }),
     chatHandler: createChatHandler({
       allowBodyAccessToken,
       allowInsecureGhostfolioHttp,
