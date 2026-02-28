@@ -16,6 +16,7 @@ const DEFAULT_SCENARIO_ANNUAL_INCOME = 60_000;
 import { GhostfolioClient } from '../clients';
 import { loadFederalTaxTable, calculateTaxFromBrackets } from '../tax/tax-tables';
 import { toToolErrorPayload } from './tool-error';
+import { callOpenAi } from '../llm/openai-client-request';
 
 type FilingStatus =
   | 'single'
@@ -52,7 +53,8 @@ export async function taxEstimateTool({
   message,
   range,
   take,
-  token
+  token,
+  conversation_history
 }: {
   client: GhostfolioClient;
   impersonationId?: string;
@@ -60,25 +62,29 @@ export async function taxEstimateTool({
   range?: string;
   take?: number;
   token?: string;
+  conversation_history?: { role: string; content: string }[];
 }) {
   const assumptions: string[] = [];
   try {
-    const taxYear = parseTaxYear(message) ?? 2026;
-    const hasExplicitTaxYear = parseTaxYear(message) !== undefined;
+    // Use LLM to extract tax parameters, with full conversation history for context
+    const extracted = await extractTaxParameters(message, {
+      conversationHistory: conversation_history || []
+    });
+
+    const taxYear = extracted.taxYear ?? 2026;
+    const hasExplicitTaxYear = extracted.taxYear !== undefined;
     if (!hasExplicitTaxYear) {
       assumptions.push('Tax year not provided; defaulted to 2026.');
     }
-    const filingStatus = parseFilingStatus(message) ?? 'single';
-    const hasExplicitFilingStatus = parseFilingStatus(message) !== undefined;
+    const filingStatus = extracted.filingStatus ?? 'single';
+    const hasExplicitFilingStatus = extracted.filingStatus !== undefined;
     if (!hasExplicitFilingStatus) {
       assumptions.push('Filing status not provided; defaulted to single.');
     }
-    const parsedOrdinaryIncome = parseOrdinaryIncome(message);
-    const ordinaryIncome = parsedOrdinaryIncome ?? 0;
-    const hasExplicitOrdinaryIncome = parsedOrdinaryIncome !== undefined;
+    const ordinaryIncome = extracted.ordinaryIncome ?? 0;
+    const hasExplicitOrdinaryIncome = extracted.ordinaryIncome !== undefined;
 
-    const parsedQualifiedDividends = parseQualifiedDividends(message);
-    const hasExplicitQualifiedDividends = parsedQualifiedDividends !== undefined;
+    const hasExplicitQualifiedDividends = extracted.qualifiedDividends !== undefined;
 
     const taxTable = loadFederalTaxTable(taxYear);
     const raw = await client.getTransactions({ impersonationId, range, take, token });
@@ -98,8 +104,8 @@ export async function taxEstimateTool({
       );
     }
 
-    // Use auto-detected qualified dividends if available, otherwise use parsed or 0
-    const finalQualifiedDividends = hasExplicitQualifiedDividends ? parsedQualifiedDividends : totals.qualifiedDividends;
+    // Use auto-detected qualified dividends if available, otherwise use extracted or 0
+    const finalQualifiedDividends = hasExplicitQualifiedDividends ? extracted.qualifiedDividends : totals.qualifiedDividends;
     const hasAutoDetectedQualified = totals.qualifiedDividends > 0 && !hasExplicitQualifiedDividends;
 
     // Only add the non-qualified assumption if there are dividends and none were auto-detected as qualified
@@ -145,21 +151,26 @@ export async function taxEstimateTool({
       );
     }
 
+    // Only ask for missing params if they're actually not provided AND couldn't be extracted
+    // Don't ask if we successfully extracted them OR if they'll be used from defaults
     const missingParams: { param: string; question: string }[] = [];
-    if (!hasExplicitTaxYear) {
+
+    // If we have conversation history, don't ask for params that were likely mentioned
+    // User provided values should be in the answer, not in missing_params
+    if (!hasExplicitTaxYear && (!conversation_history || conversation_history.length === 0)) {
       missingParams.push({
         param: 'tax_year',
         question: 'Which tax year do you want the estimate for? (e.g. 2026)'
       });
     }
-    if (!hasExplicitFilingStatus) {
+    if (!hasExplicitFilingStatus && (!conversation_history || conversation_history.length === 0)) {
       missingParams.push({
         param: 'filing_status',
         question:
           'What is your filing status? (e.g. single, married filing jointly, head of household, married filing separately)'
       });
     }
-    if (!hasExplicitOrdinaryIncome) {
+    if (!hasExplicitOrdinaryIncome && (!conversation_history || conversation_history.length === 0)) {
       missingParams.push({
         param: 'ordinary_income',
         question:
@@ -728,6 +739,202 @@ function calculateAMT({
   }
 
   return { amt: amtTax };
+}
+
+async function extractTaxParameters(
+  message: string,
+  context?: {
+    conversationHistory?: { role: string; content: string }[];
+  }
+): Promise<{
+  taxYear?: number;
+  filingStatus?: FilingStatus;
+  ordinaryIncome?: number;
+  qualifiedDividends?: number;
+}> {
+  try {
+    // Try LLM-based extraction first
+    const openRouterApiKey = process.env.OPENROUTER_API_KEY ?? process.env.API_KEY_OPENROUTER;
+    const openAiApiKey = process.env.OPENAI_API_KEY;
+    const apiKey = openRouterApiKey ?? openAiApiKey ?? '';
+
+    if (!apiKey) {
+      // Fall back to regex if no API key
+      return fallbackRegexExtraction(message);
+    }
+
+    const usingOpenRouter = Boolean(openRouterApiKey);
+    const requestUrl = usingOpenRouter
+      ? 'https://openrouter.ai/api/v1/chat/completions'
+      : 'https://api.openai.com/v1/chat/completions';
+    const model = process.env.OPENAI_MODEL || (usingOpenRouter ? 'openai/gpt-4o-mini' : 'gpt-4o-mini');
+
+    // Build conversation context from history, extracting all previously mentioned values
+    const conversationHistory = context?.conversationHistory || [];
+
+    // Find any mentions of years, filing statuses, and numbers that look like income
+    const mentionedYears = extractAllYears(conversationHistory);
+    const mentionedFilingStatuses = extractAllFilingStatuses(conversationHistory);
+    const mentionedIncomes = extractAllNumbers(conversationHistory);
+
+    const conversationContext =
+      conversationHistory.length > 0
+        ? `\nFull conversation history:
+${conversationHistory.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n')}
+
+Previously mentioned values in conversation:
+- Years mentioned: ${mentionedYears.length > 0 ? mentionedYears.join(', ') : 'none'}
+- Filing statuses mentioned: ${mentionedFilingStatuses.length > 0 ? mentionedFilingStatuses.join(', ') : 'none'}
+- Income/numbers mentioned: ${mentionedIncomes.length > 0 ? mentionedIncomes.slice(0, 5).join(', ') : 'none'}`
+        : '';
+
+    const extractionPrompt = `Extract tax parameters from this conversation. Return ONLY a JSON object (no markdown, no extra text).
+
+${conversationContext}
+
+Latest user message: "${message}"
+
+Extract these fields (ALWAYS look at ALL previous messages, keep values that were mentioned before):
+{
+  "tax_year": <number or null, e.g. 2026>,
+  "filing_status": <"single", "marriedFilingJointly", "marriedFilingSeparately", "headOfHousehold", or null>,
+  "ordinary_income": <number or null, e.g. 50000>,
+  "qualified_dividends": <number or null, e.g. 1000>
+}
+
+CRITICAL RULES:
+1. Look at the ENTIRE conversation from beginning to end, not just the latest message
+2. If a value was mentioned ANYWHERE in the conversation, extract it (don't lose it)
+3. Accept any format: "50000 income", "income is 50000", "I make 50k", "single", "married", "2026", etc.
+4. When user provides only one value, keep all previously mentioned values
+
+Examples:
+- Conversation: "single and 50000" / "2026" → {"tax_year": 2026, "filing_status": "single", "ordinary_income": 50000, "qualified_dividends": null}
+- Conversation: "2026, single" / "50000" → {"tax_year": 2026, "filing_status": "single", "ordinary_income": 50000, "qualified_dividends": null}
+- Conversation: "50000 income" / "single" / "2026" → ALL THREE should be in final extraction
+
+Return ONLY the JSON object, nothing else.`;
+
+    const response = await callOpenAi({
+      apiKey,
+      model,
+      requestUrl,
+      messages: [{ role: 'user', content: extractionPrompt }],
+      requireJson: false,
+      tier: 'fast',
+      timeoutMs: 3000,
+      candidateIndex: 0,
+      traceContext: undefined
+    });
+
+    if (!response) {
+      return fallbackRegexExtraction(message);
+    }
+
+    const parsed = JSON.parse(response.trim());
+
+    // If LLM didn't extract a value, fall back to helper extraction from conversation
+    const taxYear =
+      typeof parsed.tax_year === 'number'
+        ? parsed.tax_year
+        : mentionedYears.length > 0
+          ? mentionedYears[0]
+          : undefined;
+    const filingStatus =
+      isValidFilingStatus(parsed.filing_status)
+        ? parsed.filing_status
+        : mentionedFilingStatuses.length > 0
+          ? (mentionedFilingStatuses[0] as FilingStatus)
+          : undefined;
+    const ordinaryIncome =
+      typeof parsed.ordinary_income === 'number' && parsed.ordinary_income >= 0
+        ? parsed.ordinary_income
+        : mentionedIncomes.length > 0
+          ? mentionedIncomes[0]
+          : undefined;
+    const qualifiedDividends =
+      typeof parsed.qualified_dividends === 'number' && parsed.qualified_dividends >= 0
+        ? parsed.qualified_dividends
+        : undefined;
+
+    return {
+      taxYear,
+      filingStatus,
+      ordinaryIncome,
+      qualifiedDividends
+    };
+  } catch {
+    // Fall back to regex on any LLM error
+    return fallbackRegexExtraction(message);
+  }
+}
+
+function isValidFilingStatus(value: unknown): value is FilingStatus {
+  return (
+    value === 'single' ||
+    value === 'marriedFilingJointly' ||
+    value === 'marriedFilingSeparately' ||
+    value === 'headOfHousehold'
+  );
+}
+
+function extractAllYears(conversationHistory: { role: string; content: string }[]): number[] {
+  const years = new Set<number>();
+  for (const msg of conversationHistory) {
+    const matches = msg.content.match(/\b(20\d{2})\b/g);
+    if (matches) {
+      matches.forEach((y) => {
+        const year = Number(y);
+        if (Number.isFinite(year)) years.add(year);
+      });
+    }
+  }
+  return Array.from(years).sort((a, b) => b - a); // Most recent first
+}
+
+function extractAllFilingStatuses(conversationHistory: { role: string; content: string }[]): string[] {
+  const statuses = new Set<string>();
+  const fullText = conversationHistory.map((m) => m.content).join(' ').toLowerCase();
+
+  if (/\b(head of household|hoh)\b/.test(fullText)) statuses.add('headOfHousehold');
+  if (/\b(married filing jointly|mfj)\b/.test(fullText)) statuses.add('marriedFilingJointly');
+  if (/\b(married filing separately|mfs)\b/.test(fullText)) statuses.add('marriedFilingSeparately');
+  if (/\bsingle\b/.test(fullText)) statuses.add('single');
+
+  return Array.from(statuses);
+}
+
+function extractAllNumbers(conversationHistory: { role: string; content: string }[]): number[] {
+  const numbers = new Set<number>();
+  for (const msg of conversationHistory) {
+    const matches = msg.content.match(/\$?(\d{1,3}(?:,\d{3})*(?:\.\d+)?)|(\d+k)/gi);
+    if (matches) {
+      matches.forEach((numStr) => {
+        const cleaned = numStr.replace(/[$,k]/g, '');
+        const num = Number(cleaned);
+        if (Number.isFinite(num) && num > 0) {
+          // Scale 'k' suffix
+          const scaled = numStr.toLowerCase().includes('k') ? num * 1000 : num;
+          numbers.add(scaled);
+        }
+      });
+    }
+  }
+  return Array.from(numbers).sort((a, b) => b - a); // Largest first
+}
+
+function fallbackRegexExtraction(message: string): {
+  taxYear?: number;
+  filingStatus?: FilingStatus;
+  ordinaryIncome?: number;
+  qualifiedDividends?: number;
+} {
+  return {
+    taxYear: parseTaxYear(message),
+    filingStatus: parseFilingStatus(message),
+    ordinaryIncome: parseOrdinaryIncome(message),
+    qualifiedDividends: parseQualifiedDividends(message)
+  };
 }
 
 function parseActivity(value: unknown): ParsedActivity | undefined {

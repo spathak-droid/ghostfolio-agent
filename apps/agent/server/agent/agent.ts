@@ -390,6 +390,7 @@ export function createAgent({
 
             const toolStartedAt = Date.now();
             const result = await executeTool({
+              conversationHistory: conversation,
               dateFrom: toolDateFrom,
               dateTo: toolDateTo,
               impersonationId,

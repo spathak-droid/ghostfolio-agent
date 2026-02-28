@@ -22,6 +22,8 @@ export const SELECTABLE_KEYWORD_HINTS: Readonly<Record<string, string[]>> = {
     'estimate tax',
     'calculate tax',
     'calculate my tax',
+    'do my taxes',
+    'do taxes',
     'my taxes',
     'capital gains tax',
     'tax liability',
@@ -29,7 +31,10 @@ export const SELECTABLE_KEYWORD_HINTS: Readonly<Record<string, string[]>> = {
     'dividend tax',
     'how much tax',
     'what are my taxes',
-    'what is my tax'
+    'what is my tax',
+    'what\'s my tax',
+    'compute tax',
+    'file taxes'
   ],
   compliance_check: [
     'compliance',

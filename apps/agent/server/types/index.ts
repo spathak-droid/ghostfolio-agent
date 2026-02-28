@@ -128,6 +128,7 @@ export interface AgentChatResponse {
 
 /** Run context is passed as first arg when invoked via traceable(); input (params) may be first or second. */
 export interface AgentToolInput {
+  conversation_history?: { role: string; content: string }[];
   impersonationId?: string;
   message: string;
   regulations?: string[];

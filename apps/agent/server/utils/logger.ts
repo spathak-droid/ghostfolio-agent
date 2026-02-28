@@ -6,7 +6,9 @@
  * Failure modes: none; ignores logging failures.
  */
 
-const LEVEL = (process.env.AGENT_LOG_LEVEL ?? (process.env.NODE_ENV === 'production' ? 'silent' : 'info')).toLowerCase();
+const LEVEL = (process.env.AGENT_LOG_LEVEL ?? (process.env.NODE_ENV === 'production' ? 'silent' : 'info'))
+  .toLowerCase()
+  .trim();
 const DEBUG = LEVEL === 'debug';
 const INFO = DEBUG || LEVEL === 'info';
 const WARN = INFO || LEVEL === 'warn';

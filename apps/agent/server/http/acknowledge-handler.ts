@@ -64,19 +64,35 @@ export function createAcknowledgeHandler({
       return;
     }
 
+    // Unconditional so you always see when acknowledge is hit
+    // eslint-disable-next-line no-console
+    console.log('[agent] ACKNOWLEDGE request', message.slice(0, 50));
+    logger.info('[agent.acknowledge] request', {
+      conversationId: conversationId || '(new)',
+      messagePreview: message.slice(0, 60)
+    });
+
     // Match createOpenAiClientFromEnv key priority: OpenRouter first, then OpenAI
     const openRouterApiKey = process.env.OPENROUTER_API_KEY ?? process.env.API_KEY_OPENROUTER;
     const openAiApiKey = process.env.OPENAI_API_KEY;
     const apiKey = openRouterApiKey ?? openAiApiKey ?? '';
     const usingOpenRouter = Boolean(openRouterApiKey);
 
+    logger.debug('[acknowledge] API key check', {
+      hasOpenRouterKey: Boolean(openRouterApiKey),
+      hasOpenAiKey: Boolean(openAiApiKey),
+      hasApiKey: Boolean(apiKey),
+      usingOpenRouter
+    });
+
     if (!apiKey) {
+      logger.debug('[acknowledge] No API key available, returning fallback');
       response.status(200).json({ forWidget: 'On it...' });
       return;
     }
 
     const requestUrl = usingOpenRouter ? OPENROUTER_REQUEST_URL : OPENAI_REQUEST_URL;
-    const model = usingOpenRouter ? 'openai/gpt-4o-mini' : 'gpt-4o-mini';
+    const model = process.env.OPENAI_MODEL || (usingOpenRouter ? 'openai/gpt-4o-mini' : 'gpt-4o-mini');
 
     try {
       const baseUrlResolution = resolveGhostfolioBaseUrl({
@@ -127,8 +143,11 @@ export function createAcknowledgeHandler({
 
       response.status(200).json({ forWidget: ack?.trim() || 'On it...' });
     } catch (err) {
-      logger.debug('[acknowledge] failed, using fallback', {
-        message: err instanceof Error ? err.message : String(err)
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const errStack = err instanceof Error ? err.stack : undefined;
+      logger.debug('[acknowledge] LLM call failed, using fallback', {
+        message: errMsg,
+        stack: errStack
       });
       response.status(200).json({ forWidget: 'On it...' });
     }

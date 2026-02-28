@@ -22,6 +22,10 @@ function installCrashHandlers(): void {
 
 installCrashHandlers();
 
+// Keep event loop active from the start (avoids exit under nodemon before server is fully bound)
+// eslint-disable-next-line @typescript-eslint/no-empty-function
+const earlyKeepAlive = setInterval(() => {}, 1000);
+
 import { createAgent, createDefaultContextManager } from './agent';
 import {
   createConversationStoreFromEnv,
@@ -570,9 +574,41 @@ function createAgentWithClient(ghostfolioClient: GhostfolioClient, storeScopeId:
     widgetCorsOrigin,
     widgetDistPath
   });
-  app.listen(port, host, () => {
-    logger.info(`[agent] listening on http://${host}:${port}`);
+  const effectiveLogLevel = (
+    process.env.AGENT_LOG_LEVEL ?? (process.env.NODE_ENV === 'production' ? 'silent' : 'info')
+  )
+    .toLowerCase()
+    .trim();
+  // Always print so you can confirm level even when LOG_LEVEL is silent
+  // eslint-disable-next-line no-console
+  console.log(
+    `[agent] listening on http://${host}:${port} AGENT_LOG_LEVEL=${effectiveLogLevel || '(default)'}`
+  );
+  // eslint-disable-next-line no-console
+  console.log('[agent] Widget chat requests will log here. Keep this terminal open. Test: curl http://localhost:4444/health');
+  const server = app.listen(port, host, () => {
+    logger.info(
+      `[agent] ready LOG_LEVEL=${effectiveLogLevel} (debug=request/tool logs)`
+    );
   });
+  // Keep process alive under nodemon/shell (refs + tight interval so event loop never drains)
+  const keepAlive = setInterval(() => {
+    if (!server.listening) clearInterval(keepAlive);
+  }, 30000);
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  const tick = setInterval(() => {}, 1000);
+  server.on('close', () => {
+    clearInterval(earlyKeepAlive);
+    clearInterval(keepAlive);
+    clearInterval(tick);
+  });
+  const g = globalThis as unknown as { __agentServer?: unknown; __agentKeepAlive?: NodeJS.Timeout; __agentTick?: NodeJS.Timeout };
+  g.__agentServer = server;
+  g.__agentKeepAlive = keepAlive;
+  g.__agentTick = tick;
+  if (process.stdin.isTTY === false && typeof process.stdin.resume === 'function') {
+    process.stdin.resume();
+  }
 } catch (startupError) {
   const message =
     startupError instanceof Error ? startupError.message : String(startupError);

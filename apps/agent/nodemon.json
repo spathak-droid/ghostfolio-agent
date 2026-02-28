@@ -1,7 +1,10 @@
 {
   "watch": ["apps/agent/server", "apps/agent/widget"],
   "ext": "ts",
-  "exec": "npm run build:agent-widget && DOTENV_CONFIG_PATH=.env ts-node apps/agent/server/index.ts",
+  "exec": "npx ts-node apps/agent/server/index.ts",
   "delay": "500",
-  "ignore": ["*.spec.ts", "node_modules"]
+  "ignore": ["*.spec.ts", "node_modules"],
+  "env": {
+    "DOTENV_CONFIG_PATH": ".env"
+  }
 }

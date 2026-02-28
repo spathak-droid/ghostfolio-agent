@@ -88,6 +88,7 @@ export {
 } from './tool-result-utils';
 
 export async function executeTool({
+  conversationHistory,
   dateFrom,
   dateTo,
   impersonationId,
@@ -106,6 +107,7 @@ export async function executeTool({
   wantsLatest,
   createOrderParams
 }: {
+  conversationHistory?: { role: string; content: string }[];
   dateFrom?: string;
   dateTo?: string;
   impersonationId?: string;
@@ -208,7 +210,7 @@ export async function executeTool({
       traceable(tools.taxEstimate, {
         name: `tool.tax_estimate.turn_${traceContext.turnId}`,
         run_type: 'tool'
-      })(runtimeTrace, { impersonationId, message, range, take, token })
+      })(runtimeTrace, { conversation_history: conversationHistory, impersonationId, message, range, take, token })
     );
   }
 

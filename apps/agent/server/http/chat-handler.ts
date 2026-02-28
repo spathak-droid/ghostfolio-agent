@@ -125,6 +125,10 @@ export function createChatHandler({
 
     const resolvedGhostfolioBaseUrl = ghostfolioBaseUrlResolution.url;
     const ghostfolioClient = new GhostfolioClient(resolvedGhostfolioBaseUrl);
+    logger.info('[agent.chat] request', {
+      conversationId: validation.params.conversationId,
+      messagePreview: String(validation.params.message).slice(0, 60)
+    });
     logger.debug('[agent-auth] Agent received:', {
       hasTokenFromBody,
       hasTokenFromHeader,
@@ -183,6 +187,9 @@ export function createChatHandler({
         }
       })();
 
+      // Unconditional so you see completion even when LOG_LEVEL is wrong
+      // eslint-disable-next-line no-console
+      console.log(`[agent] CHAT DONE ${totalMs}ms`);
       response.status(200).json(chatResponse);
     } catch (error) {
       const message =

@@ -92,7 +92,12 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
       properties: {
         ...COMMON_INPUT.properties,
         range: { type: 'string', description: 'Optional Ghostfolio range (e.g. max, ytd, 1y)' },
-        take: { type: 'number', description: 'Optional max activities to load (default 200)' }
+        take: { type: 'number', description: 'Optional max activities to load (default 200)' },
+        conversation_history: {
+          type: 'array',
+          description:
+            'Optional full conversation history (array of {role: "user"|"assistant", content: string}) for context when extracting parameters from follow-up messages'
+        }
       },
       required: ['message']
     },

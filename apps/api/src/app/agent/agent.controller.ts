@@ -24,6 +24,9 @@ export class AgentController {
     @Headers('authorization') authorizationHeader?: string,
     @Headers('impersonation-id') impersonationId?: string
   ): Promise<AgentChatResponse> {
+    // Unconditional: so you always see when the widget hits the API
+    // eslint-disable-next-line no-console
+    console.log('[API agent] POST /chat received, message:', (body?.message ?? '').slice(0, 50));
     const hasAuthHeader = Boolean(authorizationHeader?.trim());
     const hasBodyToken = Boolean(body.accessToken?.trim());
     // #region agent log
@@ -43,6 +46,8 @@ export class AgentController {
     @Headers('authorization') authorizationHeader?: string,
     @Headers('impersonation-id') impersonationId?: string
   ): Promise<{ forWidget: string }> {
+    // eslint-disable-next-line no-console
+    console.log('[API agent] POST /chat/acknowledge received');
     return this.agentService.acknowledge(body, authorizationHeader, impersonationId);
   }
 

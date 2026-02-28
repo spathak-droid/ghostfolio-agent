@@ -35,6 +35,13 @@ export function createAgentApp({
 }) {
   const app = express();
 
+  // Unconditional request log so you always see when traffic hits the agent (no AGENT_LOG_LEVEL needed)
+  app.use((req, _res, next) => {
+    // eslint-disable-next-line no-console
+    console.log(`[agent] INCOMING ${req.method} ${req.path}`);
+    next();
+  });
+
   app.use(express.json({ limit: '200kb' }));
 
   app.use('/widget', (_request, response, next) => {
