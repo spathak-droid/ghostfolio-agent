@@ -54,6 +54,7 @@ function isPriceWithinTolerance(primary: number, secondary: number): boolean {
 /**
  * Extract potential symbol candidates from message when no explicit symbols provided.
  * Looks for common aliases (bitcoin, btc, etc.) and uppercase ticker symbols (AAPL, TSLA).
+ * Prioritizes uppercase tickers to preserve intended symbol format.
  */
 function extractSymbolsFromMessage(message: string): string[] {
   const normalized = message.toLowerCase();
@@ -61,9 +62,18 @@ function extractSymbolsFromMessage(message: string): string[] {
     'bitcoin', 'btc', 'ethereum', 'eth', 'solana', 'sol',
     'tesla', 'tsla', 'apple', 'aapl', 'nvidia', 'nvda'
   ];
+  // Find aliases (company names) in lowercase form
   const found = aliasKeys.filter(key => normalized.includes(key));
+
+  // Find uppercase ticker symbols (2-5 capital letters as a word)
   const tickerMatch = message.match(/\b([A-Z]{2,5})\b/g) ?? [];
-  return [...new Set([...found, ...tickerMatch])];
+
+  // Combine: uppercase tickers first (preserve case), then lowercase aliases
+  // Use Set to deduplicate (e.g., if both "NVDA" and "nvidia" found)
+  const symbols = [...new Set([...tickerMatch, ...found])];
+
+  console.log('[fact-check.extractSymbolsFromMessage]', { message, symbols }); // DEBUG
+  return symbols;
 }
 
 export async function factCheckTool({
