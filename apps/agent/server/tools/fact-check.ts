@@ -17,6 +17,13 @@ import { marketDataTool } from './market-data';
 const PRICE_TOLERANCE_PERCENT = 0.5;
 const MAX_SYMBOLS = 10;
 
+/** Map CoinGecko symbol IDs to Yahoo Finance symbols for cross-source comparison. */
+const COINGECKO_TO_YAHOO: Readonly<Record<string, string>> = {
+  bitcoin: 'BTC-USD',
+  ethereum: 'ETH-USD',
+  solana: 'SOL-USD'
+};
+
 export interface FactCheckToolInput {
   client: GhostfolioClient;
   impersonationId?: string;
@@ -43,6 +50,21 @@ function isPriceWithinTolerance(primary: number, secondary: number): boolean {
   return pct <= PRICE_TOLERANCE_PERCENT;
 }
 
+/**
+ * Extract potential symbol candidates from message when no explicit symbols provided.
+ * Looks for common aliases (bitcoin, btc, etc.) and uppercase ticker symbols (AAPL, TSLA).
+ */
+function extractSymbolsFromMessage(message: string): string[] {
+  const normalized = message.toLowerCase();
+  const aliasKeys = [
+    'bitcoin', 'btc', 'ethereum', 'eth', 'solana', 'sol',
+    'tesla', 'tsla', 'apple', 'aapl', 'nvidia', 'nvda'
+  ];
+  const found = aliasKeys.filter(key => normalized.includes(key));
+  const tickerMatch = message.match(/\b([A-Z]{2,5})\b/g) ?? [];
+  return [...new Set([...found, ...tickerMatch])];
+}
+
 export async function factCheckTool({
   client,
   impersonationId,
@@ -51,15 +73,18 @@ export async function factCheckTool({
   symbols: inputSymbols
 }: FactCheckToolInput): Promise<Record<string, unknown>> {
   try {
-    // Use explicit symbols if provided, otherwise pass message to market_data for resolution
+    // Extract symbols from message if not explicitly provided
+    const resolvedInputSymbols = Array.isArray(inputSymbols) && inputSymbols.length > 0
+      ? inputSymbols.filter(Boolean).slice(0, MAX_SYMBOLS)
+      : extractSymbolsFromMessage(message ?? '');
+
+    // Pass explicit symbols to market_data for resolution
     const marketDataParams = {
       client,
       impersonationId,
       message: message ?? '',
       token,
-      ...(Array.isArray(inputSymbols) && inputSymbols.length > 0
-        ? { symbols: inputSymbols.filter(Boolean).slice(0, MAX_SYMBOLS) }
-        : {}),
+      ...(resolvedInputSymbols.length > 0 ? { symbols: resolvedInputSymbols } : {}),
       metrics: ['price']
     };
 
@@ -68,13 +93,16 @@ export async function factCheckTool({
     const primarySymbols = Array.isArray(primaryResult.symbols) ? primaryResult.symbols : [];
     const primaryItems = primarySymbols as PrimarySymbolItem[];
 
-    const symbolsToFetch: string[] = [];
+    // Build mappings from primary symbol (possibly CoinGecko id) to Yahoo Finance symbol
+    const symbolMappings: { primarySymbol: string; yahooSymbol: string }[] = [];
     for (const item of primaryItems) {
       if (item.error || typeof item.currentPrice !== 'number' || item.currentPrice <= 0) continue;
-      if (!symbolsToFetch.includes(item.symbol)) {
-        symbolsToFetch.push(item.symbol);
+      const yahooSymbol = COINGECKO_TO_YAHOO[item.symbol.toLowerCase()] ?? item.symbol;
+      if (!symbolMappings.some(m => m.yahooSymbol === yahooSymbol)) {
+        symbolMappings.push({ primarySymbol: item.symbol, yahooSymbol });
       }
     }
+    const symbolsToFetch = symbolMappings.map(m => m.yahooSymbol);
 
     let secondary: YahooFinanceClientResponse | null = null;
     if (symbolsToFetch.length > 0) {
@@ -112,13 +140,16 @@ export async function factCheckTool({
         continue;
       }
 
-      const secData = secondary.data[item.symbol];
+      // Use mapped Yahoo symbol for secondary lookup
+      const mapping = symbolMappings.find(m => m.primarySymbol === item.symbol);
+      const yahooSymbol = mapping?.yahooSymbol ?? item.symbol;
+      const secData = secondary.data[yahooSymbol];
       if (!secData || typeof secData.regularMarketPrice !== 'number' || !Number.isFinite(secData.regularMarketPrice)) {
         comparisons.push({
           symbol: item.symbol,
           primaryPrice: price,
           match: true,
-          note: `No Yahoo Finance price for ${item.symbol}`
+          note: `No Yahoo Finance price for ${yahooSymbol}`
         });
         allMatch = false;
         continue;
