@@ -1,6 +1,6 @@
 {
   "name": "ghostfolio-agent",
-  "version": "2.243.0",
+  "version": "2.243.1",
   "description": "AI-powered portfolio assistant agent for Ghostfolio",
   "main": "dist/server/index.js",
   "bin": {
