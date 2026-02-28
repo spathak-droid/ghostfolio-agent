@@ -148,7 +148,13 @@ export async function factCheckTool({
         allMatch = false;
         const errMsg =
           secondary && !secondary.ok ? (secondary as { message?: string }).message : 'unknown';
-        discrepancyParts.push(`${item.symbol}: Could not verify (${errMsg})`);
+        // Identify which source failed
+        const sourceInfo = (secondary as { error_code?: string })?.error_code?.includes('FINNHUB')
+          ? 'Finnhub'
+          : (secondary as { error_code?: string })?.error_code?.includes('COINGECKO')
+            ? 'CoinGecko'
+            : 'Secondary source';
+        discrepancyParts.push(`${item.symbol}: Could not verify (${sourceInfo}: ${errMsg})`);
         continue;
       }
 
