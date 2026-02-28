@@ -619,7 +619,7 @@ Only set ask_user if TRULY ambiguous. Prefer to guess confidently for typos.`,
                   role
                 })),
                 {
-                  content: `User message: "${message}"\nTools: ${selectedTools.join(', ')}\n\nReturn JSON with tool parameters. Set ask_user ONLY if symbol is truly ambiguous (not for typos).`,
+                  content: `User message: "${message}"\nSelected tools: ${selectedTools.join(', ')}\n\nIMPORTANT: Return JSON with a key for EACH selected tool, even if null.\nExample: {"market_data": {...}, "fact_check": {...}, "ask_user": null}\n\nIf both market_data and fact_check are selected, BOTH must get the SAME symbols extracted from the message.\nSet ask_user ONLY if symbol is truly ambiguous (not for typos).`,
                   role: 'user'
                 }
               ]
@@ -657,6 +657,18 @@ Only set ask_user if TRULY ambiguous. Prefer to guess confidently for typos.`,
                   return [tool, toolParams as Record<string, unknown>];
                 })
               ) as Record<string, Record<string, unknown> | undefined>;
+
+              // ENFORCE: If both market_data and fact_check are selected, they must have matching symbols
+              if (selectedTools.includes('market_data') && selectedTools.includes('fact_check')) {
+                const marketDataSymbols = (result.market_data?.symbols as string[] | undefined) || [];
+                const factCheckParams = result.fact_check || {};
+                if (marketDataSymbols.length > 0) {
+                  result.fact_check = {
+                    ...factCheckParams,
+                    symbols: marketDataSymbols
+                  };
+                }
+              }
 
               logger.debug('[llm.generate_tool_parameters] OUTPUT', {
                 selectedTools,
