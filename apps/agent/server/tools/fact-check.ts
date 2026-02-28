@@ -20,6 +20,7 @@ import {
 import type { GhostfolioClient } from '../clients';
 import { toToolErrorPayload } from './tool-error';
 import { marketDataTool } from './market-data';
+import { logger } from '../utils';
 
 const PRICE_TOLERANCE_PERCENT = 0.5;
 const MAX_SYMBOLS = 10;
@@ -72,7 +73,7 @@ function extractSymbolsFromMessage(message: string): string[] {
   // Use Set to deduplicate (e.g., if both "NVDA" and "nvidia" found)
   const symbols = [...new Set([...tickerMatch, ...found])];
 
-  console.log('[fact-check.extractSymbolsFromMessage]', { message, symbols }); // DEBUG
+  logger.debug('[fact-check.extractSymbolsFromMessage]', { message, symbols });
   return symbols;
 }
 
@@ -89,7 +90,7 @@ export async function factCheckTool({
       ? inputSymbols.filter(Boolean).slice(0, MAX_SYMBOLS)
       : extractSymbolsFromMessage(message ?? '');
 
-    console.log('[fact-check] STARTING', {
+    logger.debug('[fact-check] STARTING', {
       inputSymbols: inputSymbols || 'undefined',
       resolvedInputSymbols,
       message: message?.slice(0, 100),
@@ -106,7 +107,7 @@ export async function factCheckTool({
       metrics: ['price']
     };
 
-    console.log('[fact-check] Calling market_data with params:', {
+    logger.debug('[fact-check] Calling market_data with params:', {
       hasSymbols: !!marketDataParams.symbols,
       symbols: marketDataParams.symbols,
       message: marketDataParams.message.slice(0, 50)
@@ -114,7 +115,7 @@ export async function factCheckTool({
 
     const primaryResult = await marketDataTool(marketDataParams);
 
-    console.log('[fact-check] market_data result:', {
+    logger.debug('[fact-check] market_data result:', {
       success: primaryResult.success || 'unknown',
       symbolsCount: Array.isArray(primaryResult.symbols) ? primaryResult.symbols.length : 0,
       symbols: Array.isArray(primaryResult.symbols) ? primaryResult.symbols.map((s: any) => ({ symbol: s.symbol, hasError: !!s.error })) : 'N/A',
@@ -153,7 +154,7 @@ export async function factCheckTool({
     // Try Finnhub first (most reliable), then fall back to CoinGecko for crypto symbols
     let secondary: (FinnhubClientResponse | CoinGeckoClientResponse) | null = null;
     if (symbolsToFetch.length > 0) {
-      console.log('[fact-check] Calling Finnhub with symbolsToFetch:', {
+      logger.debug('[fact-check] Calling Finnhub with symbolsToFetch:', {
         symbolsToFetch,
         count: symbolsToFetch.length,
         primaryItemsCount: primaryItems.length,
@@ -162,7 +163,7 @@ export async function factCheckTool({
 
       secondary = await getFinnhubQuote(symbolsToFetch);
 
-      console.log('[fact-check] Finnhub response:', {
+      logger.debug('[fact-check] Finnhub response:', {
         ok: secondary.ok,
         error_code: (secondary as any).error_code,
         message: (secondary as any).message,
@@ -176,21 +177,21 @@ export async function factCheckTool({
           .map(item => symbolToCoinGeckoId(item.symbol))
           .filter((id): id is string => !!id);
 
-        console.log('[fact-check] Finnhub failed, trying CoinGecko with cryptoIds:', {
+        logger.debug('[fact-check] Finnhub failed, trying CoinGecko with cryptoIds:', {
           cryptoIds,
           count: cryptoIds.length
         });
 
         if (cryptoIds.length > 0) {
           secondary = await getSimplePrice(cryptoIds, 'usd');
-          console.log('[fact-check] CoinGecko response:', {
+          logger.debug('[fact-check] CoinGecko response:', {
             ok: secondary.ok,
             dataKeys: secondary.ok ? Object.keys(secondary.data || {}) : 'N/A'
           });
         }
       }
     } else {
-      console.log('[fact-check] No symbols to fetch - symbolsToFetch is empty', {
+      logger.debug('[fact-check] No symbols to fetch - symbolsToFetch is empty', {
         resolvedInputSymbols,
         primaryItems: primaryItems.map(i => i.symbol),
         validItems: validItems.map(i => i.symbol)

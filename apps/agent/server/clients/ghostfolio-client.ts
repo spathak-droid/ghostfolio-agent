@@ -1,5 +1,6 @@
 import { normalizeAuthToken } from '../auth';
 import { GhostfolioApiError } from './ghostfolio-api-error';
+import { safeImpersonationId } from '../validation/common';
 import { logger } from '../utils';
 
 /** Request body for POST /api/v1/order (create order). */
@@ -255,8 +256,11 @@ export class GhostfolioClient {
     if (normalizedToken) {
       headers.Authorization = `Bearer ${normalizedToken}`;
     }
-    if (impersonationId) {
-      headers['Impersonation-Id'] = impersonationId;
+    const sanitized = safeImpersonationId(impersonationId);
+    if (sanitized) {
+      headers['Impersonation-Id'] = sanitized;
+    } else if (impersonationId) {
+      logger.warn('[ghostfolio-client] impersonationId rejected by safeImpersonationId');
     }
     return headers;
   }

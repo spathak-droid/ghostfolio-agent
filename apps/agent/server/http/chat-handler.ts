@@ -187,14 +187,13 @@ export function createChatHandler({
         }
       })();
 
-      // Unconditional so you see completion even when LOG_LEVEL is wrong
-      // eslint-disable-next-line no-console
-      console.log(`[agent] CHAT DONE ${totalMs}ms`);
+      logger.info('[agent] CHAT DONE', { totalMs });
       response.status(200).json(chatResponse);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Unhandled agent.chat failure';
-      logger.error('[agent.chat] UNHANDLED_ERROR', { message });
+      const stack = error instanceof Error ? error.stack : undefined;
+      logger.error('[agent.chat] UNHANDLED_ERROR', { message, stack });
       sendAgentFailed(response, 'AGENT_CHAT_FAILED', {
         answer: 'Something went wrong. Please try again.'
       });

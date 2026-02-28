@@ -2,7 +2,7 @@ import express from 'express';
 import { existsSync } from 'fs';
 import type { RequestHandler } from 'express';
 
-import { resolveWidgetCorsOrigin, resolveWidgetDistPath } from '../utils';
+import { logger, resolveWidgetCorsOrigin, resolveWidgetDistPath } from '../utils';
 
 export function createAgentApp({
   acknowledgeHandler,
@@ -35,10 +35,9 @@ export function createAgentApp({
 }) {
   const app = express();
 
-  // Unconditional request log so you always see when traffic hits the agent (no AGENT_LOG_LEVEL needed)
+  // Request log gated by AGENT_LOG_LEVEL
   app.use((req, _res, next) => {
-    // eslint-disable-next-line no-console
-    console.log(`[agent] INCOMING ${req.method} ${req.path}`);
+    logger.debug(`[agent] INCOMING ${req.method} ${req.path}`);
     next();
   });
 

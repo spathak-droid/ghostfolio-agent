@@ -7,8 +7,10 @@
 
 import type { AgentToolName } from '../types';
 import {
+  hasControlCharacters,
   MAX_ARRAY_LENGTH,
   MAX_STRING_FIELD_LENGTH,
+  METRIC_VALUES,
   optionalDate,
   RANGE_VALUES,
   SYMBOL_PATTERN,
@@ -29,6 +31,7 @@ export function validateToolArgs(
   args: {
     dateFrom?: string;
     dateTo?: string;
+    metrics?: string[];
     range?: string;
     regulations?: string[];
     symbol?: string;
@@ -36,7 +39,7 @@ export function validateToolArgs(
     take?: number;
   }
 ): ValidateToolArgsResult {
-  const { dateFrom, dateTo, range, regulations, symbol, symbols, take } = args;
+  const { dateFrom, dateTo, metrics, range, regulations, symbol, symbols, take } = args;
 
   if (take !== undefined && take !== null) {
     if (typeof take !== 'number' || !Number.isFinite(take)) {
@@ -109,9 +112,27 @@ export function validateToolArgs(
       if (r.length === 0 || r.length > MAX_STRING_FIELD_LENGTH * 2) {
         return { ok: false, error: `regulations[${i}] must be a non-empty string within length limit.` };
       }
+      if (hasControlCharacters(r)) {
+        return { ok: false, error: `regulations[${i}] must not contain control characters.` };
+      }
     }
   }
 
-  void toolName;
+  if (Array.isArray(metrics)) {
+    if (metrics.length > MAX_ARRAY_LENGTH) {
+      return { ok: false, error: `metrics must have at most ${MAX_ARRAY_LENGTH} items.` };
+    }
+    for (let i = 0; i < metrics.length; i++) {
+      const m = typeof metrics[i] === 'string' ? (metrics[i] as string).trim() : '';
+      if (!METRIC_VALUES.includes(m as (typeof METRIC_VALUES)[number])) {
+        return { ok: false, error: `metrics[${i}] must be one of: ${METRIC_VALUES.join(', ')}.` };
+      }
+    }
+  }
+
+  if (!toolName) {
+    return { ok: false, error: 'toolName is required.' };
+  }
+
   return { ok: true };
 }

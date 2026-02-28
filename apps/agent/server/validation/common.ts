@@ -98,6 +98,20 @@ export function hasControlCharacters(value: string): boolean {
   });
 }
 
+/**
+ * Returns the impersonationId only if it matches IMPERSONATION_ID_PATTERN and
+ * contains no control characters. Returns undefined otherwise.
+ * Use this before setting any HTTP header with an impersonation ID value.
+ */
+export function safeImpersonationId(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_IMPERSONATION_ID_LENGTH) return undefined;
+  if (hasControlCharacters(trimmed)) return undefined;
+  if (!IMPERSONATION_ID_PATTERN.test(trimmed)) return undefined;
+  return trimmed;
+}
+
 export function hasDisallowedFeedbackControlCharacters(value: string): boolean {
   return Array.from(value).some((char) => {
     const code = char.charCodeAt(0);

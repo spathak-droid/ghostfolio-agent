@@ -92,12 +92,15 @@ export async function getFinnhubQuote(
         symbol.toUpperCase()
       );
       const endpoint = isCrypto ? '/crypto/quote' : '/quote';
-      const params = new URLSearchParams({ symbol, token: apiKey });
+      const params = new URLSearchParams({ symbol });
       const url = `${baseUrl}${endpoint}?${params.toString()}`;
 
       const response = await fetch(url, {
         signal: controller.signal,
-        headers: { Accept: 'application/json' }
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${apiKey}`
+        }
       });
       clearTimeout(timeoutId);
 

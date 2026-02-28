@@ -1,0 +1,160 @@
+/**
+ * Intent classifiers: Pure functions that detect user intent from message text.
+ * All functions are stateless and used in routing decisions.
+ */
+
+export function isExplicitFactComplianceIntent(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+  const hasFactIntent =
+    /\bfact check\b/.test(normalized) ||
+    /\bfact-check\b/.test(normalized) ||
+    /\bverify\b/.test(normalized) ||
+    /\bdouble check\b/.test(normalized) ||
+    /\bdouble-check\b/.test(normalized) ||
+    /\bcross-check\b/.test(normalized) ||
+    /\bconfirm price\b/.test(normalized);
+  const hasComplianceIntent =
+    /\bcompliance\b/.test(normalized) ||
+    /\bcompliance check\b/.test(normalized) ||
+    /\bcheck .*compliance\b/.test(normalized) ||
+    /\bcompliant\b/.test(normalized) ||
+    /\bregulation\b/.test(normalized) ||
+    /\bpolicy check\b/.test(normalized) ||
+    /\bis this compliant\b/.test(normalized);
+
+  return hasFactIntent && hasComplianceIntent;
+}
+
+export function isExplicitComplianceCheckIntent(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+  return (
+    /\bcompliance check\b/.test(normalized) ||
+    /\bcheck .*compliance\b/.test(normalized) ||
+    /\bcheck .*regulation\b/.test(normalized) ||
+    /\bregulatory check\b/.test(normalized) ||
+    /\bpolicy check\b/.test(normalized) ||
+    /\bis this compliant\b/.test(normalized)
+  );
+}
+
+export function messageMatchesRetrievalPatterns(message: string): boolean {
+  const normalized = message.toLowerCase();
+  if (/\b(20\d{2})\b/.test(message)) return true;
+  if (/\b(last week|last month|last year|ytd|today|yesterday)\b/.test(normalized)) return true;
+  if (/\b(price|quote|cost|return|performance)\b/.test(normalized)) return true;
+  if (/\b[A-Z]{1,5}\b/.test(message)) return true;
+  if (/\b(btc|bitcoin|eth|ethereum)\b/.test(normalized)) return true;
+  return false;
+}
+
+export function isExplicitOrderExecutionIntent(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+
+  const advisoryPatterns = [
+    /\bshould i\s+(buy|sell)\b/,
+    /\b(do you think|would you)\b.*\b(buy|sell)\b/,
+    /\bis it (a )?good (idea )?to\s+(buy|sell)\b/,
+    /\bbuy or sell\b/,
+    /\bcan i\s+(buy|sell)\b/
+  ];
+  if (advisoryPatterns.some((pattern) => pattern.test(normalized))) {
+    return false;
+  }
+
+  if (/^(buy|sell)\b/.test(normalized)) {
+    return !normalized.includes('?');
+  }
+
+  return [
+    /\bcan you\s+(buy|sell)\b/,
+    /\b(i want to|i'd like to|please)\s+(buy|sell)\b/,
+    /\b(add|record)\s+(a\s+)?(buy|sell)\b/,
+    /\b(add|record)\s+(a\s+)?(dividend|divident|fee|interest|liability|liabilty|liablity|mortgage|loan|debt)\b/,
+    /\b(buy)\s+(a\s+)?(liability|liabilty|liablity)\b/,
+    /\b(place|execute|submit|create|update)\s+(an?\s+)?order\b/,
+    /\b(add|record)\s+(an?\s+)?activity\b/,
+    /\b(buy|sell)\s+\d+(\.\d+)?\s+[a-z0-9.-]+\b/
+  ].some((pattern) => pattern.test(normalized));
+}
+
+function isSmallTalk(message: string) {
+  const normalized = message.trim().toLowerCase();
+  return [
+    'hello',
+    'hi',
+    'hey',
+    'yo',
+    'sup',
+    'thanks',
+    'thank you',
+    'good morning',
+    'good afternoon',
+    'good evening',
+    'how are you'
+  ].includes(normalized);
+}
+
+export function classifyIntent(message: string): 'finance' | 'general' {
+  if (isSmallTalk(message)) {
+    return 'general';
+  }
+
+  return hasFinanceEntityOrAction(message) ? 'finance' : 'general';
+}
+
+function hasFinanceEntityOrAction(message: string) {
+  const normalized = message.toLowerCase();
+  if (
+    /\b(add|record|create|buy|sell)\b.*\b(order|activity|dividend|divident|fee|interest|liability|liabilty|liablity|mortgage|loan|debt)\b/.test(
+      normalized
+    )
+  ) {
+    return true;
+  }
+  const financeKeywords = [
+    'portfolio',
+    'allocation',
+    'market',
+    'price',
+    'stock',
+    'crypto',
+    'bitcoin',
+    'btc',
+    'tsla',
+    'tesla',
+    'aapl',
+    'nvda',
+    'transaction',
+    'buy',
+    'sell',
+    'dividend',
+    'divident',
+    'fee',
+    'holding',
+    'holdings',
+    'p&l',
+    'performance',
+    'return',
+    'invest',
+    'tax',
+    'taxes',
+    'capital gains',
+    'dividend',
+    'coin',
+    'compliance',
+    'regulation',
+    'balance',
+    'account',
+    'cash',
+    'interest',
+    'liability',
+    'liabilty',
+    'liablity',
+    'mortgage',
+    'loan',
+    'debt',
+    'ticker'
+  ];
+
+  return financeKeywords.some((keyword) => normalized.includes(keyword));
+}

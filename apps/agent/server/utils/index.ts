@@ -1,3 +1,4 @@
+export { AppError } from './app-error';
 export { logger } from './logger';
 export {
   toOrchestrationErrorEntry,

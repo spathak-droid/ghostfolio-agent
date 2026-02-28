@@ -64,9 +64,6 @@ export function createAcknowledgeHandler({
       return;
     }
 
-    // Unconditional so you always see when acknowledge is hit
-    // eslint-disable-next-line no-console
-    console.log('[agent] ACKNOWLEDGE request', message.slice(0, 50));
     logger.info('[agent.acknowledge] request', {
       conversationId: conversationId || '(new)',
       messagePreview: message.slice(0, 60)
