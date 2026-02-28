@@ -9,7 +9,14 @@
  * Failure modes: primary failure → tool error; secondary failure → secondary null, answer states limitation.
  */
 
-import { getYahooQuote, type YahooFinanceClientError, type YahooFinanceClientResponse } from '../clients';
+import {
+  getYahooQuote,
+  getSimplePrice,
+  symbolToCoinGeckoId,
+  type YahooFinanceClientError,
+  type YahooFinanceClientResponse,
+  type CoinGeckoClientResponse
+} from '../clients';
 import type { GhostfolioClient } from '../clients';
 import { toToolErrorPayload } from './tool-error';
 import { marketDataTool } from './market-data';
@@ -104,9 +111,22 @@ export async function factCheckTool({
     }
     const symbolsToFetch = symbolMappings.map(m => m.yahooSymbol);
 
-    let secondary: YahooFinanceClientResponse | null = null;
+    // Try Yahoo Finance first, then fall back to CoinGecko for crypto symbols
+    let secondary: (YahooFinanceClientResponse | CoinGeckoClientResponse) | null = null;
     if (symbolsToFetch.length > 0) {
       secondary = await getYahooQuote(symbolsToFetch);
+
+      // If Yahoo Finance failed, try CoinGecko for crypto symbols
+      if (!secondary.ok) {
+        const cryptoIds = primaryItems
+          .filter(item => !item.error && item.currentPrice > 0)
+          .map(item => symbolToCoinGeckoId(item.symbol))
+          .filter((id): id is string => !!id);
+
+        if (cryptoIds.length > 0) {
+          secondary = await getSimplePrice(cryptoIds, 'usd');
+        }
+      }
     }
 
     const comparisons: { symbol: string; primaryPrice: number; secondaryPrice?: number; match: boolean; note?: string }[] = [];
@@ -131,28 +151,44 @@ export async function factCheckTool({
           symbol: item.symbol,
           primaryPrice: price,
           match: false,
-          note: 'Secondary verification unavailable (Yahoo Finance failed)'
+          note: 'Secondary verification unavailable'
         });
         allMatch = false;
         const errMsg =
           secondary && !secondary.ok ? (secondary as YahooFinanceClientError).message : 'unknown';
-        discrepancyParts.push(`${item.symbol}: Could not verify against Yahoo Finance (${errMsg})`);
+        discrepancyParts.push(`${item.symbol}: Could not verify (${errMsg})`);
         continue;
       }
 
-      // Use mapped Yahoo symbol for secondary lookup
+      // Try to find secondary price from Yahoo Finance or CoinGecko
       const mapping = symbolMappings.find(m => m.primarySymbol === item.symbol);
       const yahooSymbol = mapping?.yahooSymbol ?? item.symbol;
-      const secData = secondary.data[yahooSymbol];
+      const coinGeckoId = symbolToCoinGeckoId(item.symbol);
+
+      // First try Yahoo Finance data (for stocks and crypto with proper symbols)
+      let secData: { regularMarketPrice?: number; currency?: string; usd?: number } | undefined;
+      let source = 'secondary';
+
+      if ('regularMarketPrice' in (secondary.data?.[yahooSymbol] || {})) {
+        secData = secondary.data[yahooSymbol] as { regularMarketPrice?: number; currency?: string };
+      } else if (coinGeckoId && coinGeckoId in (secondary.data || {})) {
+        // Fall back to CoinGecko data (for crypto)
+        const cgData = secondary.data[coinGeckoId] as { usd?: number } | undefined;
+        if (cgData?.usd) {
+          secData = { regularMarketPrice: cgData.usd, currency: 'USD' };
+          source = 'coingecko';
+        }
+      }
+
       if (!secData || typeof secData.regularMarketPrice !== 'number' || !Number.isFinite(secData.regularMarketPrice)) {
         comparisons.push({
           symbol: item.symbol,
           primaryPrice: price,
           match: false,
-          note: `Could not verify against Yahoo Finance (no price data for ${yahooSymbol})`
+          note: `Could not verify (no price data from secondary source)`
         });
         allMatch = false;
-        discrepancyParts.push(`${item.symbol}: No verification data from Yahoo Finance for ${yahooSymbol}`);
+        discrepancyParts.push(`${item.symbol}: No verification data available`);
         continue;
       }
 
@@ -167,13 +203,26 @@ export async function factCheckTool({
       if (!match) {
         allMatch = false;
         discrepancyParts.push(
-          `${item.symbol}: Ghostfolio ${item.currency} ${price} vs Yahoo Finance ${secData.currency} ${secRounded}`
+          `${item.symbol}: Ghostfolio ${item.currency} ${price} vs ${source} ${secData.currency} ${secRounded}`
         );
       }
     }
 
     const sources: string[] = ['ghostfolio_api'];
-    if (secondary?.ok) sources.push('yahoo_finance');
+    if (secondary?.ok) {
+      // Determine which secondary source was used
+      const hasYahoo = primaryItems.some(item => {
+        const mapping = symbolMappings.find(m => m.primarySymbol === item.symbol);
+        const yahooSymbol = mapping?.yahooSymbol ?? item.symbol;
+        return secondary.data?.[yahooSymbol];
+      });
+      const hasCoinGecko = primaryItems.some(item => {
+        const coinGeckoId = symbolToCoinGeckoId(item.symbol);
+        return coinGeckoId && secondary.data?.[coinGeckoId];
+      });
+      if (hasYahoo) sources.push('yahoo_finance');
+      if (hasCoinGecko) sources.push('coingecko');
+    }
 
     const answer =
       discrepancyParts.length > 0

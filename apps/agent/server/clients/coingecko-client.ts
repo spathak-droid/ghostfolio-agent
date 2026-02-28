@@ -2,7 +2,7 @@
  * CoinGecko client for fact_check second-source price verification.
  *
  * Purpose: Fetch current crypto prices from CoinGecko public API for cross-checking
- *          against Ghostfolio market_data. Used only by the fact_check tool.
+ *          against Ghostfolio market_data. Used as fallback when Yahoo Finance is unavailable.
  * Inputs: CoinGecko ids (e.g. bitcoin, ethereum), vs_currency (e.g. usd).
  * Outputs: { [id]: { usd: number } } or error payload.
  * Failure modes: timeout, network error, rate limit → return structured result; no throw.
@@ -72,7 +72,9 @@ export async function getSimplePrice(
   vsCurrency: string,
   config: CoinGeckoClientConfig = {}
 ): Promise<CoinGeckoClientResponse> {
-  const baseUrl = (config.baseUrl ?? process.env.COINGECKO_API_URL ?? DEFAULT_BASE_URL).trim().replace(/\/+$/, '');
+  const baseUrl = (config.baseUrl ?? process.env.COINGECKO_API_URL ?? DEFAULT_BASE_URL)
+    .trim()
+    .replace(/\/+$/, '');
   const timeoutMs = config.timeoutMs ?? COINGECKO_REQUEST_TIMEOUT_MS;
 
   if (ids.length === 0) {
@@ -123,7 +125,11 @@ export async function getSimplePrice(
     return {
       ok: false,
       error_code: isAbort ? 'COINGECKO_TIMEOUT' : 'COINGECKO_NETWORK_ERROR',
-      message: isAbort ? 'CoinGecko request timed out' : (error instanceof Error ? error.message : 'Network error'),
+      message: isAbort
+        ? 'CoinGecko request timed out'
+        : error instanceof Error
+          ? error.message
+          : 'Network error',
       retryable: true
     };
   }

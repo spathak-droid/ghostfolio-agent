@@ -12,3 +12,12 @@ export {
   type YahooFinanceClientResponse,
   type YahooFinanceClientConfig
 } from './yahoo-finance-client';
+export {
+  getSimplePrice,
+  symbolToCoinGeckoId,
+  COINGECKO_SYMBOL_IDS,
+  type CoinGeckoClientResult,
+  type CoinGeckoClientError,
+  type CoinGeckoClientResponse,
+  type CoinGeckoClientConfig
+} from './coingecko-client';
