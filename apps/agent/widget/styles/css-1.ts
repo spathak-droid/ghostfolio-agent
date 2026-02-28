@@ -468,6 +468,11 @@ export const WIDGET_CSS_PART1 = `
       border: 1px solid rgba(11, 13, 23, 0.08);
       border-bottom-left-radius: 6px;
     }
+    .agent-widget__message--assistant.agent-widget__message--loading {
+      background: #eef0f3;
+      color: #5c6470;
+      border-color: rgba(92, 100, 112, 0.2);
+    }
     .agent-widget__message--loading {
       padding: 10px 14px;
     }

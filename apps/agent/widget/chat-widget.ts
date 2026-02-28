@@ -350,6 +350,14 @@ export function mountChatWidget(container: HTMLElement) {
     li.classList.remove('agent-widget__message--loading', 'agent-widget__message--error');
   }
 
+  /** Sets acknowledge placeholder text but keeps grey loading style until final answer. */
+  function setAckContent(li: HTMLElement, content: string): void {
+    const body = li.querySelector('.agent-widget__message-body');
+    if (body) {
+      body.textContent = content;
+    }
+  }
+
   function appendSymbolOptions(li: HTMLElement, response: AgentChatResponse): void {
     const toolCalls = response.toolCalls ?? [];
     const latestOrderCall = [...toolCalls]
@@ -446,7 +454,7 @@ export function mountChatWidget(container: HTMLElement) {
       }
 
       // Fire-and-forget: get a quick acknowledgment from the LLM (~300ms)
-      // Will be replaced by the final answer when /chat responds
+      // Shown in grey with moving dots; ack text replaces dots, full answer replaces when /chat responds
       fetch(acknowledgeApiUrl, {
         method: 'POST',
         headers,
@@ -455,7 +463,7 @@ export function mountChatWidget(container: HTMLElement) {
       })
         .then((r) => r.json())
         .then((ack: { forWidget?: string }) => {
-          if (ack?.forWidget) setMessageContent(loadingLi, ack.forWidget);
+          if (ack?.forWidget) setAckContent(loadingLi, ack.forWidget);
         })
         .catch(() => undefined); // non-critical: widget still works without acknowledgment
 
