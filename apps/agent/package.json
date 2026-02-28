@@ -1,5 +1,5 @@
 {
-  "name": "@ghostfolio/agent",
+  "name": "ghostfolio-agent",
   "version": "2.243.0",
   "description": "AI-powered portfolio assistant agent for Ghostfolio",
   "main": "dist/server/index.js",

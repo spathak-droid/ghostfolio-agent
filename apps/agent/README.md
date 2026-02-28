@@ -1,4 +1,4 @@
-# @ghostfolio/agent
+# ghostfolio-agent
 
 AI-powered portfolio assistant agent for Ghostfolio. Provides natural language portfolio analysis, market data lookups, and financial Q&A with LLM-backed reasoning.
 
@@ -6,10 +6,10 @@ AI-powered portfolio assistant agent for Ghostfolio. Provides natural language p
 
 ```bash
 # Install globally
-npm install -g @ghostfolio/agent
+npm install -g ghostfolio-agent
 
 # Or use npx without installing
-npx @ghostfolio/agent
+npx ghostfolio-agent
 ```
 
 ## Configuration
@@ -33,17 +33,30 @@ The agent requires a Ghostfolio API backend and an LLM provider. Set these envir
 
 ## Usage
 
+### Create .env File
+
+Create a `.env` file with your configuration:
+
+```bash
+cat > .env <<'EOF'
+GHOSTFOLIO_BASE_URL=https://your-ghostfolio-instance.com
+OPENAI_API_KEY=sk-proj-your-api-key-here
+AGENT_PORT=4444
+EOF
+```
+
 ### Start the Agent Server
 
 ```bash
 ghostfolio-agent
 # or
-npx @ghostfolio/agent
+npx ghostfolio-agent
 ```
 
 The server will start on `http://localhost:4444` and log:
 ```
-[agent] listening { host: 'localhost', port: 4444, logLevel: 'info' }
+[agent] GHOSTFOLIO_BASE_URL= https://your-ghostfolio-instance.com
+[agent] listening { host: '0.0.0.0', port: 4444, logLevel: 'info' }
 [agent] ready { message: 'Keep this terminal open. Test: curl http://localhost:4444/health' }
 ```
 
@@ -59,8 +72,17 @@ curl http://localhost:4444/health
 ```bash
 curl -X POST http://localhost:4444/chat \
   -H "Content-Type: application/json" \
-  -d '{"message": "What are my top 5 holdings?"}'
+  -H "Authorization: Bearer YOUR_GHOSTFOLIO_TOKEN" \
+  -d '{
+    "message": "What are my top 5 holdings?",
+    "conversationId": "user-123"
+  }'
 ```
+
+**Note:**
+- `conversationId` is required (any unique string to track the conversation)
+- `Authorization` header should contain your Ghostfolio bearer token
+- Response includes agent answer and tool execution details
 
 ## API Endpoints
 
@@ -92,13 +114,23 @@ The agent is structured in layers:
 
 ### Agent won't start
 - Check `GHOSTFOLIO_BASE_URL` is reachable: `curl $GHOSTFOLIO_BASE_URL/api/v1/health`
-- Verify `.env` file has required vars: `OPENAI_API_KEY`, `GHOSTFOLIO_BASE_URL`
+- Verify `.env` file exists with required vars: `OPENAI_API_KEY`, `GHOSTFOLIO_BASE_URL`
+- Check logs: `AGENT_LOG_LEVEL=debug ghostfolio-agent`
 
-### "No LLM API key found"
-- Set `OPENAI_API_KEY` (OpenAI) or `OPENROUTER_API_KEY` (OpenRouter)
+### "GHOSTFOLIO_BASE_URL not set"
+- Create `.env` file with `GHOSTFOLIO_BASE_URL=https://your-instance.com`
+- Or set via environment: `GHOSTFOLIO_BASE_URL=https://... npx ghostfolio-agent`
+
+### "No LLM configured"
+- Set `OPENAI_API_KEY` (OpenAI) or `OPENROUTER_API_KEY` (OpenRouter) in `.env`
 
 ### Port already in use
-- Change `AGENT_PORT`: `AGENT_PORT=5555 ghostfolio-agent`
+- Change `AGENT_PORT` in `.env`: `AGENT_PORT=5555`
+- Or run: `AGENT_PORT=5555 npx ghostfolio-agent`
+
+### Chat endpoint returns validation error
+- Ensure request includes `conversationId` in the JSON body
+- Ensure `Authorization: Bearer TOKEN` header with valid Ghostfolio token
 
 ## License
 
