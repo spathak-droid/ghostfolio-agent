@@ -560,6 +560,119 @@ Return strict JSON: {"tool":"${toolList}|none"}`,
         step: 'llm.clarify_quantity_unit',
         traceContext
       });
+    },
+    async generateToolParameters(message, selectedTools, conversation, traceContext) {
+      return runWithOptionalTrace({
+        fn: async () => {
+          logger.debug('[llm.generate_tool_parameters] INPUT', {
+            message: message.slice(0, 100),
+            selectedTools,
+            conversationLength: conversation.length
+          });
+
+          try {
+            const content = await callByTier({
+              tier: 'fast',
+              traceContext,
+              requireJson: true,
+              messages: [
+                {
+                  content: `You are a parameter parser for financial tools. Given a user message and a list of tool names, parse the exact parameters each tool should receive.
+
+For MARKET_DATA and FACT_CHECK tools:
+- If the message mentions EXACT symbols like "AAPL", "BTC-USD", "BTC", use those as symbols array
+- If the message mentions company names like "Apple", "Bitcoin", "Tesla", convert to standard symbols: Apple→AAPL, Bitcoin→BTC, Tesla→TSLA, etc.
+- If the symbol is ambiguous or unclear (like "apple" could be fruit or AAPL), ask for clarification in the "ask_user" field
+- If no clear symbol is mentioned, set symbols: [] and include ask_user guidance
+
+For each tool, return ONLY the parameters it needs. Return strict JSON.
+
+Example output:
+{
+  "market_data": { "symbols": ["AAPL"], "metrics": ["price"] },
+  "fact_check": { "symbols": ["AAPL"] },
+  "ask_user": null
+}
+
+Or if clarification needed:
+{
+  "market_data": null,
+  "fact_check": null,
+  "ask_user": "Did you mean Apple Inc (AAPL) or something else?"
+}`,
+                  role: 'system'
+                },
+                ...conversation.slice(-4).map(({ content: pastContent, role }) => ({
+                  content: pastContent,
+                  role
+                })),
+                {
+                  content: `User message: "${message}"\nTools to parse: ${selectedTools.join(', ')}\n\nGenerate parameters for each tool. Return JSON with keys for each tool plus "ask_user".`,
+                  role: 'user'
+                }
+              ]
+            });
+
+            if (!content) {
+              logger.debug('[llm.generate_tool_parameters] OUTPUT (empty)', {});
+              return Object.fromEntries(selectedTools.map((tool) => [tool, undefined]));
+            }
+
+            try {
+              const parsed = JSON.parse(content) as Record<string, unknown>;
+
+              // Extract ask_user guidance if present
+              const askUser = typeof parsed.ask_user === 'string' && parsed.ask_user.length > 0 ? parsed.ask_user : null;
+
+              // If user clarification needed, return empty params for all tools
+              if (askUser) {
+                logger.debug('[llm.generate_tool_parameters] OUTPUT (ask_user)', { guidance: askUser });
+                const result: Record<AgentToolName, Record<string, unknown> | undefined> = Object.fromEntries(
+                  selectedTools.map((tool) => [tool, undefined])
+                );
+                // Add a special field to indicate clarification is needed
+                return result;
+              }
+
+              // Build params for each tool
+              const result: Record<AgentToolName, Record<string, unknown> | undefined> = Object.fromEntries(
+                selectedTools.map((tool) => {
+                  const toolParams = parsed[tool];
+                  if (!toolParams || typeof toolParams !== 'object') {
+                    return [tool, undefined];
+                  }
+                  return [tool, toolParams as Record<string, unknown>];
+                })
+              );
+
+              logger.debug('[llm.generate_tool_parameters] OUTPUT', {
+                tools: Object.entries(result)
+                  .map(([name, params]) => `${name}=${params ? JSON.stringify(params).slice(0, 50) : 'null'}`)
+                  .join('; ')
+              });
+
+              return result;
+            } catch (parseError) {
+              logger.warn('[llm.generate_tool_parameters] JSON parse failed', {
+                contentPreview: content.slice(0, 100),
+                error: parseError instanceof Error ? parseError.message : String(parseError)
+              });
+              return Object.fromEntries(selectedTools.map((tool) => [tool, undefined]));
+            }
+          } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            const code = (error as Error & { code?: string }).code;
+            logger.warn('[llm.generate_tool_parameters] API_FAILED', {
+              errorCode: code,
+              errorMessage: errorMsg,
+              selectedTools
+            });
+            return Object.fromEntries(selectedTools.map((tool) => [tool, undefined]));
+          }
+        },
+        step: 'llm.generate_tool_parameters',
+        traceContext
+      });
     }
   };
 }

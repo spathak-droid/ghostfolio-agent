@@ -239,4 +239,11 @@ export interface AgentLlm {
     unitPrice: number,
     traceContext?: AgentTraceContext
   ) => Promise<{ unit: 'coins' | 'currency'; clarification: string } | undefined>;
+  /** Generate LLM-parsed parameters for each selected tool. Replaces tool-level parsing. */
+  generateToolParameters?: (
+    message: string,
+    selectedTools: AgentToolName[],
+    conversation: AgentConversationMessage[],
+    traceContext?: AgentTraceContext
+  ) => Promise<Record<AgentToolName, Record<string, unknown> | undefined>>;
 }
