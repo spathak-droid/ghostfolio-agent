@@ -36,6 +36,16 @@ export class AgentController {
     return this.agentService.chat(body, token, impersonationId);
   }
 
+  @Post('chat/acknowledge')
+  @HttpCode(200)
+  public async acknowledge(
+    @Body() body: { message: string; conversationId?: string },
+    @Headers('authorization') authorizationHeader?: string,
+    @Headers('impersonation-id') impersonationId?: string
+  ): Promise<{ forWidget: string }> {
+    return this.agentService.acknowledge(body, authorizationHeader, impersonationId);
+  }
+
   @Post('chat/clear')
   @HttpCode(200)
   public async clearConversation(

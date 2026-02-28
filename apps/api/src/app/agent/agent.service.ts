@@ -118,6 +118,28 @@ export class AgentService {
     }
   }
 
+  public async acknowledge(
+    payload: { message: string; conversationId?: string },
+    authorizationHeader?: string,
+    impersonationId?: string
+  ): Promise<{ forWidget: string }> {
+    try {
+      const response = await fetch(`${this.agentServiceUrl}/chat/acknowledge`, {
+        body: JSON.stringify(payload),
+        headers: {
+          ...(authorizationHeader ? { Authorization: authorizationHeader } : {}),
+          ...(impersonationId ? { 'Impersonation-Id': impersonationId } : {}),
+          'Content-Type': 'application/json'
+        },
+        method: 'POST'
+      });
+      const data = (await response.json()) as { forWidget?: string };
+      return { forWidget: data.forWidget ?? 'On it...' };
+    } catch {
+      return { forWidget: 'On it...' };
+    }
+  }
+
   public async clearConversation(
     conversationId: string,
     authorizationHeader?: string,

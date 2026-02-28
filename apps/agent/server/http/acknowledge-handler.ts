@@ -64,24 +64,19 @@ export function createAcknowledgeHandler({
       return;
     }
 
-    const apiKey =
-      process.env.OPENAI_API_KEY ??
-      process.env.OPENROUTER_API_KEY ??
-      process.env.API_KEY_OPENROUTER ??
-      '';
+    // Match createOpenAiClientFromEnv key priority: OpenRouter first, then OpenAI
+    const openRouterApiKey = process.env.OPENROUTER_API_KEY ?? process.env.API_KEY_OPENROUTER;
+    const openAiApiKey = process.env.OPENAI_API_KEY;
+    const apiKey = openRouterApiKey ?? openAiApiKey ?? '';
+    const usingOpenRouter = Boolean(openRouterApiKey);
 
     if (!apiKey) {
       response.status(200).json({ forWidget: 'On it...' });
       return;
     }
 
-    const usingOpenRouter = Boolean(
-      process.env.OPENROUTER_API_KEY ?? process.env.API_KEY_OPENROUTER
-    );
     const requestUrl = usingOpenRouter ? OPENROUTER_REQUEST_URL : OPENAI_REQUEST_URL;
-    const model = usingOpenRouter
-      ? process.env.OPENROUTER_MODEL ?? 'openai/gpt-4o-mini'
-      : 'gpt-4o-mini';
+    const model = usingOpenRouter ? 'openai/gpt-4o-mini' : 'gpt-4o-mini';
 
     try {
       const baseUrlResolution = resolveGhostfolioBaseUrl({
