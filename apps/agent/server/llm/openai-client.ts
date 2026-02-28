@@ -659,9 +659,16 @@ Only set ask_user if TRULY ambiguous. Prefer to guess confidently for typos.`,
               ) as Record<string, Record<string, unknown> | undefined>;
 
               logger.debug('[llm.generate_tool_parameters] OUTPUT', {
-                tools: Object.entries(result)
-                  .map(([name, params]) => `${name}=${params ? JSON.stringify(params).slice(0, 50) : 'null'}`)
-                  .join('; ')
+                selectedTools,
+                generatedParameters: selectedTools.map((tool) => {
+                  const params = result[tool];
+                  return {
+                    tool,
+                    hasParams: Boolean(params),
+                    symbols: (params as any)?.symbols,
+                    params: JSON.stringify(params).slice(0, 100)
+                  };
+                })
               });
 
               return result as Record<string, Record<string, unknown> | undefined | string>;

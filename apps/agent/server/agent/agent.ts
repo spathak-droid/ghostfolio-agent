@@ -211,7 +211,12 @@ export function createAgent({
           const paramDurationMs = Date.now() - paramStartedAt;
           logger.debug('[agent.chat] GENERATE_TOOL_PARAMETERS', {
             durationMs: paramDurationMs,
-            tools: Object.keys(toolParameters).join(', '),
+            message: message.slice(0, 100),
+            selectedTools,
+            perTool: selectedTools.map((t) => {
+              const tp = toolParameters[t];
+              return { tool: t, hasParams: Boolean(tp), symbols: (tp?.symbols as unknown) };
+            }),
             needsClarification: Boolean(askUserClarification)
           });
           trace.push({

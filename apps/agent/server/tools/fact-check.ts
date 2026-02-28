@@ -89,6 +89,12 @@ export async function factCheckTool({
       ? inputSymbols.filter(Boolean).slice(0, MAX_SYMBOLS)
       : extractSymbolsFromMessage(message ?? '');
 
+    console.log('[fact-check] INPUT', {
+      inputSymbols,
+      resolvedInputSymbols,
+      message: message?.slice(0, 100)
+    });
+
     // Pass explicit symbols to market_data for resolution
     const marketDataParams = {
       client,
