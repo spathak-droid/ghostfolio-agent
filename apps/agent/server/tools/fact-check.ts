@@ -94,10 +94,27 @@ export async function factCheckTool({
     const primarySymbols = Array.isArray(primaryResult.symbols) ? primaryResult.symbols : [];
     const primaryItems = primarySymbols as PrimarySymbolItem[];
 
+    // Check if all items have errors (market_data failed to resolve symbols)
+    const errorItems = primaryItems.filter(item => item.error);
+    const validItems = primaryItems.filter(item => !item.error && typeof item.currentPrice === 'number' && item.currentPrice > 0);
+
+    // If market_data had resolution errors, report them instead of generic "no symbols" message
+    if (errorItems.length > 0 && validItems.length === 0) {
+      const errorMessages = errorItems.map(item => item.error?.message || 'Unknown error').join('; ');
+      return {
+        match: false,
+        primary: { symbols: primaryItems, summary: primaryResult.summary },
+        secondary: null,
+        answer: `Could not verify prices: ${errorMessages}`,
+        summary: `Fact check: symbol resolution failed - ${errorMessages}`,
+        sources: ['ghostfolio_api'],
+        data_as_of: new Date().toISOString()
+      };
+    }
+
     // Extract symbols to verify from primary items (use original symbol for Finnhub)
     const symbolsToFetch: string[] = [];
-    for (const item of primaryItems) {
-      if (item.error || typeof item.currentPrice !== 'number' || item.currentPrice <= 0) continue;
+    for (const item of validItems) {
       if (!symbolsToFetch.includes(item.symbol)) {
         symbolsToFetch.push(item.symbol);
       }
