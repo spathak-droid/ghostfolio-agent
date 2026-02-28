@@ -130,14 +130,10 @@ export async function factCheckTool({
       }
     }
 
-    console.log('[fact-check] symbolsToFetch:', symbolsToFetch); // DEBUG
-
     // Try Finnhub first (most reliable), then fall back to CoinGecko for crypto symbols
     let secondary: (FinnhubClientResponse | CoinGeckoClientResponse) | null = null;
     if (symbolsToFetch.length > 0) {
-      console.log('[fact-check] Calling Finnhub with symbols:', symbolsToFetch); // DEBUG
       secondary = await getFinnhubQuote(symbolsToFetch);
-      console.log('[fact-check] Finnhub result:', { ok: secondary.ok, error_code: (secondary as any).error_code }); // DEBUG
 
       // If Finnhub failed, try CoinGecko for crypto symbols
       if (!secondary.ok) {
@@ -146,10 +142,8 @@ export async function factCheckTool({
           .map(item => symbolToCoinGeckoId(item.symbol))
           .filter((id): id is string => !!id);
 
-        console.log('[fact-check] Finnhub failed, trying CoinGecko with ids:', cryptoIds); // DEBUG
         if (cryptoIds.length > 0) {
           secondary = await getSimplePrice(cryptoIds, 'usd');
-          console.log('[fact-check] CoinGecko result:', { ok: secondary.ok, error_code: (secondary as any).error_code }); // DEBUG
         }
       }
     }

@@ -69,6 +69,26 @@ export function preventComplianceBlockingSpecializedTools({
   return selectedTools;
 }
 
+/**
+ * fact_check depends on market_data to resolve symbols.
+ * If both are selected, ensure market_data runs first and passes symbols to fact_check.
+ * Reorder so market_data always comes first when both are present.
+ */
+export function orderToolsByDependency({
+  selectedTools
+}: {
+  selectedTools: AgentToolName[];
+}): AgentToolName[] {
+  // If both market_data and fact_check are selected, ensure market_data comes first
+  if (selectedTools.includes('market_data') && selectedTools.includes('fact_check')) {
+    const withoutMarketData = selectedTools.filter((tool) => tool !== 'market_data');
+
+    // Return: market_data first, then other tools including fact_check
+    return ['market_data', ...withoutMarketData.filter((tool) => tool !== 'fact_check'), 'fact_check'];
+  }
+  return selectedTools;
+}
+
 export function prioritizeExecutionToolsForIntent({
   message,
   selectedTools

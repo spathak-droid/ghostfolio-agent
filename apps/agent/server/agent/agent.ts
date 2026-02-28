@@ -26,6 +26,7 @@ import {
   preventComplianceBlockingSpecializedTools,
   preventOrderReplayWithoutPending,
   prioritizeExecutionToolsForIntent,
+  orderToolsByDependency,
   sanitizeAnalyzeStockTrendForScope,
   sanitizePortfolioHoldingsToolScope,
   sanitizeOrderToolsForNonOrderRequests,
@@ -158,12 +159,14 @@ export function createAgent({
                   message,
                   selectedTools: preventComplianceBlockingSpecializedTools({
                     message,
-                    selectedTools: prioritizeExecutionToolsForIntent({
-                      message,
-                      selectedTools: ensurePendingClarificationTool({
+                    selectedTools: orderToolsByDependency({
+                      selectedTools: prioritizeExecutionToolsForIntent({
                         message,
-                        pendingState: persistedState,
-                        selectedTools: routeDecision.tools
+                        selectedTools: ensurePendingClarificationTool({
+                          message,
+                          pendingState: persistedState,
+                          selectedTools: routeDecision.tools
+                        })
                       })
                     })
                   })
@@ -219,6 +222,7 @@ export function createAgent({
 
       let latestCreateOrderParams: import('../types').CreateOrderParams | undefined =
         baseCreateOrderParams;
+      let marketDataResult: Record<string, unknown> | null = null;
       try {
         for (const tool of selectedTools) {
           if (isTransactionDependentTool(tool)) {
@@ -251,6 +255,19 @@ export function createAgent({
               output: { status: 'completed' }
             });
             continue;
+          }
+
+          // Skip fact_check if market_data just failed to resolve symbols
+          if (tool === 'fact_check' && marketDataResult) {
+            const marketDataSymbols = marketDataResult.symbols as { symbol: string; error?: unknown }[] | undefined;
+            if (Array.isArray(marketDataSymbols)) {
+              const allHaveErrors = marketDataSymbols.length > 0 && marketDataSymbols.every(item => item.error);
+              if (allHaveErrors) {
+                // Market data failed to resolve symbols, skip fact_check
+                logger.debug('[agent.chat] SKIPPED fact_check: market_data had symbol resolution errors');
+                continue;
+              }
+            }
           }
 
           try {
@@ -314,6 +331,21 @@ export function createAgent({
               );
               latestCreateOrderParams = createOrderParams;
             }
+
+            // For fact_check, pass resolved symbols from market_data if available
+            let toolSymbols = symbols;
+            if (tool === 'fact_check' && marketDataResult) {
+              const marketDataSymbols = marketDataResult.symbols as { symbol: string; error?: unknown }[] | undefined;
+              if (Array.isArray(marketDataSymbols)) {
+                const resolvedSymbols = marketDataSymbols
+                  .filter((item) => !item.error && typeof item.symbol === 'string')
+                  .map((item) => item.symbol);
+                if (resolvedSymbols.length > 0) {
+                  toolSymbols = resolvedSymbols;
+                }
+              }
+            }
+
             const toolStartedAt = Date.now();
             const result = await executeTool({
               dateFrom,
@@ -324,7 +356,7 @@ export function createAgent({
               regulations,
               range,
               symbol,
-              symbols,
+              symbols: toolSymbols,
               take,
               token,
               tool,
@@ -390,6 +422,11 @@ export function createAgent({
                   ? JSON.stringify(result).slice(0, 500) + (JSON.stringify(result).length > 500 ? '...' : '')
                   : String(result)
             });
+
+            // Store market_data result for passing to fact_check
+            if (tool === 'market_data' && typeof result === 'object' && result !== null) {
+              marketDataResult = result as Record<string, unknown>;
+            }
           } catch (error) {
             const isTimeout = isTimeoutError(error);
             const rawErrorMessage = isTimeout
