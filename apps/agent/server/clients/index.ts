@@ -21,3 +21,10 @@ export {
   type CoinGeckoClientResponse,
   type CoinGeckoClientConfig
 } from './coingecko-client';
+export {
+  getFinnhubQuote,
+  type FinnhubClientResult,
+  type FinnhubClientError,
+  type FinnhubClientResponse,
+  type FinnhubClientConfig
+} from './finnhub-client';

@@ -1,20 +1,20 @@
 /**
- * Fact-check tool: cross-check market_data (price) against Yahoo Finance as second source.
+ * Fact-check tool: cross-check market_data (price) against secondary sources.
  *
  * Purpose: Verify price claims for symbols by comparing Ghostfolio primary
- *          result with Yahoo Finance; returns match/mismatch and provenance.
- *          Yahoo Finance supports both stocks (AAPL, TSLA) and crypto (BTC-USD, ETH-USD).
- * Inputs: message, symbols (required; pre-resolved upstream by symbol-resolver); uses Ghostfolio and Yahoo Finance.
+ *          result with Finnhub (or CoinGecko fallback); returns match/mismatch and provenance.
+ *          Finnhub supports both stocks (AAPL, TSLA) and crypto (BTC, ETH).
+ *          CoinGecko serves as fallback for crypto when Finnhub unavailable.
+ * Inputs: message, symbols (required; pre-resolved upstream by symbol-resolver); uses Ghostfolio, Finnhub, CoinGecko.
  * Outputs: match, primary, secondary, discrepancy?, answer, sources, data_as_of.
  * Failure modes: primary failure → tool error; secondary failure → secondary null, answer states limitation.
  */
 
 import {
-  getYahooQuote,
+  getFinnhubQuote,
   getSimplePrice,
   symbolToCoinGeckoId,
-  type YahooFinanceClientError,
-  type YahooFinanceClientResponse,
+  type FinnhubClientResponse,
   type CoinGeckoClientResponse
 } from '../clients';
 import type { GhostfolioClient } from '../clients';
@@ -111,12 +111,12 @@ export async function factCheckTool({
     }
     const symbolsToFetch = symbolMappings.map(m => m.yahooSymbol);
 
-    // Try Yahoo Finance first, then fall back to CoinGecko for crypto symbols
-    let secondary: (YahooFinanceClientResponse | CoinGeckoClientResponse) | null = null;
+    // Try Finnhub first (most reliable), then fall back to CoinGecko for crypto symbols
+    let secondary: (FinnhubClientResponse | CoinGeckoClientResponse) | null = null;
     if (symbolsToFetch.length > 0) {
-      secondary = await getYahooQuote(symbolsToFetch);
+      secondary = await getFinnhubQuote(symbolsToFetch);
 
-      // If Yahoo Finance failed, try CoinGecko for crypto symbols
+      // If Finnhub failed, try CoinGecko for crypto symbols
       if (!secondary.ok) {
         const cryptoIds = primaryItems
           .filter(item => !item.error && item.currentPrice > 0)
@@ -155,32 +155,31 @@ export async function factCheckTool({
         });
         allMatch = false;
         const errMsg =
-          secondary && !secondary.ok ? (secondary as YahooFinanceClientError).message : 'unknown';
+          secondary && !secondary.ok ? (secondary as { message?: string }).message : 'unknown';
         discrepancyParts.push(`${item.symbol}: Could not verify (${errMsg})`);
         continue;
       }
 
-      // Try to find secondary price from Yahoo Finance or CoinGecko
-      const mapping = symbolMappings.find(m => m.primarySymbol === item.symbol);
-      const yahooSymbol = mapping?.yahooSymbol ?? item.symbol;
+      // Try to find secondary price from Finnhub or CoinGecko
       const coinGeckoId = symbolToCoinGeckoId(item.symbol);
 
-      // First try Yahoo Finance data (for stocks and crypto with proper symbols)
-      let secData: { regularMarketPrice?: number; currency?: string; usd?: number } | undefined;
-      let source = 'secondary';
+      // First try Finnhub data (stocks and crypto)
+      let secPrice: number | undefined;
+      let source = 'finnhub';
 
-      if ('regularMarketPrice' in (secondary.data?.[yahooSymbol] || {})) {
-        secData = secondary.data[yahooSymbol] as { regularMarketPrice?: number; currency?: string };
+      const finnhubData = secondary.data?.[item.symbol] as { price?: number } | undefined;
+      if (typeof finnhubData?.price === 'number' && Number.isFinite(finnhubData.price)) {
+        secPrice = finnhubData.price;
       } else if (coinGeckoId && coinGeckoId in (secondary.data || {})) {
         // Fall back to CoinGecko data (for crypto)
         const cgData = secondary.data[coinGeckoId] as { usd?: number } | undefined;
-        if (cgData?.usd) {
-          secData = { regularMarketPrice: cgData.usd, currency: 'USD' };
+        if (typeof cgData?.usd === 'number' && Number.isFinite(cgData.usd)) {
+          secPrice = cgData.usd;
           source = 'coingecko';
         }
       }
 
-      if (!secData || typeof secData.regularMarketPrice !== 'number' || !Number.isFinite(secData.regularMarketPrice)) {
+      if (!secPrice) {
         comparisons.push({
           symbol: item.symbol,
           primaryPrice: price,
@@ -192,7 +191,7 @@ export async function factCheckTool({
         continue;
       }
 
-      const secRounded = roundTwo(secData.regularMarketPrice);
+      const secRounded = roundTwo(secPrice);
       const match = isPriceWithinTolerance(price, secRounded);
       comparisons.push({
         symbol: item.symbol,
@@ -203,7 +202,7 @@ export async function factCheckTool({
       if (!match) {
         allMatch = false;
         discrepancyParts.push(
-          `${item.symbol}: Ghostfolio ${item.currency} ${price} vs ${source} ${secData.currency} ${secRounded}`
+          `${item.symbol}: Ghostfolio ${item.currency} ${price} vs ${source} USD ${secRounded}`
         );
       }
     }
@@ -211,16 +210,15 @@ export async function factCheckTool({
     const sources: string[] = ['ghostfolio_api'];
     if (secondary?.ok) {
       // Determine which secondary source was used
-      const hasYahoo = primaryItems.some(item => {
-        const mapping = symbolMappings.find(m => m.primarySymbol === item.symbol);
-        const yahooSymbol = mapping?.yahooSymbol ?? item.symbol;
-        return secondary.data?.[yahooSymbol];
+      const hasFinnhub = primaryItems.some(item => {
+        const finnhubData = secondary.data?.[item.symbol] as { price?: number } | undefined;
+        return typeof finnhubData?.price === 'number';
       });
       const hasCoinGecko = primaryItems.some(item => {
         const coinGeckoId = symbolToCoinGeckoId(item.symbol);
         return coinGeckoId && secondary.data?.[coinGeckoId];
       });
-      if (hasYahoo) sources.push('yahoo_finance');
+      if (hasFinnhub) sources.push('finnhub');
       if (hasCoinGecko) sources.push('coingecko');
     }
 
