@@ -577,29 +577,41 @@ Return strict JSON: {"tool":"${toolList}|none"}`,
               requireJson: true,
               messages: [
                 {
-                  content: `You are a parameter parser for financial tools. Given a user message and a list of tool names, parse the exact parameters each tool should receive.
+                  content: `You are a financial symbol parser. Extract and normalize ticker symbols from user messages.
 
-For MARKET_DATA and FACT_CHECK tools:
-- If the message mentions EXACT symbols like "AAPL", "BTC-USD", "BTC", use those as symbols array
-- If the message mentions company names like "Apple", "Bitcoin", "Tesla", convert to standard symbols: Apple→AAPL, Bitcoin→BTC, Tesla→TSLA, etc.
-- If the symbol is ambiguous or unclear (like "apple" could be fruit or AAPL), ask for clarification in the "ask_user" field
-- If no clear symbol is mentioned, set symbols: [] and include ask_user guidance
+SYMBOL RESOLUTION RULES:
+1. EXACT MATCHES (2-5 uppercase letters): Use as-is
+   "AAPL" → ["AAPL"]
+   "BTC" → ["BTC"]
 
-For each tool, return ONLY the parameters it needs. Return strict JSON.
+2. COMPANY NAMES: Convert to standard tickers
+   "Apple" → ["AAPL"]
+   "Tesla" → ["TSLA"]
+   "Bitcoin" → ["BTC"]
+   "Ethereum" → ["ETH"]
+   "Solana" → ["SOL"]
+   "Nvidia" → ["NVDA"]
 
-Example output:
+3. OBVIOUS TYPOS: Correct them confidently
+   "APPL" → ["AAPL"] (1-letter typo, very likely AAPL)
+   "TSLA" misspelled as "TSLAA" → ["TSLA"]
+   "BTC" misspelled as "BTC-USD" → ["BTC"]
+
+4. AMBIGUOUS (ask user): Only when truly unclear
+   "apple" (could be fruit or AAPL) → ask_user: "Did you mean Apple Inc (AAPL)?"
+   "Tesla Inc" mixed with unknown company → ask_user
+
+5. NO SYMBOL: Empty array, no clarification needed
+   "market data", "show prices" → symbols: []
+
+OUTPUT FORMAT: Strict JSON
 {
   "market_data": { "symbols": ["AAPL"], "metrics": ["price"] },
   "fact_check": { "symbols": ["AAPL"] },
   "ask_user": null
 }
 
-Or if clarification needed:
-{
-  "market_data": null,
-  "fact_check": null,
-  "ask_user": "Did you mean Apple Inc (AAPL) or something else?"
-}`,
+Only set ask_user if TRULY ambiguous. Prefer to guess confidently for typos.`,
                   role: 'system'
                 },
                 ...conversation.slice(-4).map(({ content: pastContent, role }) => ({
@@ -607,7 +619,7 @@ Or if clarification needed:
                   role
                 })),
                 {
-                  content: `User message: "${message}"\nTools to parse: ${selectedTools.join(', ')}\n\nGenerate parameters for each tool. Return JSON with keys for each tool plus "ask_user".`,
+                  content: `User message: "${message}"\nTools: ${selectedTools.join(', ')}\n\nReturn JSON with tool parameters. Set ask_user ONLY if symbol is truly ambiguous (not for typos).`,
                   role: 'user'
                 }
               ]
@@ -627,15 +639,16 @@ Or if clarification needed:
               // If user clarification needed, return empty params for all tools
               if (askUser) {
                 logger.debug('[llm.generate_tool_parameters] OUTPUT (ask_user)', { guidance: askUser });
-                const result: Record<AgentToolName, Record<string, unknown> | undefined> = Object.fromEntries(
+                const result = Object.fromEntries(
                   selectedTools.map((tool) => [tool, undefined])
-                );
-                // Add a special field to indicate clarification is needed
-                return result;
+                ) as Record<string, Record<string, unknown> | undefined>;
+                // Add ask_user field for agent to handle clarification
+                result.ask_user = askUser;
+                return result as Record<string, Record<string, unknown> | undefined | string>;
               }
 
               // Build params for each tool
-              const result: Record<AgentToolName, Record<string, unknown> | undefined> = Object.fromEntries(
+              const result = Object.fromEntries(
                 selectedTools.map((tool) => {
                   const toolParams = parsed[tool];
                   if (!toolParams || typeof toolParams !== 'object') {
@@ -643,7 +656,7 @@ Or if clarification needed:
                   }
                   return [tool, toolParams as Record<string, unknown>];
                 })
-              );
+              ) as Record<string, Record<string, unknown> | undefined>;
 
               logger.debug('[llm.generate_tool_parameters] OUTPUT', {
                 tools: Object.entries(result)
@@ -651,13 +664,13 @@ Or if clarification needed:
                   .join('; ')
               });
 
-              return result;
+              return result as Record<string, Record<string, unknown> | undefined | string>;
             } catch (parseError) {
               logger.warn('[llm.generate_tool_parameters] JSON parse failed', {
                 contentPreview: content.slice(0, 100),
                 error: parseError instanceof Error ? parseError.message : String(parseError)
               });
-              return Object.fromEntries(selectedTools.map((tool) => [tool, undefined]));
+              return Object.fromEntries(selectedTools.map((tool) => [tool, undefined])) as Record<string, Record<string, unknown> | undefined | string>;
             }
           } catch (error) {
             const errorMsg = error instanceof Error ? error.message : String(error);
@@ -667,7 +680,7 @@ Or if clarification needed:
               errorMessage: errorMsg,
               selectedTools
             });
-            return Object.fromEntries(selectedTools.map((tool) => [tool, undefined]));
+            return Object.fromEntries(selectedTools.map((tool) => [tool, undefined])) as Record<string, Record<string, unknown> | undefined | string>;
           }
         },
         step: 'llm.generate_tool_parameters',

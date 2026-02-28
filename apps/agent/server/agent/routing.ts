@@ -3,6 +3,16 @@ import type { AgentWorkflowState } from '../stores';
 import { SELECTABLE_TOOL_NAMES } from '../tools/tool-registry';
 import { SELECTABLE_KEYWORD_HINTS } from './routing-keywords';
 
+/**
+ * Detect if message is just a ticker symbol (e.g., "AAPL", "BTC", "APPL").
+ * Returns true if message is 2-5 uppercase letters, possibly with dashes or numbers.
+ */
+function isLikelySymbolQuery(message: string): boolean {
+  const trimmed = message.trim();
+  // Match patterns like: AAPL, BTC-USD, BTC, APPL, TSLA, ETH, SOL, NVDA
+  return /^[A-Z]{2,5}(-[A-Z]{3})?$/.test(trimmed);
+}
+
 export function selectToolsByKeyword(message: string): AgentToolName[] {
   if (isExplicitFactComplianceIntent(message)) {
     return ['fact_compliance_check'];
@@ -16,6 +26,12 @@ export function selectToolsByKeyword(message: string): AgentToolName[] {
     if (hints?.some((hint) => normalized.includes(hint))) {
       tools.push(toolName);
     }
+  }
+
+  // If no keywords matched but message looks like a symbol, select market_data
+  // This handles cases like user responds with just "AAPL" or "BTC"
+  if (tools.length === 0 && isLikelySymbolQuery(message)) {
+    tools.push('market_data');
   }
 
   return [...new Set(tools)];

@@ -196,21 +196,33 @@ export function createAgent({
 
       // Generate LLM-parsed tool parameters
       let toolParameters: Record<string, Record<string, unknown> | undefined> = {};
+      let askUserClarification: string | null = null;
       if (llm?.generateToolParameters && selectedTools.length > 0) {
         const paramStartedAt = Date.now();
         try {
-          toolParameters = await llm.generateToolParameters(message, selectedTools, llmConversation, traceContext);
+          const result = await llm.generateToolParameters(message, selectedTools, llmConversation, traceContext);
+          // Extract ask_user if present
+          askUserClarification = (result.ask_user as string | undefined) || null;
+          // Get tool parameters (exclude ask_user field)
+          toolParameters = Object.fromEntries(
+            Object.entries(result).filter(([key]) => key !== 'ask_user')
+          ) as Record<string, Record<string, unknown> | undefined>;
+
           const paramDurationMs = Date.now() - paramStartedAt;
           logger.debug('[agent.chat] GENERATE_TOOL_PARAMETERS', {
             durationMs: paramDurationMs,
-            tools: Object.keys(toolParameters).join(', ')
+            tools: Object.keys(toolParameters).join(', '),
+            needsClarification: Boolean(askUserClarification)
           });
           trace.push({
             type: 'llm',
             durationMs: paramDurationMs,
             name: 'generate_tool_parameters',
             input: { messagePreview: message.slice(0, 200), selectedTools },
-            output: { hasParameters: Object.values(toolParameters).some((p) => p !== undefined) }
+            output: {
+              hasParameters: Object.values(toolParameters).some((p) => p !== undefined),
+              needsClarification: Boolean(askUserClarification)
+            }
           });
         } catch (error) {
           logger.warn('[agent.chat] GENERATE_TOOL_PARAMETERS_FAILED', {
@@ -218,6 +230,21 @@ export function createAgent({
           });
           // Graceful fallback: continue with undefined tool parameters
         }
+      }
+
+      // If LLM identified ambiguity/needs clarification, ask user instead of calling tools
+      if (askUserClarification && selectedTools.length > 0) {
+        logger.debug('[agent.chat] CLARIFICATION_NEEDED', {
+          message: askUserClarification
+        });
+        return {
+          answer: askUserClarification,
+          conversation,
+          errors: [],
+          toolCalls: [],
+          trace,
+          verification: { confidence: 0, flags: ['needs_clarification'] }
+        };
       }
 
       if (selectedTools.length === 0) {
