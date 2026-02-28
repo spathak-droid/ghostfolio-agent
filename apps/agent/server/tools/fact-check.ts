@@ -24,12 +24,6 @@ import { marketDataTool } from './market-data';
 const PRICE_TOLERANCE_PERCENT = 0.5;
 const MAX_SYMBOLS = 10;
 
-/** Map CoinGecko symbol IDs to Yahoo Finance symbols for cross-source comparison. */
-const COINGECKO_TO_YAHOO: Readonly<Record<string, string>> = {
-  bitcoin: 'BTC-USD',
-  ethereum: 'ETH-USD',
-  solana: 'SOL-USD'
-};
 
 export interface FactCheckToolInput {
   client: GhostfolioClient;
@@ -100,16 +94,14 @@ export async function factCheckTool({
     const primarySymbols = Array.isArray(primaryResult.symbols) ? primaryResult.symbols : [];
     const primaryItems = primarySymbols as PrimarySymbolItem[];
 
-    // Build mappings from primary symbol (possibly CoinGecko id) to Yahoo Finance symbol
-    const symbolMappings: { primarySymbol: string; yahooSymbol: string }[] = [];
+    // Extract symbols to verify from primary items (use original symbol for Finnhub)
+    const symbolsToFetch: string[] = [];
     for (const item of primaryItems) {
       if (item.error || typeof item.currentPrice !== 'number' || item.currentPrice <= 0) continue;
-      const yahooSymbol = COINGECKO_TO_YAHOO[item.symbol.toLowerCase()] ?? item.symbol;
-      if (!symbolMappings.some(m => m.yahooSymbol === yahooSymbol)) {
-        symbolMappings.push({ primarySymbol: item.symbol, yahooSymbol });
+      if (!symbolsToFetch.includes(item.symbol)) {
+        symbolsToFetch.push(item.symbol);
       }
     }
-    const symbolsToFetch = symbolMappings.map(m => m.yahooSymbol);
 
     // Try Finnhub first (most reliable), then fall back to CoinGecko for crypto symbols
     let secondary: (FinnhubClientResponse | CoinGeckoClientResponse) | null = null;
