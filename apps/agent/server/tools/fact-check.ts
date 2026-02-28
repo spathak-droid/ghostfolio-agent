@@ -130,13 +130,13 @@ export async function factCheckTool({
         comparisons.push({
           symbol: item.symbol,
           primaryPrice: price,
-          match: true,
-          note: 'Secondary source unavailable'
+          match: false,
+          note: 'Secondary verification unavailable (Yahoo Finance failed)'
         });
         allMatch = false;
         const errMsg =
           secondary && !secondary.ok ? (secondary as YahooFinanceClientError).message : 'unknown';
-        discrepancyParts.push(`Yahoo Finance unavailable: ${errMsg}`);
+        discrepancyParts.push(`${item.symbol}: Could not verify against Yahoo Finance (${errMsg})`);
         continue;
       }
 
@@ -148,10 +148,11 @@ export async function factCheckTool({
         comparisons.push({
           symbol: item.symbol,
           primaryPrice: price,
-          match: true,
-          note: `No Yahoo Finance price for ${yahooSymbol}`
+          match: false,
+          note: `Could not verify against Yahoo Finance (no price data for ${yahooSymbol})`
         });
         allMatch = false;
+        discrepancyParts.push(`${item.symbol}: No verification data from Yahoo Finance for ${yahooSymbol}`);
         continue;
       }
 
@@ -176,10 +177,12 @@ export async function factCheckTool({
 
     const answer =
       discrepancyParts.length > 0
-        ? `Fact check: discrepancy between sources. ${discrepancyParts.join('; ')}.`
+        ? `Fact check: ${discrepancyParts.join('; ')}.`
         : symbolsToFetch.length === 0
-          ? 'Fact check: no symbols to verify.'
-          : 'Fact check: prices match between Ghostfolio and Yahoo Finance within tolerance.';
+          ? 'Fact check: no symbols found to verify.'
+          : primaryItems.length > 0
+            ? 'Fact check: prices verified from Ghostfolio and matched against Yahoo Finance within tolerance.'
+            : 'Fact check: no data available.';
 
     const summary =
       allMatch && comparisons.length > 0
