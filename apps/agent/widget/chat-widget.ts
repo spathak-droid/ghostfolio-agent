@@ -229,8 +229,7 @@ export function mountChatWidget(container: HTMLElement) {
   formRow.className = 'agent-widget__form-row';
 
   const quickSuggestions = [
-    'Analyze My Risks',
-    'Analyze my acconunt risk',
+    'Analyze my account risk',
     'Can you buy me Bitcoin Shares',
     'What is my top performing coin?',
     'What is the current price of Apple?',

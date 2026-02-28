@@ -561,7 +561,7 @@ Return strict JSON: {"tool":"${toolList}|none"}`,
         traceContext
       });
     },
-    async generateToolParameters(message, selectedTools, conversation, traceContext) {
+    async generateToolParameters(message, selectedTools, conversation, traceContext?) {
       return runWithOptionalTrace({
         fn: async () => {
           logger.debug('[llm.generate_tool_parameters] INPUT', {
@@ -639,16 +639,16 @@ Only set ask_user if TRULY ambiguous. Prefer to guess confidently for typos.`,
               // If user clarification needed, return empty params for all tools
               if (askUser) {
                 logger.debug('[llm.generate_tool_parameters] OUTPUT (ask_user)', { guidance: askUser });
-                const result = Object.fromEntries(
+                const result: Record<string, Record<string, unknown> | undefined | string | null> = Object.fromEntries(
                   selectedTools.map((tool) => [tool, undefined])
-                ) as Record<string, Record<string, unknown> | undefined>;
+                );
                 // Add ask_user field for agent to handle clarification
                 result.ask_user = askUser;
-                return result as Record<string, Record<string, unknown> | undefined | string>;
+                return result;
               }
 
               // Build params for each tool
-              const result = Object.fromEntries(
+              const result: Record<string, Record<string, unknown> | undefined | string | null> = Object.fromEntries(
                 selectedTools.map((tool) => {
                   const toolParams = parsed[tool];
                   if (!toolParams || typeof toolParams !== 'object') {
@@ -656,17 +656,21 @@ Only set ask_user if TRULY ambiguous. Prefer to guess confidently for typos.`,
                   }
                   return [tool, toolParams as Record<string, unknown>];
                 })
-              ) as Record<string, Record<string, unknown> | undefined>;
+              );
 
               // ENFORCE: If both market_data and fact_check are selected, they must have matching symbols
               if (selectedTools.includes('market_data') && selectedTools.includes('fact_check')) {
-                const marketDataSymbols = (result.market_data?.symbols as string[] | undefined) || [];
-                const factCheckParams = result.fact_check || {};
-                if (marketDataSymbols.length > 0) {
-                  result.fact_check = {
-                    ...factCheckParams,
-                    symbols: marketDataSymbols
-                  };
+                const marketDataResult = result.market_data;
+                if (marketDataResult && typeof marketDataResult === 'object' && !Array.isArray(marketDataResult)) {
+                  const marketDataSymbols = (marketDataResult.symbols as string[] | undefined) || [];
+                  if (marketDataSymbols.length > 0) {
+                    const factCheckParams = result.fact_check;
+                    const factCheckObj = (factCheckParams && typeof factCheckParams === 'object' && !Array.isArray(factCheckParams)) ? factCheckParams as Record<string, unknown> : {};
+                    result.fact_check = {
+                      ...factCheckObj,
+                      symbols: marketDataSymbols
+                    };
+                  }
                 }
               }
 
@@ -683,13 +687,13 @@ Only set ask_user if TRULY ambiguous. Prefer to guess confidently for typos.`,
                 })
               });
 
-              return result as Record<string, Record<string, unknown> | undefined | string>;
+              return result;
             } catch (parseError) {
               logger.warn('[llm.generate_tool_parameters] JSON parse failed', {
                 contentPreview: content.slice(0, 100),
                 error: parseError instanceof Error ? parseError.message : String(parseError)
               });
-              return Object.fromEntries(selectedTools.map((tool) => [tool, undefined])) as Record<string, Record<string, unknown> | undefined | string>;
+              return Object.fromEntries(selectedTools.map((tool) => [tool, undefined]));
             }
           } catch (error) {
             const errorMsg = error instanceof Error ? error.message : String(error);
@@ -699,7 +703,7 @@ Only set ask_user if TRULY ambiguous. Prefer to guess confidently for typos.`,
               errorMessage: errorMsg,
               selectedTools
             });
-            return Object.fromEntries(selectedTools.map((tool) => [tool, undefined])) as Record<string, Record<string, unknown> | undefined | string>;
+            return Object.fromEntries(selectedTools.map((tool) => [tool, undefined]));
           }
         },
         step: 'llm.generate_tool_parameters',

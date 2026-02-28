@@ -245,5 +245,5 @@ export interface AgentLlm {
     selectedTools: AgentToolName[],
     conversation: AgentConversationMessage[],
     traceContext?: AgentTraceContext
-  ) => Promise<Record<AgentToolName | 'ask_user', Record<string, unknown> | undefined | string | null>>;
+  ) => Promise<Record<string, Record<string, unknown> | undefined | string | null>>;
 }

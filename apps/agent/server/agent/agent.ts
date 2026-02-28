@@ -197,10 +197,13 @@ export function createAgent({
       // Generate LLM-parsed tool parameters
       let toolParameters: Record<string, Record<string, unknown> | undefined> = {};
       let askUserClarification: string | null = null;
+      logger.debug('[agent] LLM available?', { hasLlm: !!llm, hasGenerateToolParameters: !!llm?.generateToolParameters, selectedToolsLength: selectedTools.length });
       if (llm?.generateToolParameters && selectedTools.length > 0) {
         const paramStartedAt = Date.now();
+        logger.debug('[agent] Calling generateToolParameters...');
         try {
           const result = await llm.generateToolParameters(message, selectedTools, llmConversation, traceContext);
+          logger.debug('[agent] generateToolParameters returned:', { result });
           // Extract ask_user if present
           askUserClarification = (result.ask_user as string | undefined) || null;
           // Get tool parameters (exclude ask_user field)
@@ -230,6 +233,7 @@ export function createAgent({
             }
           });
         } catch (error) {
+          logger.error('[agent] generateToolParameters ERROR:', error);
           logger.warn('[agent.chat] GENERATE_TOOL_PARAMETERS_FAILED', {
             error: error instanceof Error ? error.message : String(error)
           });
@@ -248,7 +252,7 @@ export function createAgent({
           errors: [],
           toolCalls: [],
           trace,
-          verification: { confidence: 0, flags: ['needs_clarification'] }
+          verification: { confidence: 0, flags: ['needs_clarification'], isValid: false }
         };
       }
 
