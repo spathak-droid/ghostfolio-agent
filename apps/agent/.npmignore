@@ -1,0 +1,16 @@
+# Source TypeScript (we publish compiled dist/ only)
+server/**/*.ts
+widget/**
+test/
+*.spec.ts
+*.test.ts
+
+# Config
+tsconfig*.json
+jest.config.ts
+nodemon.json
+.env*
+
+# Nx artifacts
+.nx/
+project.json

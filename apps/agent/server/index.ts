@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import 'dotenv/config';
 
 import { logger } from './utils';

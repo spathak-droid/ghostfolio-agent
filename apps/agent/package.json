@@ -1,0 +1,35 @@
+{
+  "name": "@ghostfolio/agent",
+  "version": "2.243.0",
+  "description": "AI-powered portfolio assistant agent for Ghostfolio",
+  "main": "dist/server/index.js",
+  "bin": {
+    "ghostfolio-agent": "dist/server/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.publish.json",
+    "start": "node dist/server/index.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "ghostfolio",
+    "portfolio",
+    "agent",
+    "ai",
+    "llm",
+    "finance"
+  ],
+  "license": "AGPL-3.0",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "dependencies": {
+    "@keyv/redis": "4.4.0",
+    "@prisma/client": "6.19.0",
+    "cheerio": "1.2.0",
+    "dotenv": "17.2.3",
+    "express": "^5.2.1",
+    "langsmith": "^0.5.6",
+    "tslib": "2.8.1"
+  }
+}
