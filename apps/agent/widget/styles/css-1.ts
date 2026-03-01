@@ -491,6 +491,29 @@ export const WIDGET_CSS_PART1 = `
     .agent-widget__typing-dot:nth-child(1) { animation-delay: 0s; }
     .agent-widget__typing-dot:nth-child(2) { animation-delay: 0.15s; }
     .agent-widget__typing-dot:nth-child(3) { animation-delay: 0.3s; }
+    .agent-widget__message-body-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      min-width: 0;
+    }
+    .agent-widget__message-body-wrap .agent-widget__message-body {
+      flex: 1;
+      min-width: 0;
+    }
+    @keyframes agent-widget-spinner-loop {
+      to { transform: rotate(360deg); }
+    }
+    .agent-widget__message-loading-spinner {
+      flex-shrink: 0;
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(34, 197, 94, 0.25);
+      border-top-color: #22c55e;
+      border-radius: 50%;
+      animation: agent-widget-spinner-loop 0.7s linear infinite;
+    }
     .agent-widget__message--error {
       background: #fef2f2;
       color: #991b1b;

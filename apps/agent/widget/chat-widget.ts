@@ -17,9 +17,14 @@ import {
   resolveHistoryItemApiUrl
 } from './utils/urls';
 import { formatMessageTime } from './utils/format';
+import {
+  createTypingDots,
+  setAckContent,
+  setMessageContent
+} from './utils/chat-message';
+import { appendSymbolOptions as appendSymbolOptionsToMessage } from './utils/symbol-options';
 import type {
   AgentChatResponse,
-  SymbolOption,
   WidgetCreateOrderParams
 } from './types';
 import { createWelcomeMessage as buildWelcomeMessage } from './components/welcome';
@@ -295,20 +300,6 @@ export function mountChatWidget(container: HTMLElement) {
   formRow.appendChild(button);
   form.appendChild(formRow);
 
-  function createTypingDots(): DocumentFragment {
-    const frag = document.createDocumentFragment();
-    const wrap = document.createElement('span');
-    wrap.className = 'agent-widget__typing-dots';
-    wrap.setAttribute('aria-hidden', 'true');
-    for (let i = 0; i < 3; i++) {
-      const dot = document.createElement('span');
-      dot.className = 'agent-widget__typing-dot';
-      wrap.appendChild(dot);
-    }
-    frag.appendChild(wrap);
-    return frag;
-  }
-
   function appendMessage(
     content: string,
     role: 'user' | 'assistant',
@@ -342,80 +333,12 @@ export function mountChatWidget(container: HTMLElement) {
     return li;
   }
 
-  function setMessageContent(li: HTMLElement, content: string): void {
-    const body = li.querySelector('.agent-widget__message-body');
-    if (body) {
-      body.textContent = content;
-    }
-    li.classList.remove('agent-widget__message--loading', 'agent-widget__message--error');
-  }
-
-  /** Sets acknowledge placeholder text but keeps grey loading style until final answer. */
-  function setAckContent(li: HTMLElement, content: string): void {
-    const body = li.querySelector('.agent-widget__message-body');
-    if (body) {
-      body.textContent = content;
-    }
-  }
-
   function appendSymbolOptions(li: HTMLElement, response: AgentChatResponse): void {
-    const toolCalls = response.toolCalls ?? [];
-    const latestOrderCall = [...toolCalls]
-      .reverse()
-      .find((call) => call.toolName === 'create_order' && call.success);
-    if (!latestOrderCall) {
-      return;
-    }
-
-    const result = latestOrderCall.result;
-    const needsClarification = result?.needsClarification === true;
-    const rawOptions = result?.symbolOptions;
-    if (!needsClarification || !Array.isArray(rawOptions) || rawOptions.length === 0) {
-      return;
-    }
-
-    const options = rawOptions
-      .filter((option): option is SymbolOption => {
-        if (!option || typeof option !== 'object') return false;
-        const rec = option as Record<string, unknown>;
-        return typeof rec.symbol === 'string' && typeof rec.label === 'string';
-      })
-      .slice(0, 3);
-    if (options.length === 0) {
-      return;
-    }
-
-    const existing = li.querySelector('.agent-widget__symbol-options');
-    if (existing) {
-      existing.remove();
-    }
-
-    const container = document.createElement('div');
-    container.className = 'agent-widget__symbol-options';
-    const title = document.createElement('div');
-    title.className = 'agent-widget__symbol-options-title';
-    title.textContent = 'Select a symbol:';
-    container.appendChild(title);
-
-    const list = document.createElement('div');
-    list.className = 'agent-widget__symbol-options-list';
-    for (const option of options) {
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'agent-widget__symbol-option-chip';
-      chip.textContent = option.label;
-      chip.addEventListener('click', () => {
-        nextCreateOrderParams = {
-          dataSource: option.dataSource,
-          symbol: option.symbol
-        };
-        input.value = option.symbol;
-        form.dispatchEvent(new Event('submit', { cancelable: true }));
-      });
-      list.appendChild(chip);
-    }
-    container.appendChild(list);
-    li.appendChild(container);
+    appendSymbolOptionsToMessage(li, response, (params) => {
+      nextCreateOrderParams = params;
+      input.value = params.symbol;
+      form.dispatchEvent(new Event('submit', { cancelable: true }));
+    });
   }
 
   function appendHoldingTrendCard(li: HTMLElement, response: AgentChatResponse): void {
