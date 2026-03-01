@@ -109,7 +109,7 @@ export const WIDGET_CSS_PART1 = `
     .agent-widget__close {
       border: none;
       background: transparent;
-      color: #5c6470;
+      color: #b91c1c;
       cursor: pointer;
       font-size: 18px;
       line-height: 1;
@@ -123,8 +123,8 @@ export const WIDGET_CSS_PART1 = `
       transition: background 0.12s ease, color 0.12s ease;
     }
     .agent-widget__close:hover {
-      background: rgba(11, 13, 23, 0.06);
-      color: #0b0d17;
+      background: rgba(185, 28, 28, 0.12);
+      color: #991b1b;
     }
     .agent-widget__close:focus-visible {
       outline: 2px solid #3d7aff;
@@ -250,13 +250,25 @@ export const WIDGET_CSS_PART1 = `
       background: transparent;
       color: #5c6470;
       cursor: pointer;
-      padding: 4px 8px;
-      font-size: 12px;
-      border-radius: 6px;
+      padding: 0;
+      width: 28px;
+      height: 28px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      transition: background 0.12s ease, color 0.12s ease;
     }
     .agent-widget__sign-out:hover {
       background: rgba(11, 13, 23, 0.06);
       color: #0b0d17;
+    }
+    .agent-widget__sign-out:focus-visible {
+      outline: 2px solid #3d7aff;
+      outline-offset: 2px;
+    }
+    .agent-widget__sign-out-icon {
+      display: block;
     }
     .agent-widget__sign-in-view {
       flex: 1;

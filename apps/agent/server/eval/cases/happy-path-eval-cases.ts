@@ -76,6 +76,31 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "mustNotContain": []
   },
   {
+    "id": "portfolio_summary-happy-1",
+    "query": "How is my portfolio doing?",
+    "expectedTools": [
+      "portfolio_summary"
+    ],
+    "difficulty": "happy",
+    "expectedOutput": [
+      "Portfolio summary"
+    ],
+    "passFailCriteria": [
+      "must satisfy expected route",
+      "must invoke expected tools",
+      "must include expected output fragment"
+    ],
+    "dimensions": [
+      "tool_execution",
+      "correctness"
+    ],
+    "expectedRoute": "llm_tools_llm_user",
+    "expectedToolCountAtLeast": 1,
+    "requireSuccessfulToolCalls": true,
+    "mustContain": [],
+    "mustNotContain": []
+  },
+  {
     "id": "portfolio_analysis-happy-1",
     "query": "Analyze my portfolio allocation",
     "expectedTools": [
@@ -129,11 +154,11 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "id": "portfolio_analysis-happy-3",
     "query": "What is my available cash balance?",
     "expectedTools": [
-      "portfolio_analysis"
+      "holdings_analysis"
     ],
     "difficulty": "happy",
     "expectedOutput": [
-      "Portfolio analysis from Ghostfolio data"
+      "Holdings analysis from Ghostfolio data"
     ],
     "passFailCriteria": [
       "must satisfy expected route",

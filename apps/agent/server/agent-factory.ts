@@ -20,6 +20,7 @@ import { marketDataLookupTool } from './tools/market-data-lookup';
 import { marketDataTool } from './tools/market-data';
 import { marketOverviewTool } from './tools/market-overview';
 import { portfolioAnalysisTool } from './tools/portfolio-analysis';
+import { portfolioSummaryTool } from './tools/portfolio-summary';
 import { staticAnalysisTool } from './tools/static-analysis';
 import { taxEstimateTool } from './tools/tax-estimate';
 import { transactionCategorizeTool } from './tools/transaction-categorize';
@@ -188,6 +189,22 @@ export function createAgentWithClient(
           ttlMs: config.toolResponseCacheTtlMs
         });
       },
+      portfolioSummary: (a, b) => {
+        const { impersonationId, message, token } = toolInput(a, b);
+        return withToolResponseCache({
+          cache: config.toolResponseCache,
+          input: { impersonationId, message, token },
+          task: () =>
+            portfolioSummaryTool({
+              client: ghostfolioClient,
+              impersonationId,
+              message,
+              token
+            }),
+          toolName: 'portfolio_summary',
+          ttlMs: config.toolResponseCacheTtlMs
+        });
+      },
       portfolioAnalysis: (a, b) => {
         const { impersonationId, message, token } = toolInput(a, b);
         return withToolResponseCache({
@@ -304,7 +321,6 @@ export function createAgentWithClient(
         const { impersonationId, message, token, createOrderParams } = toolInput(a, b);
         return createOrderTool({
           client: ghostfolioClient,
-          clarifyQuantityUnit: config.llm?.clarifyQuantityUnit,
           impersonationId,
           message,
           token,

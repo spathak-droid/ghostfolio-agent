@@ -20,6 +20,7 @@ function buildDefaultTools(): AgentTools {
       sources: ['test'],
       summary: 'Holdings analysis from Ghostfolio data'
     }),
+    portfolioSummary: jest.fn(),
     portfolioAnalysis: jest.fn(),
     transactionCategorize: jest.fn(),
     transactionTimeline: jest.fn()

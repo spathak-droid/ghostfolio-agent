@@ -1,5 +1,10 @@
 [
   {
+    "input": "How is my portfolio doing?",
+    "expectedTool": "portfolio_summary",
+    "expectedContains": "Portfolio summary"
+  },
+  {
     "input": "Analyze my portfolio allocation",
     "expectedTool": "portfolio_analysis",
     "expectedContains": "Portfolio analysis"

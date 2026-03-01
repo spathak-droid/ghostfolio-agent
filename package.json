@@ -50,7 +50,7 @@
     "test": "npx dotenv-cli -e .env.example -- npx nx run-many --target=test --all --parallel=4",
     "test:api": "npx dotenv-cli -e .env.example -- nx test api",
     "test:agent": "npx dotenv-cli -e .env.example -- nx test agent",
-    "eval:agent": "ts-node apps/agent/test/eval/run-evals.ts",
+    "eval:agent": "EVAL_USE_REAL_LLM=false npx ts-node apps/agent/server/eval/run-default-evals.ts",
     "eval:agent:llm": "DOTENV_CONFIG_PATH=.env EVAL_USE_REAL_LLM=true ts-node apps/agent/server/eval/run-default-evals.ts",
     "build:agent-widget": "shx mkdir -p dist/apps/agent/widget/asset && shx cp -r apps/agent/widget/asset/* dist/apps/agent/widget/asset && esbuild apps/agent/widget/index.ts --bundle --format=esm --outfile=dist/apps/agent/widget/index.js",
     "test:common": "npx dotenv-cli -e .env.example -- nx test common",

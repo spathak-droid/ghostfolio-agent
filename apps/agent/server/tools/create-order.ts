@@ -10,7 +10,6 @@ import type { CreateOrderDtoBody } from '../clients';
 import { isUsdTransactionCapExceeded, MAX_USD_TRANSACTION_AMOUNT } from './order-limits';
 import { resolveSymbolWithCandidates } from './symbol-resolver';
 import { toToolErrorPayload } from './tool-error';
-import { logger } from '../utils';
 
 const BUY_SELL_TYPES: readonly OrderType[] = ['BUY', 'SELL'];
 
@@ -46,12 +45,6 @@ export interface CreateOrderToolInput {
   message: string;
   token?: string;
   createOrderParams?: CreateOrderParams;
-  clarifyQuantityUnit?: (
-    message: string,
-    symbol: string,
-    quantity: number,
-    unitPrice: number
-  ) => Promise<{ unit: 'coins' | 'currency'; clarification: string } | undefined>;
 }
 
 function nowIso(): string {
@@ -279,8 +272,7 @@ export async function createOrderTool({
   impersonationId,
   message,
   token,
-  createOrderParams: params,
-  clarifyQuantityUnit
+  createOrderParams: params
 }: CreateOrderToolInput): Promise<Record<string, unknown>> {
   const dataAsOf = new Date().toISOString();
   const sources = ['ghostfolio_api'];
@@ -487,36 +479,38 @@ export async function createOrderTool({
 
   const date = resolveDateInput(params.date, message);
   const fee = safeNumber(params.fee) ?? 0;
-  let qty = needsQuantity ? quantity! : (safeNumber(params.quantity) ?? 0);
+  const qty = needsQuantity ? quantity! : (safeNumber(params.quantity) ?? 0);
   const price = unitPriceToUse ?? 0;
-  let estimatedCost = qty * price + fee;
+  const estimatedCost = qty * price + fee;
 
-  // LLM-based unit clarification: if quantity seems suspiciously large, ask the LLM
-  // to determine if user meant coins/units or a currency amount
+  // Ambiguous quantity detection: only ask if user gave bare number without context.
+  // This follows the "No Guessing" rule: never auto-convert without user confirmation.
+  const messageLower = message.toLowerCase();
+  // Check if message contains explicit instructions like "buy/sell 600 AAPL" or "$1800 worth"
+  const hasExplicitQuantityContext =
+    /\b(buy|sell|purchase|long|short)\b.*\d+/.test(messageLower) ||
+    /\$|dollar|usd|euros?|gbp|currency|worth|cost|amount/.test(messageLower) ||
+    /\b\d+\s*(units?|coins?|shares?|btc|eth|sol|stocks?|shares?|aapl|tsla)\b/.test(messageLower);
+
   if (
-    clarifyQuantityUnit &&
     needsQuantity &&
     qty > 0 &&
     price > 0 &&
-    estimatedCost > 500_000 &&
+    estimatedCost > 50_000 &&
+    !hasExplicitQuantityContext &&
     symbol.length > 0
   ) {
-    try {
-      const clarification = await clarifyQuantityUnit(message, symbol, qty, price);
-      if (clarification && clarification.unit === 'currency') {
-        // User likely meant $100 worth, not 100 coins
-        // So quantity should be: (currencyAmount / unitPrice)
-        qty = qty / price;
-        estimatedCost = qty * price + fee;
-      }
-    } catch (clarifyError) {
-      // Log but don't fail if clarification fails; continue with original quantity
-      logger.warn('[create_order] quantity clarification failed', {
-        symbol,
-        originalQty: quantity,
-        error: clarifyError instanceof Error ? clarifyError.message : String(clarifyError)
-      });
-    }
+    return {
+      success: true,
+      needsClarification: true,
+      missingFields: ['quantity'],
+      answer:
+        `I want to confirm: do you mean **${qty} units** of ${symbol} (estimated cost ${currency} ${estimatedCost.toFixed(2)})` +
+        ` or **${currency} ${qty}** worth of ${symbol} (approximately ${(qty / price).toFixed(8)} units)?`,
+      summary: `Clarify: ${qty} units or ${currency} ${qty} worth of ${symbol}?`,
+      data_as_of: dataAsOf,
+      sources
+    };
   }
 
   let portfolioSummary: unknown;

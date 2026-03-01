@@ -14,6 +14,7 @@ function createNoopTools() {
     marketDataLookup: jest.fn().mockResolvedValue({}),
     staticAnalysis: jest.fn().mockResolvedValue({}),
     holdingsAnalysis: jest.fn().mockResolvedValue({}),
+    portfolioSummary: jest.fn().mockResolvedValue({}),
     portfolioAnalysis: jest.fn().mockResolvedValue({}),
     transactionCategorize: jest.fn().mockResolvedValue({}),
     transactionTimeline: jest.fn().mockResolvedValue({})

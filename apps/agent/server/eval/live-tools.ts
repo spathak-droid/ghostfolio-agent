@@ -11,6 +11,7 @@ import { marketDataTool } from '../tools/market-data';
 import { marketOverviewTool } from '../tools/market-overview';
 import { holdingsAnalysisTool } from '../tools/holdings-analysis';
 import { portfolioAnalysisTool } from '../tools/portfolio-analysis';
+import { portfolioSummaryTool } from '../tools/portfolio-summary';
 import { staticAnalysisTool } from '../tools/static-analysis';
 import { transactionCategorizeTool } from '../tools/transaction-categorize';
 import { transactionTimelineTool } from '../tools/transaction-timeline';
@@ -142,6 +143,15 @@ export function createLiveEvalTools({
     marketOverview: (a, b) => {
       const { impersonationId, message, token } = resolveToolInput(a, b);
       return marketOverviewTool({
+        client,
+        impersonationId,
+        message,
+        token
+      });
+    },
+    portfolioSummary: (a, b) => {
+      const { impersonationId, message, token } = resolveToolInput(a, b);
+      return portfolioSummaryTool({
         client,
         impersonationId,
         message,

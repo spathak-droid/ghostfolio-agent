@@ -514,6 +514,36 @@ describe('synthesizeToolResults', () => {
     );
   });
 
+  it('uses netPerformancePercentWithCurrencyEffect for holdings (matching UI calculation)', () => {
+    const response = synthesizeToolResults({
+      existingFlags: [],
+      toolCalls: [
+        {
+          toolName: 'holdings_analysis',
+          success: true,
+          result: {
+            data_as_of: '2026-02-26T00:00:00.000Z',
+            sources: ['ghostfolio_api'],
+            data: {
+              holdings: {
+                MYSTOCK: {
+                  symbol: 'MYSTOCK',
+                  netPerformancePercent: -0.0945,
+                  netPerformancePercentWithCurrencyEffect: -0.0742,
+                  performancePercent: -0.0742,
+                  allocationInPercentage: 1
+                }
+              }
+            }
+          }
+        }
+      ]
+    });
+
+    expect(response.answer).toContain('MYSTOCK -7.42%');
+    expect(response.answer).not.toContain('MYSTOCK -9.45%');
+  });
+
   it('keeps detailed tool failures in Tool errors section without duplicating in Risks/flags', () => {
     const response = synthesizeToolResults({
       existingFlags: [],

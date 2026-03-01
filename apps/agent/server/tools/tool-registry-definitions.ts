@@ -162,11 +162,50 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     idempotent: true
   },
   {
+    name: 'portfolio_summary',
+    description:
+      'Use when the user asks for portfolio summary, overview, status, or net worth snapshot. ' +
+      'Calls GET /api/v1/portfolio/details and returns accounts, platforms, holdings, and comprehensive summary data (including annualized performance, cash, dividends, fees). ' +
+      'Good for: "How is my portfolio doing?", "Portfolio summary", "What is my net worth?", "Portfolio overview", "Show portfolio status". ' +
+      'For detailed performance trends over time, use portfolio_analysis. ' +
+      'For allocation breakdown, use holdings_analysis.',
+    input_schema: COMMON_INPUT,
+    output_schema: {
+      type: 'object',
+      description: 'Portfolio summary payload from GET /api/v1/portfolio/details',
+      properties: {
+        summary_data: {
+          type: 'object',
+          description:
+            'Normalized summary: balance = net worth; portfolio = current value; cash = available cash; netPerformance, netPerformancePercentage, annualizedPerformancePercent, dividend, fees'
+        },
+        accounts: {
+          type: 'object',
+          description: 'Account balances by account ID'
+        },
+        platforms: {
+          type: 'object',
+          description: 'Platform balances by platform ID'
+        },
+        data_as_of: { type: 'string', description: 'ISO timestamp of data' },
+        summary: { type: 'string', description: 'Short human-readable summary' },
+        sources: { type: 'array', description: 'Source identifiers, e.g. ghostfolio_api' },
+        data: {
+          type: 'object',
+          description: 'Raw GET /api/v1/portfolio/details payload (accounts, platforms, holdings, summary)'
+        }
+      }
+    },
+    error_model: TOOL_ERROR,
+    idempotent: true
+  },
+  {
     name: 'portfolio_analysis',
     description:
-      'Use when the user asks for portfolio performance trend, net performance, net worth, or high-level returns over time. ' +
+      'Use when the user asks for portfolio performance trend, returns over time, or historical performance analysis. ' +
       'Calls GET /api/v2/portfolio/performance?range=max and returns normalized performance fields plus the raw chart/performance payload. ' +
-      'Good for: "How is my portfolio performing?", "Show performance over time", "What is my current net worth?", "What is my return?". ' +
+      'Good for: "Show performance over time", "What is my historical return?", "Portfolio performance analysis", "Analyze my returns". ' +
+      'For current portfolio summary/status, use portfolio_summary. ' +
       'For holdings/allocation/cash breakdown, use holdings_analysis. ' +
       'Do NOT use to execute transactions or edit activities; use create_order (or create_other_activities) only for explicit execution requests.',
     input_schema: COMMON_INPUT,

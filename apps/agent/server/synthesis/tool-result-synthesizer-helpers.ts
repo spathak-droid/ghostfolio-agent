@@ -579,9 +579,12 @@ export function extractHoldingPerformerFindings(payload: Record<string, unknown>
       if (isCashSymbol(symbol)) {
         return undefined;
       }
+      // Use netPerformancePercentWithCurrencyEffect (time-weighted ROAI with currency adjustment) to match UI.
+      // Falls back to performancePercent (computed from value/investment) if not available from API.
       const pct =
-        numberOrUndefined(holding.netPerformancePercent) ??
-        numberOrUndefined(holding.netPerformancePercentWithCurrencyEffect);
+        numberOrUndefined(holding.netPerformancePercentWithCurrencyEffect) ??
+        numberOrUndefined(holding.performancePercent) ??
+        numberOrUndefined(holding.netPerformancePercent);
       if (pct === undefined || !Number.isFinite(pct)) {
         return undefined;
       }

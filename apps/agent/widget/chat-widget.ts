@@ -102,6 +102,8 @@ export function mountChatWidget(container: HTMLElement) {
   newChatButton.innerHTML = `
     <svg class="agent-widget__new-chat-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      <line x1="12" y1="8" x2="12" y2="14"/>
+      <line x1="9" y1="11" x2="15" y2="11"/>
     </svg>
   `;
 
@@ -128,7 +130,13 @@ export function mountChatWidget(container: HTMLElement) {
   signOutButton.type = 'button';
   signOutButton.className = 'agent-widget__sign-out';
   signOutButton.setAttribute('aria-label', 'Sign out');
-  signOutButton.textContent = 'Sign out';
+  signOutButton.innerHTML = `
+    <svg class="agent-widget__sign-out-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+      <polyline points="16 17 21 12 16 7"/>
+      <line x1="21" y1="12" x2="9" y2="12"/>
+    </svg>
+  `;
 
   const closeButton = document.createElement('button');
   closeButton.type = 'button';
@@ -442,6 +450,7 @@ export function mountChatWidget(container: HTMLElement) {
     widget.classList.toggle(CHATBOX_OPEN_CLASS, !isOpen);
 
     if (!isOpen) {
+      if (getAuthToken()) prefetchHistory();
       input.focus();
     }
   });
@@ -467,6 +476,28 @@ export function mountChatWidget(container: HTMLElement) {
     historyButton.setAttribute('aria-expanded', 'true');
   }
 
+  let cachedHistoryList: { id: string; title: string | null; updatedAt: string }[] | null = null;
+
+  function getHistoryHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {};
+    const token = getAuthToken();
+    const impersonationId = getImpersonationId();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (impersonationId) headers[IMPERSONATION_HEADER] = impersonationId;
+    return headers;
+  }
+
+  function prefetchHistory(): void {
+    fetch(historyApiUrl, { headers: getHistoryHeaders(), credentials: 'same-origin' })
+      .then((res) => res.json())
+      .then((data: { conversations?: { id: string; title: string | null; updatedAt: string }[] }) => {
+        cachedHistoryList = data.conversations ?? [];
+      })
+      .catch(() => {
+        cachedHistoryList = [];
+      });
+  }
+
   function renderHistoryList(list: { id: string; title: string | null; updatedAt: string }[]): void {
     historyDropdown.innerHTML = '';
     if (list.length === 0) {
@@ -478,11 +509,7 @@ export function mountChatWidget(container: HTMLElement) {
       );
       return;
     }
-    const token = getAuthToken();
-    const impersonationId = getImpersonationId();
-    const headers: Record<string, string> = {};
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    if (impersonationId) headers[IMPERSONATION_HEADER] = impersonationId;
+    const headers = getHistoryHeaders();
     for (const conv of list) {
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -529,26 +556,31 @@ export function mountChatWidget(container: HTMLElement) {
 
   historyButton.addEventListener('click', async () => {
     if (historyDropdown.hidden) {
-      showHistoryLoading();
-      const token = getAuthToken();
-      const impersonationId = getImpersonationId();
-      const headers: Record<string, string> = {};
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-      if (impersonationId) headers[IMPERSONATION_HEADER] = impersonationId;
-      try {
-        const res = await fetch(historyApiUrl, { headers, credentials: 'same-origin' });
-        const data = (await res.json()) as {
-          conversations?: { id: string; title: string | null; updatedAt: string }[];
-        };
-        renderHistoryList(data.conversations ?? []);
-      } catch {
-        historyDropdown.innerHTML = '';
-        historyDropdown.appendChild(
-          Object.assign(document.createElement('div'), {
-            className: 'agent-widget__history-empty',
-            textContent: 'Could not load history'
-          })
-        );
+      if (cachedHistoryList !== null) {
+        renderHistoryList(cachedHistoryList);
+        historyDropdown.hidden = false;
+        historyButton.setAttribute('aria-expanded', 'true');
+      } else {
+        showHistoryLoading();
+        try {
+          const res = await fetch(historyApiUrl, {
+            headers: getHistoryHeaders(),
+            credentials: 'same-origin'
+          });
+          const data = (await res.json()) as {
+            conversations?: { id: string; title: string | null; updatedAt: string }[];
+          };
+          cachedHistoryList = data.conversations ?? [];
+          renderHistoryList(cachedHistoryList);
+        } catch {
+          historyDropdown.innerHTML = '';
+          historyDropdown.appendChild(
+            Object.assign(document.createElement('div'), {
+              className: 'agent-widget__history-empty',
+              textContent: 'Could not load history'
+            })
+          );
+        }
       }
     } else {
       historyDropdown.hidden = true;
@@ -571,6 +603,7 @@ export function mountChatWidget(container: HTMLElement) {
     const conversationIdToClear = currentConversationId;
     currentConversationId = generateConversationId();
     nextCreateOrderParams = undefined;
+    cachedHistoryList = null;
     renderInitialContent();
     messages.scrollTop = 0;
     const token = getAuthToken();

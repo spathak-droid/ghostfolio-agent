@@ -678,11 +678,12 @@ Only set ask_user if TRULY ambiguous. Prefer to guess confidently for typos.`,
                 selectedTools,
                 generatedParameters: selectedTools.map((tool) => {
                   const params = result[tool];
+                  const str = params != null ? JSON.stringify(params) : '';
                   return {
                     tool,
                     hasParams: Boolean(params),
                     symbols: (params as any)?.symbols,
-                    params: JSON.stringify(params).slice(0, 100)
+                    params: str.slice(0, 100)
                   };
                 })
               });

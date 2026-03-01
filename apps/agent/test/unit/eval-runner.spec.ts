@@ -21,6 +21,7 @@ function createStubTools(overrides: Partial<AgentTools> = {}): AgentTools {
     marketDataLookup: jest.fn().mockResolvedValue({ data_as_of: '2026-02-24T00:00:00Z', prices: [], sources: ['test'], summary: 'Market data lookup from Ghostfolio API' }),
     marketOverview: jest.fn().mockResolvedValue({ answer: 'ok', data_as_of: '2026-02-24T00:00:00Z', overview: {}, sources: ['test'], summary: 'ok' }),
     holdingsAnalysis: jest.fn().mockResolvedValue({ allocation: [], data_as_of: '2026-02-24T00:00:00Z', sources: ['test'], summary: 'ok' }),
+    portfolioSummary: jest.fn().mockResolvedValue({ summary_data: {}, data_as_of: '2026-02-24T00:00:00Z', sources: ['test'], summary: 'Portfolio summary' }),
     portfolioAnalysis: jest.fn().mockResolvedValue({ allocation: [], data_as_of: '2026-02-24T00:00:00Z', sources: ['test'], summary: 'ok' }),
     staticAnalysis: jest.fn().mockResolvedValue({ success: true, risks: [], data_as_of: '2026-02-24T00:00:00Z', sources: ['test'], summary: 'ok', xRay: { categories: [], statistics: {} } }),
     transactionCategorize: jest.fn().mockResolvedValue({ categories: [], data_as_of: '2026-02-24T00:00:00Z', sources: ['test'], summary: 'ok' }),

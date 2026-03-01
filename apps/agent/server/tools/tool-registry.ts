@@ -35,6 +35,7 @@ export const SELECTABLE_TOOL_NAMES: readonly AgentToolName[] = [
   'fact_compliance_check',
   'fact_check',
   'tax_estimate',
+  'portfolio_summary',
   'portfolio_analysis',
   'holdings_analysis',
   'static_analysis',

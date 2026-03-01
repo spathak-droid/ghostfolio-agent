@@ -75,9 +75,15 @@ function normalizePortfolioData(input: unknown): Record<string, unknown> {
     if (!symbol) {
       continue;
     }
-    holdingsBySymbol[symbol] = holding;
     const valueInBaseCurrency = asNumber(holding.valueInBaseCurrency) ?? 0;
     const itemInvestment = asNumber(holding.investment) ?? 0;
+    // Use netPerformancePercentWithCurrencyEffect from API (time-weighted ROAI with currency adjustment).
+    // This matches the UI calculation and accounts for when money was invested.
+    const performancePercent = asNumber(holding.netPerformancePercentWithCurrencyEffect);
+    holdingsBySymbol[symbol] = {
+      ...holding,
+      performancePercent: performancePercent !== undefined ? roundToFour(performancePercent) : undefined
+    };
     totalValue += valueInBaseCurrency;
     investment += itemInvestment;
     netPerformance += asNumber(holding.netPerformance) ?? 0;
@@ -87,6 +93,27 @@ function normalizePortfolioData(input: unknown): Record<string, unknown> {
   }
 
   normalized.holdings = holdingsBySymbol;
+
+  // Debug: log one sample holding so you can verify value, investment, and simple return end-to-end.
+  const sampleSymbol = holdingsArray.find(
+    (h) => !isCashSymbol(asString(h.symbol) ?? '') && (asNumber(h.investment) ?? 0) > 0
+  );
+  if (sampleSymbol) {
+    const s = asString(sampleSymbol.symbol) ?? '?';
+    const val = asNumber(sampleSymbol.valueInBaseCurrency) ?? 0;
+    const inv = asNumber(sampleSymbol.investment) ?? 0;
+    const simple = inv > 0 ? (val - inv) / inv : undefined;
+    const apiPct = asNumber(sampleSymbol.netPerformancePercent);
+    logger.debug('[holdings-analysis] PERFORMANCE_CALC_SAMPLE', {
+      symbol: s,
+      valueInBaseCurrency: val,
+      investment: inv,
+      simpleReturnPercent: simple != null ? roundToFour(simple) : undefined,
+      simpleReturnDisplay: simple != null ? `${roundToTwo(simple * 100)}%` : undefined,
+      apiNetPerformancePercent: apiPct,
+      apiDisplay: apiPct != null ? `${roundToTwo(apiPct * 100)}%` : undefined
+    });
+  }
 
   const existingSummary = isObject(input.summary) ? input.summary : {};
   const computedNetPerformancePercent = investment > 0 ? netPerformance / investment : 0;

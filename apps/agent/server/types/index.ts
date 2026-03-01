@@ -42,6 +42,7 @@ export type AgentToolName =
   | 'analyze_stock_trend'
   | 'market_data_lookup'
   | 'market_overview'
+  | 'portfolio_summary'
   | 'portfolio_analysis'
   | 'holdings_analysis'
   | 'static_analysis'
@@ -157,6 +158,7 @@ export interface AgentTools {
   analyzeStockTrend?: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   marketDataLookup: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   marketOverview?: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
+  portfolioSummary: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   portfolioAnalysis: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   holdingsAnalysis: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;
   staticAnalysis: (inputOrRun: AgentToolInput, input?: AgentToolInput) => Promise<Record<string, unknown>>;

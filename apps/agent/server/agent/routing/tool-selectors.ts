@@ -151,7 +151,9 @@ export function isClearPortfolioOrTransactionRetrieval(
   keywordTools: AgentToolName[]
 ): boolean {
   const hasPortfolioFamilyTool =
-    keywordTools.includes('portfolio_analysis') || keywordTools.includes('holdings_analysis');
+    keywordTools.includes('portfolio_summary') ||
+    keywordTools.includes('portfolio_analysis') ||
+    keywordTools.includes('holdings_analysis');
   const hasTransactionRetrievalTool =
     keywordTools.includes('transaction_timeline') || keywordTools.includes('transaction_categorize');
 

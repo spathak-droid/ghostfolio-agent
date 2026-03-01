@@ -57,7 +57,7 @@ export async function selectTools({
   traceContext: AgentTraceContext;
   llm?: AgentLlm;
 }): Promise<AgentToolName[]> {
-  // Classify intent first - if general, no tools needed
+  // Classify intent first - if general/greeting, skip all tool selection
   if (classifyIntent(message) === 'general') {
     return [];
   }

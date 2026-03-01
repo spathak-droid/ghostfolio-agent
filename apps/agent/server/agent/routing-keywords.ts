@@ -53,14 +53,24 @@ export const SELECTABLE_KEYWORD_HINTS: Readonly<Record<string, string[]>> = {
     'can i buy',
     'can i sell'
   ],
+  portfolio_summary: [
+    'portfolio summary',
+    'portfolio overview',
+    'portfolio status',
+    'how is my portfolio',
+    'overall portfolio',
+    'current portfolio',
+    'net worth'
+  ],
   portfolio_analysis: [
     'portfolio',
     'performance',
     'return',
     'net performance',
-    'net worth',
+    'performance analysis',
+    'historical performance',
     'p&l',
-    'cash balance'
+    'returns'
   ],
   holdings_analysis: [
     'allocation',

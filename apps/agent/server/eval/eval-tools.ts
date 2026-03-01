@@ -148,6 +148,20 @@ export function createEvalTools(captures: ToolCapture[]): AgentTools {
         summary: 'Market overview from Ghostfolio fear & greed index'
       });
     },
+    portfolioSummary: async (inputOrRun, input) => {
+      track('portfolio_summary', inputOrRun, input);
+      return buildResult({
+        summary_data: {
+          balance: 100000,
+          portfolio: 95000,
+          netPerformance: 2500,
+          netPerformancePercentage: 0.025,
+          cash: 5000,
+          dividend: 125
+        },
+        summary: 'Portfolio summary'
+      });
+    },
     portfolioAnalysis: async (inputOrRun, input) => {
       track('portfolio_analysis', inputOrRun, input);
       return buildResult({
@@ -279,6 +293,10 @@ export function createTrackedTools(baseTools: AgentTools, captures: ToolCapture[
           return marketOverview(inputOrRun, input);
         }
       : undefined,
+    portfolioSummary: async (inputOrRun, input) => {
+      track('portfolio_summary', inputOrRun, input);
+      return baseTools.portfolioSummary(inputOrRun, input);
+    },
     portfolioAnalysis: async (inputOrRun, input) => {
       track('portfolio_analysis', inputOrRun, input);
       return baseTools.portfolioAnalysis(inputOrRun, input);
@@ -309,6 +327,16 @@ export function createEvalLlm(trace: LlmTrace): AgentLlm {
       if (normalized.includes('joke')) {
         return 'Finance joke: I tried to beat the market, but my fees beat me first.';
       }
+      // Handle portfolio-related responses
+      if (normalized.includes('portfolio') && normalized.includes('doing')) {
+        return 'Portfolio summary: Your portfolio is performing well with a net performance of $2,500 (2.5% return). Current balance is $100,000 with $95,000 in portfolio assets and $5,000 in cash.';
+      }
+      if (normalized.includes('portfolio') && normalized.includes('allocation')) {
+        return 'Portfolio analysis from Ghostfolio data shows your portfolio is diversified across multiple holdings.';
+      }
+      if (normalized.includes('cash') && normalized.includes('balance')) {
+        return 'Holdings analysis from Ghostfolio data shows you have $5,000 available in cash.';
+      }
       return 'I can help with portfolio, market data, and transaction questions.';
     },
     reasonAboutQuery: async (message: string) => {
@@ -323,7 +351,40 @@ export function createEvalLlm(trace: LlmTrace): AgentLlm {
       }
       return { intent: 'finance', mode: 'tool_call', tool: 'none' };
     },
-    selectTool: async () => ({ tool: 'none' })
+    selectTool: async (message: string) => {
+      // Mock tool selection based on keywords
+      const normalized = message.toLowerCase();
+
+      // Match portfolio tools
+      if (normalized.includes('portfolio doing') || normalized.includes('how is my portfolio')) {
+        return { tool: 'portfolio_summary' };
+      }
+      if (normalized.includes('portfolio') && (normalized.includes('allocation') || normalized.includes('analyze'))) {
+        return { tool: 'portfolio_analysis' };
+      }
+      if (normalized.includes('cash') || normalized.includes('holdings') || normalized.includes('allocation')) {
+        return { tool: 'holdings_analysis' };
+      }
+
+      // Match market data tools
+      if (normalized.includes('market') || normalized.includes('price') || normalized.includes('aapl')) {
+        return { tool: 'market_data' };
+      }
+      if (normalized.includes('compliance')) {
+        return { tool: 'compliance_check' };
+      }
+      if (normalized.includes('tax')) {
+        return { tool: 'tax_estimate' };
+      }
+      if (normalized.includes('static')) {
+        return { tool: 'static_analysis' };
+      }
+      if (normalized.includes('trend') || normalized.includes('tsla')) {
+        return { tool: 'analyze_stock_trend' };
+      }
+
+      return { tool: 'none' };
+    }
   };
 }
 
