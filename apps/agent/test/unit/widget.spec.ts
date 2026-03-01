@@ -10,6 +10,8 @@ describe('agent widget mount', () => {
     container = document.createElement('div');
     container.id = 'agent-widget-root';
     document.body.appendChild(container);
+    window.localStorage.removeItem('auth-token');
+    window.localStorage.removeItem('impersonation-id');
   });
 
   it('renders the widget shell inside the root container', () => {
@@ -86,10 +88,10 @@ describe('agent widget mount', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    // Two calls: one for /chat/acknowledge (fire-and-forget) and one for /chat
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // Three calls when signed in: GET history (prefetch on panel open), POST /chat/acknowledge, POST /chat
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     const chatCall = fetchMock.mock.calls.find((c: unknown[]) =>
-      String(c[0]).endsWith('/chat')
+      String(c[0]).endsWith('/chat') && !String(c[0]).endsWith('/acknowledge')
     ) as [string, { body: string; headers: Record<string, string> }] | undefined;
     expect(chatCall).toBeTruthy();
     const init = chatCall![1];
