@@ -40,8 +40,8 @@ export function buildDirectAnswer({
   if (asksHoldingsStatus && !asksDiversification) {
     const topAllocationLine = findings.find((line) => line.startsWith('Top allocation:'));
     const statusLine = findings.find((line) => line.startsWith('Portfolio status:'));
-    const topPerformerLine = findings.find((line) => line.startsWith('Top performers:'));
-    const bottomPerformerLine = findings.find((line) => line.startsWith('Bottom performers:'));
+    const topPerformerLine = findings.find((line) => line.startsWith('Top performers'));
+    const bottomPerformerLine = findings.find((line) => line.startsWith('Worst performers'));
     const noCriticalRisk = riskLines.some((line) =>
       line.toLowerCase().includes('no critical risks flagged')
     );

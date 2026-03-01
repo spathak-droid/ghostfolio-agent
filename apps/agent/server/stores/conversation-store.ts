@@ -20,6 +20,12 @@ export interface AgentWorkflowState {
   contextSummary?: string;
   pinnedFacts?: string[];
   updatedAt: string;
+  /** Pending symbol clarification from LLM (e.g., "Did you mean S&P 500?" stores "GSPC"). */
+  pendingSymbolClarification?: {
+    suggestedSymbol: string;
+    suggestedDisplay: string;
+    pendingTool: AgentToolName;
+  };
 }
 
 export interface AgentConversationStore {
@@ -86,6 +92,9 @@ export function createInMemoryConversationStore(): AgentConversationStore {
           : undefined,
         missingFields: Array.isArray(state.missingFields) ? [...state.missingFields] : undefined,
         pinnedFacts: Array.isArray(state.pinnedFacts) ? [...state.pinnedFacts] : undefined,
+        pendingSymbolClarification: isRecord(state.pendingSymbolClarification)
+          ? { ...state.pendingSymbolClarification }
+          : undefined,
         verificationFlags: [...state.verificationFlags]
       };
     },
@@ -97,6 +106,9 @@ export function createInMemoryConversationStore(): AgentConversationStore {
           : undefined,
         missingFields: Array.isArray(state.missingFields) ? [...state.missingFields] : undefined,
         pinnedFacts: Array.isArray(state.pinnedFacts) ? [...state.pinnedFacts] : undefined,
+        pendingSymbolClarification: isRecord(state.pendingSymbolClarification)
+          ? { ...state.pendingSymbolClarification }
+          : undefined,
         verificationFlags: [...state.verificationFlags]
       });
     },
@@ -225,6 +237,13 @@ function normalizeWorkflowState(value: unknown): AgentWorkflowState | undefined 
   const draftCreateOrderParams = isRecord(record.draftCreateOrderParams)
     ? (record.draftCreateOrderParams as Partial<CreateOrderParams>)
     : undefined;
+  const pendingSymbolClarification = isRecord(record.pendingSymbolClarification)
+    ? {
+        suggestedSymbol: String(record.pendingSymbolClarification.suggestedSymbol ?? ''),
+        suggestedDisplay: String(record.pendingSymbolClarification.suggestedDisplay ?? ''),
+        pendingTool: (record.pendingSymbolClarification.pendingTool as AgentToolName) || 'market_data'
+      }
+    : undefined;
 
   return {
     contextSummary,
@@ -234,6 +253,7 @@ function normalizeWorkflowState(value: unknown): AgentWorkflowState | undefined 
     pendingAction,
     pendingTool,
     pinnedFacts,
+    pendingSymbolClarification,
     updatedAt,
     verificationFlags
   };

@@ -85,6 +85,31 @@ describe('analyzeStockTrendTool', () => {
     expect(result.summary).toContain('Stock trend analysis failed');
   });
 
+  it('parses "past 1 week" and "last 1 week" from message as 7d when range not provided', async () => {
+    const client = {
+      getPortfolioHolding: jest.fn().mockResolvedValue({
+        SymbolProfile: { name: 'Apple Inc.', symbol: 'AAPL' },
+        averagePrice: 150,
+        dataSource: 'YAHOO',
+        historicalData: [
+          { date: '2026-02-20', marketPrice: 175, quantity: 10 },
+          { date: '2026-02-26', marketPrice: 178, quantity: 10 }
+        ],
+        marketPrice: 178,
+        quantity: 10
+      }),
+      getSymbolLookup: jest.fn().mockResolvedValue({ items: [] })
+    };
+
+    const result = await analyzeStockTrendTool({
+      client: client as never,
+      message: 'how is my apple doing past 1 week'
+    });
+
+    expect(result.answer).toContain('Timeline: 7d');
+    expect(result.range).toBe('7d');
+  });
+
   it('filters out common English words like "how" to avoid false symbol matches', async () => {
     const client = {
       getPortfolioHolding: jest.fn().mockResolvedValue({

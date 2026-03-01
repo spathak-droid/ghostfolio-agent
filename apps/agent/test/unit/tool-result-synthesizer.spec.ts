@@ -507,10 +507,10 @@ describe('synthesizeToolResults', () => {
     });
 
     expect(response.answer).toContain(
-      'Top performers: AAPL +169.52%, SOLUSD +8.82%, BTCUSD +6.58%.'
+      'Top performers (best return first): AAPL +169.52%, SOLUSD +8.82%, BTCUSD +6.58%.'
     );
     expect(response.answer).toContain(
-      'Bottom performers: AAVEBUSD -99.21%, NVDA -3.74%, BTCUSD +6.58%.'
+      'Worst performers (most negative return; worst first): AAVEBUSD -99.21%, NVDA -3.74%, BTCUSD +6.58%. Single worst: AAVEBUSD -99.21%.'
     );
   });
 

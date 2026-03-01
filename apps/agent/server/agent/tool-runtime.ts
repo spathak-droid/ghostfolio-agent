@@ -2,6 +2,7 @@ import { traceable } from 'langsmith/traceable';
 
 import { buildTraceMetadata, buildTraceTags } from './trace-context';
 import { validateToolArgs } from '../validation/tool-args-validator';
+import { logger } from '../utils';
 import { withOperationTimeout } from './operation-timeout';
 import {
   AgentTraceContext,
@@ -97,6 +98,15 @@ export async function executeTool({
       'error' in toolArgsValidation
         ? toolArgsValidation.error
         : 'Tool argument validation failed.';
+    logger.debug('[tool_runtime] tool args validation failed', {
+      tool,
+      error: validationError,
+      ...(symbols !== undefined && {
+        symbolsLength: symbols.length,
+        firstSymbolType: typeof symbols[0],
+        firstSymbolLength: typeof symbols[0] === 'string' ? symbols[0].length : undefined
+      })
+    });
     return Promise.resolve({
       success: false,
       error: {

@@ -600,17 +600,19 @@ export function extractHoldingPerformerFindings(payload: Record<string, unknown>
     .sort((a, b) => b.pct - a.pct)
     .slice(0, 3)
     .map((item) => `${item.symbol} ${formatSignedPercent(item.pct * 100)}`);
-  const bottom = [...ranked]
+  const worst = [...ranked]
     .sort((a, b) => a.pct - b.pct)
     .slice(0, 3)
     .map((item) => `${item.symbol} ${formatSignedPercent(item.pct * 100)}`);
 
   const findings: string[] = [];
   if (top.length > 0) {
-    findings.push(`Top performers: ${top.join(', ')}.`);
+    findings.push(`Top performers (best return first): ${top.join(', ')}.`);
   }
-  if (bottom.length > 0) {
-    findings.push(`Bottom performers: ${bottom.join(', ')}.`);
+  if (worst.length > 0) {
+    findings.push(
+      `Worst performers (most negative return; worst first): ${worst.join(', ')}. Single worst: ${worst[0]}.`
+    );
   }
   return findings;
 }

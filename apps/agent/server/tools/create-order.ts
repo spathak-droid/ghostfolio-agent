@@ -2,6 +2,10 @@
  * Create order tool: record a buy/sell/dividend/activity via POST /api/v1/order.
  * Asks for required fields (e.g. quantity) when missing; fetches unit price from market data.
  * Always sets updateAccountBalance: true.
+ *
+ * Symbol lookup and price: same as UI "Add activity" flow. See docs/agent/symbol-lookup-and-price.md.
+ * - Lookup: GET /api/v1/symbol/lookup?query=...
+ * - Price: GET /api/v1/symbol/{dataSource}/{symbol} → marketPrice (same as UI "Reload" source).
  */
 
 import type { CreateOrderParams, OrderType } from '../types';
@@ -203,7 +207,9 @@ function parseHoldingQuantityBySymbol(
   return undefined;
 }
 
-/** Try to get market price and currency for a (dataSource, symbol). Returns undefined on failure or no price. */
+/** Try to get market price and currency for a (dataSource, symbol). Returns undefined on failure or no price.
+ * Uses same API as UI Add activity "Reload" price: GET /api/v1/symbol/{dataSource}/{symbol} → marketPrice.
+ */
 async function fetchPriceForSymbol(
   client: GhostfolioClient,
   dataSource: string,
@@ -328,6 +334,33 @@ export async function createOrderTool({
         }
       }
     : await resolveSymbolWithCandidates(symbolInput, lookup);
+
+  // When resolver returns multiple candidates (ambiguous match), ask user to pick even if there is a "best" match
+  if (
+    symbolResolution.resolved &&
+    Array.isArray(symbolResolution.candidates) &&
+    symbolResolution.candidates.length > 1
+  ) {
+    const topCandidates = symbolResolution.candidates.slice(0, 3).map((candidate) => ({
+      dataSource: candidate.dataSource,
+      label: candidate.name
+        ? `${candidate.name} (${candidate.symbol})`
+        : candidate.symbol,
+      symbol: candidate.symbol
+    }));
+    return {
+      success: true,
+      needsClarification: true,
+      missingFields: ['symbol'],
+      symbolOptions: topCandidates,
+      answer:
+        `I found multiple symbols for "${symbolInput}". Please choose one option below to continue your ${type.toLowerCase()} order.`,
+      summary: `Multiple symbol matches found for ${symbolInput}`,
+      data_as_of: dataAsOf,
+      sources
+    };
+  }
+
   if (!symbolResolution.resolved) {
     if (Array.isArray(symbolResolution.candidates) && symbolResolution.candidates.length > 0) {
       const topCandidates = symbolResolution.candidates.slice(0, 3).map((candidate) => ({

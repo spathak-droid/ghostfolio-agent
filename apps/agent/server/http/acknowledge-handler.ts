@@ -11,6 +11,14 @@ import { sendValidationError } from './response-helpers';
 const OPENAI_REQUEST_URL = 'https://api.openai.com/v1/chat/completions';
 const OPENROUTER_REQUEST_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
+/** Messages shown in sequence (one per second) while the agent is working. */
+const ACK_ROTATING_MESSAGES: string[] = [
+  'On it...',
+  'Checking that...',
+  'One moment...',
+  'Almost there...'
+];
+
 const SYSTEM_PROMPT =
   'You are a financial assistant. The user just sent a message. ' +
   'Write ONE short sentence (max 8 words) acknowledging what you are about to do. Do not ask for anything else. Just acknowledge. If the user asks for a specific action, acknowledge that you are about to do that and if question is outside of finance, just say Checking that for you... ' +
@@ -84,7 +92,7 @@ export function createAcknowledgeHandler({
 
     if (!apiKey) {
       logger.debug('[acknowledge] No API key available, returning fallback');
-      response.status(200).json({ forWidget: 'On it...' });
+      response.status(200).json({ forWidget: ACK_ROTATING_MESSAGES });
       return;
     }
 
@@ -138,7 +146,11 @@ export function createAcknowledgeHandler({
         timeoutMs: 5000
       });
 
-      response.status(200).json({ forWidget: ack?.trim() || 'On it...' });
+      const first = ack?.trim() || ACK_ROTATING_MESSAGES[0];
+      const rest = ACK_ROTATING_MESSAGES.filter((m) => m !== first);
+      const messages = [first, ...rest];
+
+      response.status(200).json({ forWidget: messages });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       const errStack = err instanceof Error ? err.stack : undefined;
@@ -146,7 +158,7 @@ export function createAcknowledgeHandler({
         message: errMsg,
         stack: errStack
       });
-      response.status(200).json({ forWidget: 'On it...' });
+      response.status(200).json({ forWidget: ACK_ROTATING_MESSAGES });
     }
   };
 }

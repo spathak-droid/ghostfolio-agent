@@ -159,7 +159,8 @@ export function createChatHandler({
         ...validation.params,
         createOrderParams: createOrderParamsResult.params,
         impersonationId: impersonationValidation.value,
-        token
+        token,
+        ...(userId ? { userId } : {})
       })) as AgentChatResponse;
 
       const totalMs = Math.max(0, Date.now() - requestStartedAt);

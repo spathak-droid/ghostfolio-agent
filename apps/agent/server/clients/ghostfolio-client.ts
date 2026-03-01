@@ -39,6 +39,27 @@ export interface UpdateOrderDtoBody {
   updateAccountBalance?: boolean;
 }
 
+/** One item from GET /api/v1/symbol/lookup response. */
+export interface SymbolLookupItemDto {
+  name?: string;
+  symbol: string;
+  assetClass?: string;
+  assetSubClass?: string;
+  currency?: string;
+  dataProviderInfo?: {
+    dataSource: string;
+    isPremium?: boolean;
+    name?: string;
+    url?: string;
+  };
+  dataSource: string;
+}
+
+/** Response shape of GET /api/v1/symbol/lookup?query=... */
+export interface SymbolLookupResponse {
+  items: SymbolLookupItemDto[];
+}
+
 export class GhostfolioClient {
   private readonly baseUrl: string;
   private static readonly REQUEST_TIMEOUT_MS = 15000;
@@ -164,11 +185,16 @@ export class GhostfolioClient {
     query: string;
     impersonationId?: string;
     token?: string;
-  }) {
+  }): Promise<SymbolLookupResponse> {
     const path =
       '/api/v1/symbol/lookup' +
       (query.trim() ? `?${new URLSearchParams({ query: query.trim() }).toString()}` : '');
-    return this.get(path, { impersonationId, token });
+    logger.debug('[symbol_lookup] GET', { query: query.trim(), path });
+    const result = await this.get(path, { impersonationId, token });
+    const raw = result as unknown as SymbolLookupResponse;
+    const items = Array.isArray(raw?.items) ? raw.items : [];
+    logger.debug('[symbol_lookup] response', { query: query.trim(), itemsCount: items.length });
+    return { items };
   }
 
   public async getSymbolData({

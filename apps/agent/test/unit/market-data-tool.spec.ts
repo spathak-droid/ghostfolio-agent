@@ -37,6 +37,11 @@ describe('marketDataTool', () => {
   });
 
   it('computes week-over-week change when message asks for last week', async () => {
+    // Use dates relative to a consistent baseline to avoid flakiness
+    // Set "today" to be 2026-03-01 and "7 days ago" to be 2026-02-22
+    const now = new Date('2026-03-01T12:00:00.000Z').getTime();
+    jest.spyOn(Date, 'now').mockReturnValue(now);
+
     const client = {
       getSymbolLookup: jest.fn().mockResolvedValue({
         items: [{ dataSource: 'YAHOO', symbol: 'AAPL' }]
@@ -47,8 +52,8 @@ describe('marketDataTool', () => {
         marketPrice: 125.5,
         symbol: 'AAPL',
         historicalData: [
-          { date: '2026-02-19T00:00:00.000Z', value: 100 },
-          { date: '2026-02-26T00:00:00.000Z', value: 125.5 }
+          { date: '2026-02-22T00:00:00.000Z', value: 100 },
+          { date: '2026-03-01T00:00:00.000Z', value: 125.5 }
         ]
       })
     };
@@ -66,6 +71,52 @@ describe('marketDataTool', () => {
     );
     expect(symbols[0]?.changePercent1w).toBe(25.5);
     expect(result.answer).toContain('vs 1w: +25.5%');
+
+    (Date.now as jest.Mock).mockRestore();
+  });
+
+  it('parses "past 1 week" and "last 1 week" as 7-day window and includes 1w comparison', async () => {
+    const client = {
+      getSymbolLookup: jest.fn().mockResolvedValue({
+        items: [{ dataSource: 'YAHOO', symbol: 'AAPL' }]
+      }),
+      getSymbolData: jest.fn().mockResolvedValue({
+        currency: 'USD',
+        dataSource: 'YAHOO',
+        marketPrice: 125.5,
+        symbol: 'AAPL',
+        historicalData: [
+          { date: '2026-02-21T00:00:00.000Z', value: 120 },
+          { date: '2026-02-26T00:00:00.000Z', value: 125.5 }
+        ]
+      })
+    };
+
+    const resultPast = await marketDataTool({
+      client: client as never,
+      message: 'how is apple doing past 1 week',
+      symbols: ['AAPL']
+    });
+    expect(client.getSymbolData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        includeHistoricalData: 10
+      })
+    );
+    expect((resultPast.symbols as Array<Record<string, unknown>>)[0]?.changePercent1w).toBeDefined();
+    expect(resultPast.answer).toMatch(/1w|week/);
+
+    client.getSymbolData.mockClear();
+    const resultLast = await marketDataTool({
+      client: client as never,
+      message: 'how is apple doing last 1 week',
+      symbols: ['AAPL']
+    });
+    expect(client.getSymbolData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        includeHistoricalData: 10
+      })
+    );
+    expect((resultLast.symbols as Array<Record<string, unknown>>)[0]?.changePercent1w).toBeDefined();
   });
 
   it('returns one-year historical comparison when asked for last year', async () => {

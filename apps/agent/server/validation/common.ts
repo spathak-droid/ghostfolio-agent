@@ -25,7 +25,7 @@ export const ORDER_TYPES = [
 export const RANGE_VALUES = ['1d', 'wtd', 'mtd', 'ytd', '1y', '5y', 'max'] as const;
 export const DATA_SOURCE_PATTERN = /^[A-Z0-9_]{2,32}$/;
 export const CURRENCY_PATTERN = /^[A-Z]{3,10}$/;
-export const SYMBOL_PATTERN = /^[A-Za-z0-9.\-_:]{1,32}$/;
+export const SYMBOL_PATTERN = /^[A-Za-z0-9.\-_: ]{1,32}$/;
 export const METRIC_VALUES = ['price'] as const;
 
 export const CHAT_BODY_ALLOWED_KEYS = new Set([

@@ -7,6 +7,8 @@
  * Failure modes: timeout, network error, rate limit → return structured result; no throw.
  */
 
+import { logger } from '../utils/logger';
+
 const FINNHUB_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_BASE_URL = 'https://finnhub.io/api/v1';
 
@@ -55,7 +57,7 @@ export async function getFinnhubQuote(
   symbols: string[],
   config: FinnhubClientConfig = {}
 ): Promise<FinnhubClientResponse> {
-  const apiKey = config.apiKey ?? process.env.FINNHUB_API_KEY;
+  const apiKey = (config.apiKey ?? process.env.FINNHUB_API_KEY)?.trim();
   if (!apiKey) {
     return {
       ok: false,
@@ -78,6 +80,8 @@ export async function getFinnhubQuote(
     };
   }
 
+  logger.debug('[finnhub] Fetching quotes', { symbols });
+
   const data: Record<string, { price: number; currency: string }> = {};
   const errors: string[] = [];
 
@@ -92,38 +96,76 @@ export async function getFinnhubQuote(
         symbol.toUpperCase()
       );
       const endpoint = isCrypto ? '/crypto/quote' : '/quote';
-      const params = new URLSearchParams({ symbol });
+      const params = new URLSearchParams({ symbol, token: apiKey });
       const url = `${baseUrl}${endpoint}?${params.toString()}`;
 
       const response = await fetch(url, {
         signal: controller.signal,
         headers: {
-          Accept: 'application/json',
-          Authorization: `Bearer ${apiKey}`
+          Accept: 'application/json'
         }
       });
       clearTimeout(timeoutId);
 
       if (!response.ok) {
         const retryable = response.status >= 500 || response.status === 429;
+        const statusText = `${symbol}: ${response.status}`;
         if (retryable) {
-          errors.push(`${symbol}: ${response.status}`);
+          errors.push(statusText);
         }
+        logger.debug('[finnhub] non-OK response', {
+          symbol,
+          endpoint,
+          status: response.status,
+          retryable
+        });
         continue;
       }
 
-      const body = (await response.json()) as FinnhubQuoteResponse | FinnhubCryptoResponse | null;
+      const body = (await response.json()) as FinnhubQuoteResponse | FinnhubCryptoResponse | Record<string, unknown> | null;
+
+      // Finnhub returns 200 with { "error": "Please use an API key." } when key is missing/invalid
+      const apiError = body && typeof body === 'object' && 'error' in body && typeof (body as { error?: unknown }).error === 'string'
+        ? (body as { error: string }).error
+        : null;
+      if (apiError) {
+        logger.debug('[finnhub] API error in 200 response', { symbol, endpoint, error: apiError });
+        return {
+          ok: false,
+          error_code: 'FINNHUB_UNAUTHORIZED',
+          message: `Finnhub: ${apiError}`,
+          retryable: false
+        };
+      }
+
       const price = isCrypto
         ? (body as FinnhubCryptoResponse)?.quote?.c
         : (body as FinnhubQuoteResponse)?.c;
 
       if (typeof price === 'number' && Number.isFinite(price) && price > 0) {
         data[symbol] = { price, currency: 'USD' };
+      } else {
+        logger.debug('[finnhub] 200 but no usable price', {
+          symbol,
+          endpoint,
+          bodyKeys: body && typeof body === 'object' ? Object.keys(body) : [],
+          c: (body as FinnhubQuoteResponse)?.c,
+          quoteC: (body as FinnhubCryptoResponse)?.quote?.c
+        });
+        errors.push(`${symbol}: no quote data`);
       }
     } catch (error) {
       const isAbort = error instanceof Error && error.name === 'AbortError';
       if (isAbort) {
         errors.push(`${symbol}: timeout`);
+      } else {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        logger.debug('[finnhub] exception during fetch/parse', {
+          symbol,
+          error: errorMsg,
+          errorType: error instanceof Error ? error.constructor.name : typeof error
+        });
+        errors.push(`${symbol}: ${errorMsg}`);
       }
     }
   }

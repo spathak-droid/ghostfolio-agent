@@ -3,7 +3,9 @@ export { resolveGhostfolioBaseUrl } from './ghostfolio-base-url';
 export {
   GhostfolioClient,
   type CreateOrderDtoBody,
-  type UpdateOrderDtoBody
+  type UpdateOrderDtoBody,
+  type SymbolLookupItemDto,
+  type SymbolLookupResponse
 } from './ghostfolio-client';
 export {
   getYahooQuote,

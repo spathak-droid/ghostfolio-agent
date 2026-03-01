@@ -1,6 +1,15 @@
 import { GhostfolioClient } from '../clients';
-import { resolveSymbol } from './symbol-resolver';
+import type { SymbolLookupResponse } from '../clients';
+import { logger } from '../utils';
+import { resolveSymbolWithCandidates } from './symbol-resolver';
+import type { LookupItem, SymbolCandidate } from './symbol-resolver';
 import { toToolErrorPayload, type ToolErrorPayload } from './tool-error';
+
+/**
+ * Market data tool: current price (and optional historical comparison) for symbols.
+ * Uses same lookup and price APIs as UI "Add activity": GET /api/v1/symbol/lookup,
+ * then GET /api/v1/symbol/{dataSource}/{symbol} → marketPrice. See docs/agent/symbol-lookup-and-price.md.
+ */
 
 const MAX_SYMBOLS = 10;
 const SUPPORTED_METRICS = new Set(['price']);
@@ -73,6 +82,11 @@ export interface MarketDataSymbolResult {
     price: number;
   }[];
   error?: ToolErrorPayload;
+  /** When set, the lookup returned too many matches; ask user to pick from candidates. */
+  clarificationRequest?: {
+    query: string;
+    candidates: SymbolCandidate[];
+  };
 }
 
 export interface MarketDataToolInput {
@@ -305,11 +319,32 @@ function createLookup(
   impersonationId?: string,
   token?: string
 ) {
-  return async (query: string): Promise<{ dataSource: string; symbol: string }[]> => {
+  return async (query: string): Promise<LookupItem[]> => {
     try {
-      const response = await client.getSymbolLookup({ query, impersonationId, token });
-      return (response as { items?: { dataSource: string; symbol: string }[] })?.items ?? [];
-    } catch {
+      logger.debug('[market_data.symbol_lookup] calling API', { query });
+      const response: SymbolLookupResponse = await client.getSymbolLookup({
+        query,
+        impersonationId,
+        token
+      });
+      const items = response?.items ?? [];
+      const mapped = items.map((item) => ({
+        dataSource: item.dataSource,
+        symbol: item.symbol,
+        ...(item.name !== undefined && { name: item.name }),
+        ...(item.currency !== undefined && { currency: item.currency })
+      }));
+      logger.debug('[market_data.symbol_lookup] result', {
+        query,
+        itemsCount: mapped.length,
+        topSymbols: mapped.slice(0, 3).map((i) => `${i.dataSource}:${i.symbol}`)
+      });
+      return mapped;
+    } catch (err) {
+      logger.debug('[market_data.symbol_lookup] error', {
+        query,
+        error: err instanceof Error ? err.message : String(err)
+      });
       return [];
     }
   };
@@ -318,7 +353,7 @@ function createLookup(
 interface FetchCurrentResultsArgs {
   client: GhostfolioClient;
   includeHistoricalData?: number;
-  lookup: (query: string) => Promise<{ dataSource: string; symbol: string }[]>;
+  lookup: (query: string) => Promise<LookupItem[]>;
   symbols: string[];
   windows: number[];
   impersonationId?: string;
@@ -328,56 +363,77 @@ interface FetchCurrentResultsArgs {
 async function fetchCurrentResults(args: FetchCurrentResultsArgs): Promise<MarketDataSymbolResult[]> {
   const { client, includeHistoricalData, lookup, symbols, windows, impersonationId, token } = args;
   const symbolInputs = symbols.slice(0, MAX_SYMBOLS);
+  logger.debug('[market_data.fetchCurrentResults] resolving symbols', { symbols: symbolInputs });
   const results = await Promise.all(
     symbolInputs.map(async (nameOrTicker): Promise<MarketDataSymbolResult> => {
-      const resolved = await resolveSymbol(nameOrTicker, lookup);
-      if (!resolved) {
+      const result = await resolveSymbolWithCandidates(nameOrTicker, lookup);
+      if (result.resolved) {
+        const resolved = result.resolved;
+        const item = await getSymbolDataWithFallback(
+          client,
+          { dataSource: resolved.dataSource, symbol: resolved.symbol },
+          { impersonationId, token, includeHistoricalData }
+        );
+        if (item.ok === true) {
+          const comparisons = computeHistoricalComparisons({
+            currentPrice: item.data.marketPrice,
+            historicalData: item.data.historicalData,
+            windows
+          });
+          return {
+            symbol: item.data.symbol,
+            dataSource: item.data.dataSource,
+            currentPrice: roundTwo(item.data.marketPrice),
+            currency: item.data.currency,
+            change1w: comparisons.change1w,
+            changePercent1w: comparisons.changePercent1w,
+            change1m: comparisons.change1m,
+            changePercent1m: comparisons.changePercent1m,
+            change1y: comparisons.change1y,
+            changePercent1y: comparisons.changePercent1y,
+            historicalComparisons: comparisons.historicalComparisons
+          };
+        }
+        const failedResult = item as { ok: false; error: ToolErrorPayload };
+        return {
+          symbol: resolved.symbol,
+          dataSource: resolved.dataSource,
+          currentPrice: 0,
+          currency: '',
+          error: failedResult.error
+        };
+      }
+
+      if (result.candidates && result.candidates.length > 0) {
+        logger.debug('[market_data.fetchCurrentResults] too many results, asking for clarification', {
+          nameOrTicker,
+          candidatesCount: result.candidates.length
+        });
         return {
           symbol: nameOrTicker,
           dataSource: '',
           currentPrice: 0,
           currency: '',
-          error: {
-            error_code: 'SYMBOL_RESOLUTION_FAILED',
-            message: `Could not resolve symbol: ${nameOrTicker}`,
-            retryable: false
+          clarificationRequest: {
+            query: nameOrTicker,
+            candidates: result.candidates.slice(0, 3)
           }
         };
       }
 
-      const item = await getSymbolDataWithFallback(
-        client,
-        { dataSource: resolved.dataSource, symbol: resolved.symbol },
-        { impersonationId, token, includeHistoricalData }
-      );
-      if (item.ok === true) {
-        const comparisons = computeHistoricalComparisons({
-          currentPrice: item.data.marketPrice,
-          historicalData: item.data.historicalData,
-          windows
-        });
-        return {
-          symbol: item.data.symbol,
-          dataSource: item.data.dataSource,
-          currentPrice: roundTwo(item.data.marketPrice),
-          currency: item.data.currency,
-          change1w: comparisons.change1w,
-          changePercent1w: comparisons.changePercent1w,
-          change1m: comparisons.change1m,
-          changePercent1m: comparisons.changePercent1m,
-          change1y: comparisons.change1y,
-          changePercent1y: comparisons.changePercent1y,
-          historicalComparisons: comparisons.historicalComparisons
-        };
-      }
-
-      const failedResult = item as { ok: false; error: ToolErrorPayload };
+      logger.debug('[market_data.fetchCurrentResults] resolution failed (no candidates)', {
+        nameOrTicker
+      });
       return {
-        symbol: resolved.symbol,
-        dataSource: resolved.dataSource,
+        symbol: nameOrTicker,
+        dataSource: '',
         currentPrice: 0,
         currency: '',
-        error: failedResult.error
+        error: {
+          error_code: 'SYMBOL_RESOLUTION_FAILED',
+          message: `No results found for "${nameOrTicker}". Try a different symbol or name.`,
+          retryable: false
+        }
       };
     })
   );
@@ -388,6 +444,9 @@ async function fetchCurrentResults(args: FetchCurrentResultsArgs): Promise<Marke
 function buildAnswer(results: MarketDataSymbolResult[]) {
   return results
     .map((result) => {
+      if (result.clarificationRequest) {
+        return buildClarificationMessage(result.clarificationRequest);
+      }
       if (result.error) {
         return `${result.symbol}: ${result.error.message}`;
       }
@@ -405,6 +464,15 @@ function buildAnswer(results: MarketDataSymbolResult[]) {
       return `${base}; ${comparisonText}`;
     })
     .join('; ');
+}
+
+function buildClarificationMessage(request: {
+  query: string;
+  candidates: SymbolCandidate[];
+}): string {
+  const top = request.candidates.slice(0, 3);
+  const examples = top.map((c) => (c.name ? `${c.name} (${c.symbol})` : c.symbol)).join(', ');
+  return `There are too many results for "${request.query}". Are you looking for any of these: ${examples}? Please specify which one you mean.`;
 }
 
 function buildSummary({
@@ -435,7 +503,7 @@ function parseRequestedWindows(message: string): number[] {
   if (/\b(last|past)\s+5\s+days?\b/.test(normalized) || /\b5\s*day\b/.test(normalized)) {
     requested.add(5);
   }
-  if (/\b(last|past)\s+week\b/.test(normalized) || /\bweekly\b/.test(normalized)) {
+  if (/\b(last|past)\s+week\b/.test(normalized) || /\b(last|past)\s+1\s+week\b/.test(normalized) || /\bweekly\b/.test(normalized) || /\b1\s+week\b/.test(normalized)) {
     requested.add(7);
   }
   if (/\b(last|past)\s+month\b/.test(normalized)) {
@@ -505,7 +573,12 @@ function computeHistoricalComparisons({
     const anchor = normalized.reduce<{ date: string; dateMs: number; value: number } | undefined>(
       (best, point) => {
         if (!best) return point;
-        return Math.abs(point.dateMs - target) < Math.abs(best.dateMs - target) ? point : best;
+        const bestDist = Math.abs(best.dateMs - target);
+        const pointDist = Math.abs(point.dateMs - target);
+        if (pointDist < bestDist) return point;
+        // When tied, prefer the past (older date) so "last week" uses the older price
+        if (pointDist === bestDist && point.dateMs < best.dateMs) return point;
+        return best;
       },
       undefined
     );
@@ -576,12 +649,15 @@ export async function marketDataTool({
       impersonationId,
       token
     });
+    const hasClarification = results.some((r) => r.clarificationRequest != null);
     const answer = buildAnswer(results);
-    const summary = buildSummary({
-      message,
-      results,
-      unsupportedMetrics
-    });
+    const summary = hasClarification
+      ? 'Clarification needed: too many matching symbols.'
+      : buildSummary({
+          message,
+          results,
+          unsupportedMetrics
+        });
 
     const payload: Record<string, unknown> = {
       answer,

@@ -70,7 +70,8 @@ try {
       windowMs: config.clearRateLimitWindowMs
     }),
     feedbackHandler: createFeedbackHandler({
-      feedbackStore: config.feedbackStore
+      feedbackStore: config.feedbackStore,
+      ghostfolioBaseUrl: config.ghostfolioBaseUrl
     }),
     feedbackRateLimiter: createRateLimitMiddleware({
       maxRequests: config.feedbackRateLimitMax,

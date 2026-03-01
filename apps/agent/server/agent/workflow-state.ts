@@ -119,6 +119,22 @@ function deriveWorkflowState({
     toolCall: lastToolCall
   });
 
+  // Check if this response was a symbol clarification (from LLM's ask_user)
+  const hasSymbolClarificationFlag = response.verification.flags.includes('needs_clarification');
+  const lastAssistantMessage = [...response.conversation].reverse().find(
+    (msg) => msg.role === 'assistant'
+  );
+  const pendingSymbolClarification = extractSymbolClarificationFromMessage(
+    hasSymbolClarificationFlag ? lastAssistantMessage?.content : undefined,
+    lastToolCall?.toolName
+  );
+
+  // Clear pending symbol clarification if a tool succeeded (user's affirmation worked)
+  // or if there's no more clarification flag (moved on to a different intent)
+  const shouldClearPendingSymbol =
+    lastToolCall?.success === true ||
+    !hasSymbolClarificationFlag;
+
   return {
     contextSummary: summarizeConversationForState(response.conversation),
     draftCreateOrderParams:
@@ -132,6 +148,7 @@ function deriveWorkflowState({
     pendingAction: needsClarification ? 'awaiting_clarification' : 'idle',
     pendingTool: needsClarification ? lastToolCall?.toolName : undefined,
     pinnedFacts,
+    pendingSymbolClarification: shouldClearPendingSymbol ? undefined : pendingSymbolClarification,
     updatedAt: new Date().toISOString(),
     verificationFlags: [...response.verification.flags]
   };
@@ -176,4 +193,62 @@ function derivePinnedFacts({
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Extracts symbol clarification from messages like:
+ * "Did you mean the S&P 500 index?" → { suggestedSymbol: 'GSPC', suggestedDisplay: 'S&P 500' }
+ * "Did you mean Apple Inc (AAPL)?" → { suggestedSymbol: 'AAPL', suggestedDisplay: 'Apple Inc' }
+ */
+function extractSymbolClarificationFromMessage(
+  message: string | undefined,
+  toolName?: string
+): AgentWorkflowState['pendingSymbolClarification'] {
+  if (!message || !toolName || (toolName !== 'market_data' && toolName !== 'analyze_stock_trend')) {
+    return undefined;
+  }
+
+  const normalized = message.toLowerCase();
+
+  // Pattern 1: "Did you mean X (TICKER)?" → extract TICKER and X
+  const tickerMatchExec = /\(([A-Z0-9\-.-]+)\)/.exec(message);
+  if (tickerMatchExec) {
+    const ticker = tickerMatchExec[1];
+    const beforeTicker = message.substring(0, message.indexOf(`(${ticker})`)).trim();
+    const displayMatchExec = /(?:mean|is)\s+(.+?)(?:\s*$|\s*\()/i.exec(beforeTicker);
+    const display = displayMatchExec ? displayMatchExec[1].trim() : ticker;
+    if (ticker && ticker.length > 0) {
+      return {
+        suggestedSymbol: ticker,
+        suggestedDisplay: display,
+        pendingTool: toolName
+      };
+    }
+  }
+
+  // Pattern 2: "Did you mean the S&P 500 index?" → extract key term and map to symbol
+  const symbolMappings: Record<string, { symbol: string; display: string }> = {
+    's&p 500': { symbol: 'GSPC', display: 'S&P 500' },
+    's&p500': { symbol: 'GSPC', display: 'S&P 500' },
+    'sp500': { symbol: 'GSPC', display: 'S&P 500' },
+    'dow jones': { symbol: '^DJI', display: 'Dow Jones' },
+    'nasdaq': { symbol: '^IXIC', display: 'NASDAQ' },
+    'bitcoin': { symbol: 'BTC-USD', display: 'Bitcoin' },
+    'ethereum': { symbol: 'ETH-USD', display: 'Ethereum' },
+    'tesla': { symbol: 'TSLA', display: 'Tesla' },
+    'apple': { symbol: 'AAPL', display: 'Apple' },
+    'nvidia': { symbol: 'NVDA', display: 'NVIDIA' }
+  };
+
+  for (const [key, { symbol, display }] of Object.entries(symbolMappings)) {
+    if (normalized.includes(key)) {
+      return {
+        suggestedSymbol: symbol,
+        suggestedDisplay: display,
+        pendingTool: toolName
+      };
+    }
+  }
+
+  return undefined;
 }

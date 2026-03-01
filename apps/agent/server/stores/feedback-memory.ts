@@ -54,19 +54,40 @@ function parseTrace(value: unknown): { synthesisIssue?: string; toolIssues: stri
   return { synthesisIssue, toolIssues };
 }
 
+function extractTheme(text: string): string {
+  // Extract main topic keywords to group related feedback
+  const normalized = text.toLowerCase();
+  const keywords = normalized.match(/\b(price|cost|disclaimer|warning|allocation|balance|date|include|show|hide|avoid|use|tool|timeout|error|brief|concise|detailed|disclaimer)\b/g) || [];
+  if (keywords.length === 0) return text.slice(0, 30); // Fallback: use first 30 chars as theme
+  // Return sorted keywords to create consistent theme key
+  return [...new Set(keywords)].sort().join('|');
+}
+
 export function buildMemoryFromFeedbackRows(rows: FeedbackRow[]): AgentFeedbackMemory | undefined {
   if (!rows.length) return undefined;
-  const doList: string[] = [];
-  const dontList: string[] = [];
+  // Use Maps to keep only the newest feedback per theme (rows already ordered by created_at DESC)
+  const doByTheme = new Map<string, string>();
+  const dontByTheme = new Map<string, string>();
   const toolIssues: string[] = [];
   const synthesisIssues: string[] = [];
 
-  for (const row of rows) {
+  // Process in reverse order (oldest to newest) so newer ones overwrite older ones
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    // For do's (corrections): keep newest per theme
     if (typeof row.correction === 'string' && row.correction.trim()) {
-      uniquePush(doList, sentence(row.correction));
+      const sentencedCorrection = sentence(row.correction);
+      const theme = extractTheme(sentencedCorrection);
+      // Always set (or overwrite if newer) - we process old to new, so newest wins
+      doByTheme.set(theme, sentencedCorrection);
     }
+    // For don'ts (bad answers): keep newest per theme
     if (typeof row.answer === 'string' && row.answer.trim()) {
-      uniquePush(dontList, `Avoid repeating: ${sentence(row.answer)}`);
+      const sentencedAnswer = sentence(row.answer);
+      const theme = extractTheme(sentencedAnswer);
+      const formattedDont = `Avoid repeating: ${sentencedAnswer}`;
+      // Always set (or overwrite if newer) - we process old to new, so newest wins
+      dontByTheme.set(theme, formattedDont);
     }
     const parsedTrace = parseTrace(row.trace_json);
     for (const issue of parsedTrace.toolIssues) {
@@ -78,8 +99,8 @@ export function buildMemoryFromFeedbackRows(rows: FeedbackRow[]): AgentFeedbackM
   }
 
   const memory: AgentFeedbackMemory = {
-    do: doList.slice(0, 3),
-    dont: dontList.slice(0, 2),
+    do: Array.from(doByTheme.values()).slice(0, 3),
+    dont: Array.from(dontByTheme.values()).slice(0, 2),
     sources: rows.length,
     synthesisIssues: synthesisIssues.slice(0, 2),
     toolIssues: toolIssues.slice(0, 3)

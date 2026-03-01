@@ -3,6 +3,8 @@
  * for use with the Ghostfolio symbol and market-data APIs.
  */
 
+import { logger } from '../utils';
+
 export interface ResolvedSymbol {
   dataSource: string;
   symbol: string;
@@ -82,33 +84,84 @@ export async function resolveSymbolWithCandidates(
 ): Promise<SymbolResolutionResult> {
   const normalized = nameOrTicker.trim();
   if (!normalized) {
+    logger.debug('[symbol_resolver] empty input', { nameOrTicker });
     return { resolved: null };
   }
 
   const aliasKey = normalizeAliasKey(normalized);
   const alias = SYMBOL_ALIASES[aliasKey];
   if (alias) {
+    logger.debug('[symbol_resolver] resolved via alias', { query: normalized, aliasKey, dataSource: alias.dataSource, symbol: alias.symbol });
     return { resolved: alias };
   }
 
+  logger.debug('[symbol_resolver] calling lookup API', { query: normalized });
   const items = await lookup(normalized);
   if (!Array.isArray(items) || items.length === 0) {
+    logger.debug('[symbol_resolver] no items from lookup', { query: normalized, itemsLength: Array.isArray(items) ? items.length : 'not-array' });
     return { resolved: null };
   }
 
   const ranked = rankCandidates(normalized, items);
   if (ranked.length === 0) {
+    logger.debug('[symbol_resolver] rankCandidates returned empty', { query: normalized, itemsFromApi: items.length });
     return { resolved: null };
   }
 
   const top = ranked[0];
   const second = ranked[1];
-  if (top.score >= 90 && (!second || top.score - second.score >= 10)) {
+  const scoreOk = top.score >= 90;
+  const gapOk = !second || top.score - second.score >= 10;
+
+  if (scoreOk && gapOk) {
+    logger.debug('[symbol_resolver] resolved from lookup', {
+      query: normalized,
+      dataSource: top.dataSource,
+      symbol: top.symbol,
+      name: top.name,
+      topScore: top.score
+    });
     return {
       resolved: { dataSource: top.dataSource, symbol: top.symbol }
     };
   }
 
+  // When no single clear winner (score < 90 or top two close), use best match by name/symbol
+  // (ranked[0]), not raw API order. We score both item.name and item.symbol so "binance coin"
+  // matches items whose name contains "Binance Coin" better than unrelated first result.
+  const bestMatch = ranked[0];
+  if (bestMatch?.dataSource && bestMatch?.symbol) {
+    logger.debug('[symbol_resolver] resolved to best name/symbol match', {
+      query: normalized,
+      dataSource: bestMatch.dataSource,
+      symbol: bestMatch.symbol,
+      name: bestMatch.name,
+      score: bestMatch.score
+    });
+    return {
+      resolved: {
+        dataSource: bestMatch.dataSource.trim(),
+        symbol: bestMatch.symbol.trim()
+      },
+      candidates: ranked.slice(0, 3).map((c) => ({
+        currency: c.currency,
+        dataSource: c.dataSource,
+        name: c.name,
+        symbol: c.symbol
+      }))
+    };
+  }
+
+  logger.debug('[symbol_resolver] ambiguous or low score, not resolving', {
+    query: normalized,
+    topScore: top.score,
+    topSymbol: top.symbol,
+    topName: top.name,
+    topDataSource: top.dataSource,
+    secondScore: second?.score,
+    reason: !scoreOk ? 'top_score_below_90' : 'top_two_too_close',
+    rankedTop3: ranked.slice(0, 3).map((r) => ({ score: r.score, symbol: r.symbol, name: r.name, dataSource: r.dataSource }))
+  });
   return {
     resolved: null,
     candidates: ranked.slice(0, 3).map((candidate) => ({
@@ -121,6 +174,7 @@ export async function resolveSymbolWithCandidates(
 }
 
 function rankCandidates(query: string, items: LookupItem[]) {
+  // Score each lookup item by how well its name and symbol match the query (both are used).
   const normalizedQuery = normalizeAliasKey(query);
   const seen = new Set<string>();
   const scored = items

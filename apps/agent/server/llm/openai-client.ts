@@ -577,41 +577,29 @@ Return strict JSON: {"tool":"${toolList}|none"}`,
               requireJson: true,
               messages: [
                 {
-                  content: `You are a financial symbol parser. Extract and normalize ticker symbols from user messages.
+                  content: `You are a search-query extractor for asset/security lookups. Extract the exact words or phrases the user used to refer to assets—do NOT convert to ticker symbols. A downstream symbol lookup API will resolve these queries.
 
-SYMBOL RESOLUTION RULES:
-1. EXACT MATCHES (2-5 uppercase letters): Use as-is
-   "AAPL" → ["AAPL"]
-   "BTC" → ["BTC"]
+RULES:
+1. Extract the exact phrase the user said for each asset
+   "price of dogecoin" → symbols: ["dogecoin"]
+   "How is Apple doing?" → symbols: ["Apple"]
+   "bitcoin and ethereum" → symbols: ["bitcoin", "ethereum"]
+   "AAPL and TSLA" → symbols: ["AAPL", "TSLA"] (keep as-is; lookup will match)
 
-2. COMPANY NAMES: Convert to standard tickers
-   "Apple" → ["AAPL"]
-   "Tesla" → ["TSLA"]
-   "Bitcoin" → ["BTC"]
-   "Ethereum" → ["ETH"]
-   "Solana" → ["SOL"]
-   "Nvidia" → ["NVDA"]
+2. One asset per array entry; preserve the user's wording (e.g. "Dogecoin", "Apple Inc" if that's what they said).
 
-3. OBVIOUS TYPOS: Correct them confidently
-   "APPL" → ["AAPL"] (1-letter typo, very likely AAPL)
-   "TSLA" misspelled as "TSLAA" → ["TSLA"]
-   "BTC" misspelled as "BTC-USD" → ["BTC"]
+3. ask_user: Set ONLY when the message mentions an asset in a truly ambiguous way (e.g. "apple" with no financial context). Do NOT set for clear tickers or common names like "bitcoin", "Tesla".
 
-4. AMBIGUOUS (ask user): Only when truly unclear
-   "apple" (could be fruit or AAPL) → ask_user: "Did you mean Apple Inc (AAPL)?"
-   "Tesla Inc" mixed with unknown company → ask_user
-
-5. NO SYMBOL: Empty array, no clarification needed
-   "market data", "show prices" → symbols: []
+4. No symbol: If the message has no asset mention (e.g. "show prices", "market data"), return symbols: [] and ask_user: null.
 
 OUTPUT FORMAT: Strict JSON
 {
-  "market_data": { "symbols": ["AAPL"], "metrics": ["price"] },
-  "fact_check": { "symbols": ["AAPL"] },
+  "market_data": { "symbols": ["dogecoin"], "metrics": ["price"] },
+  "fact_check": { "symbols": ["dogecoin"] },
   "ask_user": null
 }
 
-Only set ask_user if TRULY ambiguous. Prefer to guess confidently for typos.`,
+Return a key for EACH selected tool. If both market_data and fact_check are selected, use the SAME symbols array in both.`,
                   role: 'system'
                 },
                 ...conversation.slice(-4).map(({ content: pastContent, role }) => ({
@@ -619,7 +607,7 @@ Only set ask_user if TRULY ambiguous. Prefer to guess confidently for typos.`,
                   role
                 })),
                 {
-                  content: `User message: "${message}"\nSelected tools: ${selectedTools.join(', ')}\n\nIMPORTANT: Return JSON with a key for EACH selected tool, even if null.\nExample: {"market_data": {...}, "fact_check": {...}, "ask_user": null}\n\nIf both market_data and fact_check are selected, BOTH must get the SAME symbols extracted from the message.\nSet ask_user ONLY if symbol is truly ambiguous (not for typos).`,
+                  content: `User message: "${message}"\nSelected tools: ${selectedTools.join(', ')}\n\nReturn JSON with a key for EACH selected tool. Use the exact asset names/phrases from the message as symbols (e.g. ["dogecoin"], ["Apple"]); do not convert to tickers—the lookup API will resolve them. Set ask_user only if truly ambiguous.`,
                   role: 'user'
                 }
               ]

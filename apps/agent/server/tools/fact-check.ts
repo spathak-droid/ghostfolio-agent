@@ -152,26 +152,38 @@ export async function factCheckTool({
     }
 
     // Try Finnhub first (most reliable), then fall back to CoinGecko for crypto symbols
+    // Skip Finnhub entirely when API key is not configured so we don't call the API or report a false discrepancy
+    const hasFinnhubKey = Boolean(process.env.FINNHUB_API_KEY?.trim());
     let secondary: (FinnhubClientResponse | CoinGeckoClientResponse) | null = null;
     if (symbolsToFetch.length > 0) {
-      logger.debug('[fact-check] Calling Finnhub with symbolsToFetch:', {
-        symbolsToFetch,
-        count: symbolsToFetch.length,
-        primaryItemsCount: primaryItems.length,
-        primarySymbols: primaryItems.map(item => ({ symbol: item.symbol, hasError: !!item.error, price: item.currentPrice }))
-      });
+      if (!hasFinnhubKey) {
+        logger.debug('[fact-check] Finnhub skipped (no API key); will try CoinGecko for crypto only');
+        secondary = {
+          ok: false,
+          error_code: 'FINNHUB_SKIPPED',
+          message: 'Secondary verification skipped (Finnhub not configured)',
+          retryable: false
+        };
+      } else {
+        logger.debug('[fact-check] Calling Finnhub with symbolsToFetch:', {
+          symbolsToFetch,
+          count: symbolsToFetch.length,
+          primaryItemsCount: primaryItems.length,
+          primarySymbols: primaryItems.map(item => ({ symbol: item.symbol, hasError: !!item.error, price: item.currentPrice }))
+        });
 
-      secondary = await getFinnhubQuote(symbolsToFetch);
+        secondary = await getFinnhubQuote(symbolsToFetch);
 
-      logger.debug('[fact-check] Finnhub response:', {
-        ok: secondary.ok,
-        error_code: (secondary as any).error_code,
-        message: (secondary as any).message,
-        dataKeys: secondary.ok ? Object.keys(secondary.data || {}) : 'N/A'
-      });
+        logger.debug('[fact-check] Finnhub response:', {
+          ok: secondary.ok,
+          error_code: (secondary as { error_code?: string }).error_code,
+          message: (secondary as { message?: string }).message,
+          dataKeys: secondary.ok ? Object.keys(secondary.data || {}) : 'N/A'
+        });
+      }
 
-      // If Finnhub failed, try CoinGecko for crypto symbols
-      if (!secondary.ok) {
+      // If Finnhub was skipped or failed, try CoinGecko for crypto symbols
+      if (!secondary?.ok) {
         const cryptoIds = primaryItems
           .filter(item => !item.error && item.currentPrice > 0)
           .map(item => symbolToCoinGeckoId(item.symbol))

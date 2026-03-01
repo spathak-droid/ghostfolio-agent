@@ -97,6 +97,7 @@ export function createAgent({
       take,
       token,
       type,
+      userId,
       wantsLatest
     }: AgentChatRequest): Promise<AgentChatResponse> => {
       const chatStartedAt = Date.now();
@@ -119,6 +120,20 @@ export function createAgent({
       );
       const conversation = [...persistedConversation];
       conversation.push({ content: message, role: 'user' });
+
+      // Check if this is an affirmation to a pending symbol clarification
+      let effectiveMessage = message;
+      if (persistedState?.pendingSymbolClarification && isSimpleAffirmation(message)) {
+        const { suggestedSymbol, suggestedDisplay } = persistedState.pendingSymbolClarification;
+        logger.debug('[agent.chat] AFFIRMATION_DETECTED', {
+          pendingSymbol: suggestedSymbol,
+          display: suggestedDisplay
+        });
+        // Modify the message to use the suggested symbol
+        effectiveMessage = `What is the price of ${suggestedSymbol}?`;
+        // Update conversation to reflect the substitution
+        conversation[conversation.length - 1].content = effectiveMessage;
+      }
       const llmConversationBase = contextManager.buildContext({
         conversation,
         state: persistedState
@@ -139,31 +154,31 @@ export function createAgent({
       const routeDecision = await decideRoute({
         conversation: llmConversation,
         llm,
-        message,
+        message: effectiveMessage,
         traceContext
       });
       const routeDurationMs = Date.now() - routeStartedAt;
       const selectedTools = preventOrderReplayWithoutPending({
-        message,
+        message: effectiveMessage,
         pendingState: persistedState,
         selectedTools: sanitizeAnalyzeStockTrendForScope({
-          message,
+          message: effectiveMessage,
           selectedTools: enforceHoldingsAnalysisForAssetQuestions({
-            message,
+            message: effectiveMessage,
             selectedTools: sanitizePortfolioHoldingsToolScope({
-              message,
+              message: effectiveMessage,
               selectedTools: sanitizeOrderToolsForNonOrderRequests({
-                message,
+                message: effectiveMessage,
                 pendingState: persistedState,
                 selectedTools: normalizeOrderToolsForIntent({
-                  message,
+                  message: effectiveMessage,
                   selectedTools: preventComplianceBlockingSpecializedTools({
-                    message,
+                    message: effectiveMessage,
                     selectedTools: orderToolsByDependency({
                       selectedTools: prioritizeExecutionToolsForIntent({
-                        message,
+                        message: effectiveMessage,
                         selectedTools: ensurePendingClarificationTool({
-                          message,
+                          message: effectiveMessage,
                           pendingState: persistedState,
                           selectedTools: routeDecision.tools
                         })
@@ -680,7 +695,8 @@ export function createAgent({
           toolCalls,
           toolExecutionDurationMs,
           trace,
-          traceContext
+          traceContext,
+          userId: userId
         });
       } catch (error) {
         const isTimeout = isTimeoutError(error);
@@ -750,4 +766,34 @@ function sanitizeToolErrorMessage(message: string): string {
   return sanitizeErrorMessageForClient(
     message.replace(/^TOOL_EXECUTION_(FAILED|TIMEOUT):\s*/i, '').trim()
   );
+}
+
+/**
+ * Detects simple affirmations like "yes", "yeah", "ok", "sure", etc.
+ * Returns true if message appears to be confirming a previous question.
+ */
+function isSimpleAffirmation(message: string): boolean {
+  const trimmed = message.trim().toLowerCase();
+  const affirmations = [
+    'yes',
+    'yeah',
+    'yep',
+    'yup',
+    'ok',
+    'okay',
+    'sure',
+    'absolutely',
+    'definitely',
+    'correct',
+    'right',
+    'true',
+    'that\'s right',
+    'that is right',
+    'confirm',
+    'confirmed',
+    '✓',
+    '✔'
+  ];
+
+  return affirmations.includes(trimmed) || trimmed.split(/\s+/).length <= 2;
 }

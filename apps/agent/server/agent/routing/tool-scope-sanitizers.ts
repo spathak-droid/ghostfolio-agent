@@ -116,9 +116,16 @@ function hasSpecificAssetReference(message: string): boolean {
   const normalized = message.toLowerCase();
   if (/\b[A-Z]{2,5}(?:-[A-Z]{2,5})?\b/.test(message)) return true;
   if (/\b[a-z]{2,10}-[a-z]{2,10}\b/.test(normalized)) return true;
-  return /\b(bitcoin|btc|ethereum|eth|solana|sol|tesla|tsla|apple|aapl|nvidia|nvda)\b/.test(
+  if (/\b(bitcoin|btc|ethereum|eth|solana|sol|tesla|tsla|apple|aapl|nvidia|nvda)\b/.test(
     normalized
-  );
+  )) {
+    return true;
+  }
+  // "my stock", "my holding", "my Yahoo" etc. → user wants their holding analyzed
+  if (/\bmy\s+(stock|holding|holdings|position|yahoo|coingecko)\b/.test(normalized)) {
+    return true;
+  }
+  return false;
 }
 
 function hasPendingOrderClarification(pendingState?: any): boolean {

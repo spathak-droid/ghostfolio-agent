@@ -89,7 +89,8 @@ describe('standalone agent orchestrator', () => {
     });
 
     expect(getForToolSignature).toHaveBeenCalledWith(
-      'portfolio_analysis>holdings_analysis'
+      'portfolio_analysis>holdings_analysis',
+      undefined
     );
     expect(response.answer).toBe('fallback');
     expect(response.trace?.some((step) => step.name === 'feedback_memory_lookup')).toBe(true);
@@ -207,7 +208,7 @@ describe('standalone agent orchestrator', () => {
     });
 
     expect(response.answer).toContain('Summary:');
-    expect(response.answer).toContain('Top performers:');
+    expect(response.answer).toContain('Top performers');
   });
 
   it('uses grounded llm synthesis for portfolio performance over time question', async () => {

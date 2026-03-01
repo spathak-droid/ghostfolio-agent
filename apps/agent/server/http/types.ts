@@ -14,6 +14,7 @@ export interface FeedbackStoreLike {
     message?: string;
     rating: 'up' | 'down';
     trace?: unknown[];
+    userId?: string;
   }): Promise<{ ok: boolean; feedbackId?: string; error?: string }>;
 }
 

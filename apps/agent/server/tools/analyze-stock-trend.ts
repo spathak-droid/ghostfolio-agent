@@ -342,6 +342,7 @@ function parseTimelineRange(inputRange: string | undefined, message: string): Ti
 
   const normalized = message.toLowerCase();
   if (/\b(last|past)\s+week\b/.test(normalized)) return '7d';
+  if (/\b(last|past)\s+1\s+week\b/.test(normalized)) return '7d';
   if (/\b(last|past)\s+month\b/.test(normalized)) return '30d';
   if (/\b(last|past)\s+3\s+months?\b/.test(normalized)) return '90d';
   if (/\b(last|past)\s+year\b/.test(normalized)) return '1y';

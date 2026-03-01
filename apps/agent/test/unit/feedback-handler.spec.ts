@@ -17,7 +17,8 @@ describe('createFeedbackHandler', () => {
     const handler = createFeedbackHandler({
       feedbackStore: {
         save: jest.fn().mockRejectedValue(new Error('database password=secret123'))
-      }
+      },
+      ghostfolioBaseUrl: 'http://localhost:3333'
     });
 
     const request = {
@@ -25,7 +26,8 @@ describe('createFeedbackHandler', () => {
         answer: 'Answer',
         conversationId: 'conv-1',
         rating: 'up'
-      }
+      },
+      headers: {}
     };
     const response = createMockResponse();
 

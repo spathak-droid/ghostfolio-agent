@@ -299,12 +299,12 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   {
     name: 'market_data',
     description:
-      'Use when the user asks for current price/quote of specific symbols (e.g. bitcoin, AAPL, Tesla). ' +
-      'This tool is current-only and does not provide historical comparisons. ' +
+      'Use when the user asks for current price, quote, or how a symbol is doing in the market (e.g. "how is Apple doing", "price of bitcoin", "AAPL last week"). ' +
+      'Returns current price and optional historical comparisons (e.g. 1w, 1m, 1y) when the message mentions a time range like "past week", "past 1 week", "last month". ' +
+      'Use for general market data only. When the user says "my" (my Apple, my stock, my holding), use analyze_stock_trend instead so you analyze their portfolio holding via GET /api/v1/portfolio/holding/:dataSource/:symbol. ' +
       'Accepts symbols[] (names or tickers) and metrics[]; currently supports metric "price" only. Unsupported metrics are ignored and reported. ' +
-      'Resolves names via symbol lookup and returns current price. ' +
-      'Good for: "What is the price of bitcoin?", "Current price of AAPL", "quote for TSLA". ' +
-      'Do NOT use for transaction history or ratio analytics; use transaction_categorize or transaction_timeline.',
+      'Good for: "How is Apple doing past 1 week?", "What is the price of bitcoin?", "Current price of AAPL". ' +
+      'Do NOT use for the user\'s own holdings; use analyze_stock_trend for "my X" questions.',
     input_schema: {
       type: 'object',
       properties: {
@@ -338,10 +338,11 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   {
     name: 'analyze_stock_trend',
     description:
-      'Use when the user asks how a specific holding is doing over time (e.g. "how is my bitcoin doing", "BTC trend in last 7 days"). ' +
-      'Calls GET /api/v1/portfolio/holding/:dataSource/:symbol and analyzes historicalData for a selected timeline window (7d/30d/90d/1y/max). ' +
+      'Use when the user asks how their own holding is doing over time (e.g. "how is my Apple doing", "how is my bitcoin doing", "my AAPL trend"). ' +
+      'Calls GET /api/v1/portfolio/holding/:dataSource/:symbol and analyzes historicalData for the selected timeline (7d/30d/90d/1y/max). ' +
       'Returns period change, high/low in window, and since-entry change vs averagePrice. ' +
-      'Good for: "trend for BTC", "how much did it grow last week", "show my BTC 30-day change".',
+      'Prefer this over market_data when the user says "my" (my stock, my holding, my Apple, my Yahoo, etc.) so you analyze their portfolio holding, not general market data. ' +
+      'Good for: "how is my Apple doing past week", "trend for my BTC", "how much did my holding grow last week".',
     input_schema: {
       type: 'object',
       properties: {

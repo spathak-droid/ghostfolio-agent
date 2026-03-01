@@ -93,6 +93,15 @@ describe('validateToolArgs', () => {
     ).toEqual({ ok: true });
   });
 
+  it('returns ok for symbol search phrases with spaces (lookup query)', () => {
+    expect(
+      validateToolArgs('market_data', { symbols: ['binance coin'] })
+    ).toEqual({ ok: true });
+    expect(
+      validateToolArgs('market_data', { symbols: ['Apple Inc', 'bitcoin'] })
+    ).toEqual({ ok: true });
+  });
+
   it('rejects symbols array over MAX_ARRAY_LENGTH', () => {
     const result = validateToolArgs('market_data', {
       symbols: Array(51).fill('AAPL')

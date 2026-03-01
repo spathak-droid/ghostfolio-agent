@@ -8,6 +8,7 @@ import {
   persistConversationArtifacts
 } from '../agent';
 import type { AgentConversationStore } from '../stores';
+import { toFeedbackMemoryContext } from '../stores/feedback-memory';
 import { logger } from '../utils';
 import { synthesizeToolResults } from '../synthesis/tool-result-synthesizer';
 import type {
@@ -43,7 +44,8 @@ export async function synthesizeAndFinalizeResponse({
   toolCalls,
   toolExecutionDurationMs,
   trace,
-  traceContext
+  traceContext,
+  userId
 }: {
   chatStartedAt: number;
   conversation: AgentConversationMessage[];
@@ -63,12 +65,13 @@ export async function synthesizeAndFinalizeResponse({
   toolExecutionDurationMs: number;
   trace: AgentTraceStep[];
   traceContext: AgentTraceContext;
+  userId?: string;
 }): Promise<AgentChatResponse> {
   let feedbackMemory: AgentFeedbackMemory | undefined;
   if (feedbackMemoryProvider) {
     try {
       const toolSignature = toolCalls.map((call) => call.toolName).join('>');
-      feedbackMemory = await feedbackMemoryProvider.getForToolSignature(toolSignature);
+      feedbackMemory = await feedbackMemoryProvider.getForToolSignature(toolSignature, userId);
       if (feedbackMemory) {
         trace.push({
           type: 'tool',
@@ -138,6 +141,7 @@ export async function synthesizeAndFinalizeResponse({
             'For portfolio analysis: the main number to report is from the line "Portfolio balance: N" in the findings—say "Portfolio balance $N" (use that exact N). Do NOT use the number from "Balance:" for the portfolio value; Balance is net worth and may differ. Then net performance, peak net worth, drawdown.'
           ]
         : [];
+      const feedbackContext = feedbackMemory ? [toFeedbackMemoryContext(feedbackMemory), ''] : [];
       const groundedPrompt = [
         'Answer the user question using only grounded tool findings below.',
         'Do not use section headers or report templates.',
@@ -145,6 +149,7 @@ export async function synthesizeAndFinalizeResponse({
         'If the user asked for one item (for example top performer), return only that.',
         ...worthInstruction,
         ...analysisWorthInstruction,
+        ...feedbackContext,
         '',
         `User question: ${message}`,
         '',

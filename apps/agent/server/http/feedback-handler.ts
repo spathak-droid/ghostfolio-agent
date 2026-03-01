@@ -1,13 +1,16 @@
 import type { Request, Response } from 'express';
 
+import { GhostfolioClient } from '../clients';
 import { parseFeedbackBody } from '../chat-request-validation';
 import { logger } from '../utils';
 import type { FeedbackStoreLike } from './types';
 
 export function createFeedbackHandler({
-  feedbackStore
+  feedbackStore,
+  ghostfolioBaseUrl
 }: {
   feedbackStore: FeedbackStoreLike;
+  ghostfolioBaseUrl: string;
 }) {
   return async (request: Request, response: Response): Promise<void> => {
     const requestBody =
@@ -25,10 +28,30 @@ export function createFeedbackHandler({
       return;
     }
 
+    // Extract userId from token if available
+    let userId: string | undefined;
+    const token =
+      typeof requestBody.token === 'string' ? requestBody.token :
+      (request.headers.authorization ?? '').replace('Bearer ', '');
+
+    if (token) {
+      try {
+        const ghostfolioClient = new GhostfolioClient(ghostfolioBaseUrl);
+        const user = await ghostfolioClient.getUser({ token });
+        userId =
+          user && typeof user === 'object' && typeof (user as { id?: string }).id === 'string'
+            ? (user as { id: string }).id
+            : undefined;
+      } catch {
+        // Ignore errors getting user, proceed without userId
+      }
+    }
+
     logger.info('[agent.feedback] RECEIVED', {
       conversationId: validation.params.conversationId,
       hasCorrection: Boolean(validation.params.correction),
       hasMessage: Boolean(validation.params.message),
+      hasUserId: Boolean(userId),
       rating: validation.params.rating
     });
 
@@ -40,7 +63,8 @@ export function createFeedbackHandler({
         latency: validation.params.latency,
         message: validation.params.message,
         rating: validation.params.rating,
-        trace: validation.params.trace
+        trace: validation.params.trace,
+        userId
       });
       if (!result.ok) {
         response.status(503).json({

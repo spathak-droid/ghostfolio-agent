@@ -19,6 +19,7 @@ export interface FeedbackStoreInput {
   message?: string;
   rating: 'down' | 'up';
   trace?: unknown[];
+  userId?: string;
 }
 
 export interface FeedbackStoreSaveResult {
@@ -60,8 +61,8 @@ class PostgresFeedbackStore implements FeedbackStore {
       const feedbackId = crypto.randomUUID();
       await this.prisma.$executeRawUnsafe(
         `INSERT INTO agent_feedback
-        (id, created_at, conversation_id, rating, message, answer, correction, latency_json, trace_json, tool_signature)
-        VALUES ($1::uuid, NOW(), $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9)`,
+        (id, created_at, conversation_id, rating, message, answer, correction, latency_json, trace_json, tool_signature, user_id)
+        VALUES ($1::uuid, NOW(), $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10)`,
         feedbackId,
         input.conversationId,
         input.rating,
@@ -70,7 +71,8 @@ class PostgresFeedbackStore implements FeedbackStore {
         input.correction ?? null,
         JSON.stringify(input.latency ?? null),
         JSON.stringify(input.trace ?? null),
-        deriveToolSignatureFromTrace(input.trace)
+        deriveToolSignatureFromTrace(input.trace),
+        input.userId ?? null
       );
       return { ok: true, feedbackId };
     } catch (error) {
@@ -81,7 +83,7 @@ class PostgresFeedbackStore implements FeedbackStore {
     }
   }
 
-  public async getForToolSignature(toolSignature: string): Promise<AgentFeedbackMemory | undefined> {
+  public async getForToolSignature(toolSignature: string, userId?: string): Promise<AgentFeedbackMemory | undefined> {
     try {
       await this.ensureInitialized();
       const trimmed = toolSignature.trim();
@@ -95,9 +97,11 @@ class PostgresFeedbackStore implements FeedbackStore {
          FROM agent_feedback
          WHERE rating = 'down'
            AND tool_signature = $1
+           AND user_id IS NOT DISTINCT FROM $2
          ORDER BY created_at DESC
          LIMIT 10`,
-        trimmed
+        trimmed,
+        userId || null
       );
       return buildMemoryFromFeedbackRows(rows);
     } catch {
@@ -126,11 +130,15 @@ class PostgresFeedbackStore implements FeedbackStore {
         correction TEXT NULL,
         latency_json JSONB NULL,
         trace_json JSONB NULL,
-        tool_signature TEXT NULL
+        tool_signature TEXT NULL,
+        user_id VARCHAR(256) NULL
       )`
     );
     await this.prisma.$executeRawUnsafe(
       'ALTER TABLE agent_feedback ADD COLUMN IF NOT EXISTS tool_signature TEXT NULL'
+    );
+    await this.prisma.$executeRawUnsafe(
+      'ALTER TABLE agent_feedback ADD COLUMN IF NOT EXISTS user_id VARCHAR(256) NULL'
     );
     await this.prisma.$executeRawUnsafe(
       'CREATE INDEX IF NOT EXISTS idx_agent_feedback_created_at ON agent_feedback(created_at DESC)'

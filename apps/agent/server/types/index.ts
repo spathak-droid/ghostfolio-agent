@@ -12,6 +12,7 @@ export interface AgentChatRequest {
   take?: number;
   token?: string;
   type?: string;
+  userId?: string;
   wantsLatest?: boolean;
   createOrderParams?: CreateOrderParams;
 }
@@ -184,7 +185,7 @@ export interface AgentFeedbackMemory {
 }
 
 export interface AgentFeedbackMemoryProvider {
-  getForToolSignature: (toolSignature: string) => Promise<AgentFeedbackMemory | undefined>;
+  getForToolSignature: (toolSignature: string, userId?: string) => Promise<AgentFeedbackMemory | undefined>;
 }
 
 export interface AgentReasoningDecision {

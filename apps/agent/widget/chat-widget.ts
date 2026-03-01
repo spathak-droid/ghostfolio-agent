@@ -50,6 +50,13 @@ export function mountChatWidget(container: HTMLElement) {
   let currentConversationId = generateConversationId();
   const chatApiUrl = resolveChatApiUrl();
   const acknowledgeApiUrl = resolveAcknowledgeApiUrl(chatApiUrl);
+  let ackRotationIntervalId: ReturnType<typeof setInterval> | null = null;
+  const clearAckRotation = (): void => {
+    if (ackRotationIntervalId !== null) {
+      clearInterval(ackRotationIntervalId);
+      ackRotationIntervalId = null;
+    }
+  };
   const authApiUrl = resolveAuthApiUrl();
   const feedbackApiUrl = resolveFeedbackApiUrl(chatApiUrl);
   const clearApiUrl = resolveClearConversationApiUrl(chatApiUrl);
@@ -365,6 +372,7 @@ export function mountChatWidget(container: HTMLElement) {
       return;
     }
 
+    clearAckRotation();
     appendMessage(value, 'user');
     input.value = '';
     input.focus();
@@ -393,8 +401,20 @@ export function mountChatWidget(container: HTMLElement) {
         body: JSON.stringify({ conversationId: currentConversationId, message: value })
       })
         .then((r) => r.json())
-        .then((ack: { forWidget?: string }) => {
-          if (ack?.forWidget) setAckContent(loadingLi, ack.forWidget);
+        .then((ack: { forWidget?: string | string[] }) => {
+          const raw = ack?.forWidget;
+          if (raw == null) return;
+          const messages = Array.isArray(raw) ? raw : [raw];
+          if (messages.length === 0) return;
+          setAckContent(loadingLi, messages[0]);
+          if (messages.length > 1) {
+            clearAckRotation();
+            let index = 1;
+            ackRotationIntervalId = setInterval(() => {
+              setAckContent(loadingLi, messages[index % messages.length]);
+              index += 1;
+            }, 2300);
+          }
         })
         .catch(() => undefined); // non-critical: widget still works without acknowledgment
 
@@ -417,6 +437,7 @@ export function mountChatWidget(container: HTMLElement) {
           (data && typeof (data as { message?: string }).message === 'string')
             ? (data as { message: string }).message
             : 'Something went wrong. Please try again.';
+        clearAckRotation();
         setMessageContent(loadingLi, errMsg);
         loadingLi.classList.add('agent-widget__message--error');
         return;
@@ -426,6 +447,7 @@ export function mountChatWidget(container: HTMLElement) {
         typeof (data as AgentChatResponse).answer === 'string'
           ? (data as AgentChatResponse).answer
           : 'No response.';
+      clearAckRotation();
       setMessageContent(loadingLi, answer);
       if (res.ok) {
         appendHoldingTrendCard(loadingLi, data as AgentChatResponse);
@@ -437,6 +459,7 @@ export function mountChatWidget(container: HTMLElement) {
         });
       }
     } catch {
+      clearAckRotation();
       setMessageContent(loadingLi, 'Unable to reach the agent. Please try again.');
       loadingLi.classList.add('agent-widget__message--error');
     } finally {
