@@ -15,9 +15,12 @@ function createMockResponse() {
 describe('createFeedbackHandler', () => {
   it('does not expose raw internal error messages on persistence exceptions', async () => {
     const handler = createFeedbackHandler({
+      allowBodyAccessToken: false,
+      allowInsecureGhostfolioHttp: false,
       feedbackStore: {
         save: jest.fn().mockRejectedValue(new Error('database password=secret123'))
       },
+      ghostfolioAllowedHosts: [],
       ghostfolioBaseUrl: 'http://localhost:3333'
     });
 
