@@ -201,6 +201,7 @@ export function mountChatWidget(container: HTMLElement) {
       messages.innerHTML = '';
       messages.appendChild(createWelcomeMessage());
       formWrap.classList.remove('agent-widget__form-wrap--hidden');
+      newChatButton.style.display = '';
       signOutButton.style.display = '';
       historyButton.style.display = '';
     } else {
@@ -213,6 +214,7 @@ export function mountChatWidget(container: HTMLElement) {
       messages.style.display = 'none';
       messages.innerHTML = '';
       formWrap.classList.add('agent-widget__form-wrap--hidden');
+      newChatButton.style.display = 'none';
       signOutButton.style.display = 'none';
       historyButton.style.display = 'none';
       historyDropdown.hidden = true;
