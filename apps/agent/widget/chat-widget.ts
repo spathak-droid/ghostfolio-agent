@@ -194,6 +194,7 @@ export function mountChatWidget(container: HTMLElement) {
 
   function renderInitialContent(): void {
     if (getAuthToken()) {
+      launcher.style.display = '';
       signInView.style.display = 'none';
       signInView.innerHTML = '';
       messages.style.display = '';
@@ -203,6 +204,7 @@ export function mountChatWidget(container: HTMLElement) {
       signOutButton.style.display = '';
       historyButton.style.display = '';
     } else {
+      launcher.style.display = 'none';
       signInView.innerHTML = '';
       signInView.appendChild(
         createSignInCard(authApiUrl, () => renderInitialContent())

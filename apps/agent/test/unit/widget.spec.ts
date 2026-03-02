@@ -22,6 +22,34 @@ describe('agent widget mount', () => {
     expect(container.querySelector('.agent-widget--open')).toBeNull();
   });
 
+  it('hides the launcher when not authenticated', () => {
+    mountChatWidget(container);
+
+    const launcher = container.querySelector<HTMLButtonElement>(
+      'button.agent-widget__launcher'
+    );
+    expect(launcher).toBeTruthy();
+    expect(launcher!.style.display).toBe('none');
+
+    const signInView = container.querySelector('.agent-widget__sign-in-view');
+    expect(signInView).toBeTruthy();
+    expect((signInView as HTMLElement)?.style.display).toBe('flex');
+  });
+
+  it('shows the launcher when authenticated', () => {
+    window.localStorage.setItem('auth-token', 'test-token');
+    mountChatWidget(container);
+
+    const launcher = container.querySelector<HTMLButtonElement>(
+      'button.agent-widget__launcher'
+    );
+    expect(launcher).toBeTruthy();
+    expect(launcher!.style.display).not.toBe('none');
+
+    const signInView = container.querySelector('.agent-widget__sign-in-view');
+    expect((signInView as HTMLElement)?.style.display).toBe('none');
+  });
+
   it('appends a user message when the form is submitted with text', async () => {
     const fetchMock = jest.fn().mockResolvedValue({
       ok: true,
