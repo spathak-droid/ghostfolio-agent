@@ -71,8 +71,7 @@ async function logEvalRun(
       `[langsmith] Logging eval run: ${runName} (${summary.passed}/${summary.total} passed)`
     );
 
-    // In practice, you'd use client.create_feedback() or similar
-    // For now, we log the structure for debugging
+    // Optional: set DEBUG_LANGSMITH=true to log full eval feedback structure (for debugging LangSmith integration).
     if (process.env.DEBUG_LANGSMITH === 'true') {
       console.log('[langsmith] Eval feedback structure:', JSON.stringify(feedback, null, 2));
     }

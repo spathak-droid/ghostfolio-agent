@@ -29,7 +29,7 @@ export async function portfolioSummaryTool({
       message,
       source: 'ghostfolio_api',
       sources: ['ghostfolio_api'],
-      summary: 'Portfolio summary: ' + JSON.stringify(normalized).substring(0, 100),
+      summary: 'Portfolio summary from Ghostfolio',
       answer: 'Portfolio summary retrieved successfully',
       summary_data: normalized,
       data,
