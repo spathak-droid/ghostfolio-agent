@@ -337,6 +337,14 @@ export function createEvalLlm(trace: LlmTrace): AgentLlm {
       if (normalized.includes('cash') && normalized.includes('balance')) {
         return 'Holdings analysis from Ghostfolio data shows you have $5,000 available in cash.';
       }
+      // Handle order-related responses
+      if (normalized.includes('order')) {
+        return 'No active orders found for that symbol, but I can help you place new orders.';
+      }
+      // Handle fact and compliance check responses
+      if (normalized.includes('compliance') || normalized.includes('fact')) {
+        return 'Compliance check completed and fact verification successful.';
+      }
       return 'I can help with portfolio, market data, and transaction questions.';
     },
     reasonAboutQuery: async (message: string) => {

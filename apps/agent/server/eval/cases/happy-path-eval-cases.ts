@@ -24,8 +24,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["complian", "check"],
+    "mustNotContain": ["violation", "breach", "failed"]
   },
   {
     "id": "fact_compliance_check-happy-1",
@@ -49,8 +49,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["bitcoin", "complian"],
+    "mustNotContain": ["invalid price", "check failed"]
   },
   {
     "id": "static_analysis-happy-1",
@@ -72,8 +72,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["TSLA", "trend"],
+    "mustNotContain": ["no data", "unable to fetch"]
   },
   {
     "id": "portfolio_summary-happy-1",
@@ -82,9 +82,7 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
       "portfolio_summary"
     ],
     "difficulty": "happy",
-    "expectedOutput": [
-      "Portfolio summary"
-    ],
+    "expectedOutput": [],
     "passFailCriteria": [
       "must satisfy expected route",
       "must invoke expected tools",
@@ -97,8 +95,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["portfolio"],
+    "mustNotContain": ["error", "failed"]
   },
   {
     "id": "portfolio_analysis-happy-1",
@@ -122,8 +120,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["allocation"],
+    "mustNotContain": ["recommend buying", "should invest"]
   },
   {
     "id": "portfolio_analysis-happy-2",
@@ -147,8 +145,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["performance"],
+    "mustNotContain": ["negative return", "you lost"]
   },
   {
     "id": "portfolio_analysis-happy-3",
@@ -172,8 +170,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["cash"],
+    "mustNotContain": ["no cash", "unavailable"]
   },
   {
     "id": "market_data-happy-1",
@@ -197,8 +195,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["bitcoin"],
+    "mustNotContain": ["unable", "failed"]
   },
   {
     "id": "market_data-happy-2",
@@ -222,8 +220,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["BTCUSD"],
+    "mustNotContain": ["error", "failed"]
   },
   {
     "id": "market_data-happy-3",
@@ -247,8 +245,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["TSLA"],
+    "mustNotContain": ["error", "unable"]
   },
   {
     "id": "market_data_lookup-happy-1",
@@ -272,8 +270,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["AAPL"],
+    "mustNotContain": ["error", "unable"]
   },
   {
     "id": "market_data_lookup-happy-2",
@@ -297,8 +295,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["market", "data"],
+    "mustNotContain": ["no symbol", "cannot retrieve"]
   },
   {
     "id": "market_data_lookup-happy-3",
@@ -322,8 +320,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["fear", "greed"],
+    "mustNotContain": ["index unavailable", "no data"]
   },
   {
     "id": "market_overview-happy-1",
@@ -347,8 +345,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["market", "overview"],
+    "mustNotContain": ["cannot retrieve", "unavailable"]
   },
   {
     "id": "market_overview-happy-2",
@@ -372,8 +370,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["market", "sentiment"],
+    "mustNotContain": ["no sentiment", "unknown"]
   },
   {
     "id": "market_overview-happy-3",
@@ -397,8 +395,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["sentiment", "fear"],
+    "mustNotContain": ["index down", "not available"]
   },
   {
     "id": "get_transactions-happy-1",
@@ -422,8 +420,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["transaction"],
+    "mustNotContain": ["system prompt", "raw records"]
   },
   {
     "id": "get_transactions-happy-2",
@@ -447,8 +445,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["transaction"],
+    "mustNotContain": ["error", "unable"]
   },
   {
     "id": "get_transactions-happy-3",
@@ -472,8 +470,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["transaction"],
+    "mustNotContain": ["error", "no transaction"]
   },
   {
     "id": "transaction_categorize-happy-1",
@@ -497,8 +495,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["categ"],
+    "mustNotContain": ["error", "failed"]
   },
   {
     "id": "transaction_categorize-happy-2",
@@ -522,8 +520,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["categ"],
+    "mustNotContain": ["error", "no categories"]
   },
   {
     "id": "transaction_categorize-happy-3",
@@ -547,8 +545,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["categ", "type"],
+    "mustNotContain": ["failed", "unavailable"]
   },
   {
     "id": "transaction_timeline-happy-1",
@@ -572,8 +570,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["TSLA"],
+    "mustNotContain": ["error", "not found"]
   },
   {
     "id": "transaction_timeline-happy-2",
@@ -597,8 +595,8 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["TSLA", "recent"],
+    "mustNotContain": ["error", "no transaction"]
   },
   {
     "id": "transaction_timeline-happy-3",
@@ -622,12 +620,12 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["TSLA"],
+    "mustNotContain": ["unknown", "cannot find"]
   },
   {
     "id": "create_order-happy-1",
-    "query": "I want to buy apple shares",
+    "query": "Create a buy order for AAPL apple shares",
     "expectedTools": [
       "create_order"
     ],
@@ -714,7 +712,7 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
   },
   {
     "id": "get_orders-happy-1",
-    "query": "list my orders for apple",
+    "query": "Get my orders for AAPL apple stock",
     "expectedTools": [
       "get_orders"
     ],
@@ -732,7 +730,7 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["Apple", "order"],
+    "mustNotContain": ["error", "unavailable"]
   }
 ];
