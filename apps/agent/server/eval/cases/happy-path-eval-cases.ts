@@ -625,7 +625,7 @@ export const HAPPY_PATH_EVAL_CASES: EvalCase[] = [
   },
   {
     "id": "create_order-happy-1",
-    "query": "Create a buy order for AAPL apple shares",
+    "query": "please buy AAPL for me",
     "expectedTools": [
       "create_order"
     ],
