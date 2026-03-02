@@ -35,7 +35,7 @@ import { logger } from '../utils';
 
 const AGENT_OPERATION_TIMEOUT_MS = 25_000;
 
-export type RunToolExecutionPhaseParams = {
+export interface RunToolExecutionPhaseParams {
   conversation: AgentConversationMessage[];
   conversationId: string;
   conversationStore: AgentConversationStore;
@@ -64,18 +64,18 @@ export type RunToolExecutionPhaseParams = {
   traceContext: AgentTraceContext;
   type?: string;
   wantsLatest?: boolean;
-};
+}
 
-export type RunToolExecutionPhaseSuccess = {
+export interface RunToolExecutionPhaseSuccess {
   kind: 'success';
   latestCreateOrderParams: CreateOrderParams | undefined;
   toolExecutionDurationMs: number;
-};
+}
 
-export type RunToolExecutionPhaseFailure = {
+export interface RunToolExecutionPhaseFailure {
   kind: 'failure';
   response: AgentChatResponse;
-};
+}
 
 export type RunToolExecutionPhaseResult =
   | RunToolExecutionPhaseSuccess
@@ -294,7 +294,7 @@ export async function runToolExecutionPhase(
           resultPreview:
             typeof result === 'object' && result !== null
               ? JSON.stringify(result).slice(0, 500) + (JSON.stringify(result).length > 500 ? '...' : '')
-              : String(result)
+              : typeof result === 'string' ? result : JSON.stringify(result)
         });
       } catch (error) {
         const isTimeout = isTimeoutError(error);

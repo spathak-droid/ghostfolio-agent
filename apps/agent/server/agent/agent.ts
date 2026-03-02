@@ -219,7 +219,7 @@ export function createAgent({
             selectedTools,
             perTool: selectedTools.map((t) => {
               const tp = toolParameters[t];
-              return { tool: t, hasParams: Boolean(tp), symbols: (tp?.symbols as unknown) };
+              return { tool: t, hasParams: Boolean(tp), symbols: tp?.symbols };
             }),
             needsClarification: Boolean(askUserClarification)
           });
