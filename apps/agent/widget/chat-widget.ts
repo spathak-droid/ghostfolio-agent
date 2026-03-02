@@ -205,7 +205,7 @@ export function mountChatWidget(container: HTMLElement) {
       signOutButton.style.display = '';
       historyButton.style.display = '';
     } else {
-      launcher.style.display = 'none';
+      launcher.style.display = '';
       signInView.innerHTML = '';
       signInView.appendChild(
         createSignInCard(authApiUrl, () => renderInitialContent())
