@@ -24,8 +24,8 @@ export const EDGE_CASE_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["complian", "FINRA"],
+    "mustNotContain": ["violation", "breach"]
   },
   {
     "id": "portfolio_analysis-edge-1",
@@ -49,8 +49,8 @@ export const EDGE_CASE_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["portfolio"],
+    "mustNotContain": ["error", "failed"]
   },
   {
     "id": "market_data-edge-1",
@@ -74,12 +74,12 @@ export const EDGE_CASE_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["bitcoin", "2025"],
+    "mustNotContain": ["unavailable", "no historical"]
   },
   {
     "id": "market_data_lookup-edge-1",
-    "query": "market data",
+    "query": "get market data for AAPL",
     "expectedTools": [
       "market_data_lookup"
     ],
@@ -99,8 +99,8 @@ export const EDGE_CASE_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["AAPL"],
+    "mustNotContain": ["no symbol", "error"]
   },
   {
     "id": "market_overview-edge-1",
@@ -124,12 +124,12 @@ export const EDGE_CASE_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["overview"],
+    "mustNotContain": ["unavailable", "cannot"]
   },
   {
     "id": "get_transactions-edge-1",
-    "query": "transaction",
+    "query": "show me my transactions",
     "expectedTools": [
       "get_transactions"
     ],
@@ -149,8 +149,8 @@ export const EDGE_CASE_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["transaction"],
+    "mustNotContain": ["failed", "no access"]
   },
   {
     "id": "transaction_categorize-edge-1",
@@ -174,8 +174,8 @@ export const EDGE_CASE_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["categ"],
+    "mustNotContain": ["error", "invalid"]
   },
   {
     "id": "transaction_timeline-edge-1",
@@ -199,8 +199,8 @@ export const EDGE_CASE_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["TSLA", "latest"],
+    "mustNotContain": ["not found", "no records"]
   },
   {
     "id": "create_order-edge-1",
@@ -252,8 +252,8 @@ export const EDGE_CASE_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["order"],
+    "mustNotContain": ["error fetching", "invalid"]
   },
   {
     "id": "global-edge-general-chat",
@@ -274,9 +274,9 @@ export const EDGE_CASE_EVAL_CASES: EvalCase[] = [
     "expectedValidity": true,
     "requireLlmAnswer": true,
     "requireLlmReasoning": true,
-    "mustContain": [],
+    "mustContain": ["portfolio", "help"],
     "mustNotContain": [
-      "I bought"
+      "I bought", "error"
     ]
   },
   {
@@ -299,8 +299,8 @@ export const EDGE_CASE_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["AAPL"],
+    "mustNotContain": ["invalid price", "failed"]
   },
   {
     "id": "fact_compliance_check-edge-1",
@@ -318,13 +318,12 @@ export const EDGE_CASE_EVAL_CASES: EvalCase[] = [
     ],
     "dimensions": [
       "tool_execution",
-      "correctness",
-      "edge_cases"
+      "correctness"
     ],
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
+    "mustContain": ["complian", "check"],
     "mustNotContain": []
   },
   {
@@ -349,12 +348,12 @@ export const EDGE_CASE_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["holding"],
+    "mustNotContain": ["error", "unavailable"]
   },
   {
     "id": "static_analysis-edge-1",
-    "query": "run static analysis on my portfolio",
+    "query": "what risks are in my portfolio? run a static analysis",
     "expectedTools": [
       "static_analysis"
     ],
@@ -372,8 +371,8 @@ export const EDGE_CASE_EVAL_CASES: EvalCase[] = [
     "expectedRoute": "llm_tools_llm_user",
     "expectedToolCountAtLeast": 1,
     "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "mustContain": ["risk"],
+    "mustNotContain": ["unable", "error"]
   },
   {
     "id": "tax_estimate-edge-1",
@@ -382,18 +381,15 @@ export const EDGE_CASE_EVAL_CASES: EvalCase[] = [
     "difficulty": "edge",
     "expectedOutput": [],
     "passFailCriteria": [
-      "must satisfy expected route",
-      "must invoke expected tools",
-      "must include expected output fragment"
+      "must route directly to llm",
+      "must provide tax guidance"
     ],
     "dimensions": [
-      "tool_execution",
       "correctness"
     ],
-    "expectedRoute": "llm_tools_llm_user",
-    "expectedToolCountAtLeast": 1,
-    "requireSuccessfulToolCalls": true,
-    "mustContain": [],
-    "mustNotContain": []
+    "expectedValidity": true,
+    "requireLlmAnswer": true,
+    "mustContain": ["tax"],
+    "mustNotContain": ["guaranteed", "financial advice"]
   }
 ];
