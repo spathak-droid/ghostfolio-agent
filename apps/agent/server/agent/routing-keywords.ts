@@ -133,7 +133,15 @@ export const SELECTABLE_KEYWORD_HINTS: Readonly<Record<string, string[]>> = {
     'last 1 week',
     'past month'
   ],
-  market_data_lookup: ['market data', 'fear and greed index'],
+  market_data_lookup: [
+    'market data',
+    'fear and greed index',
+    'lookup market',
+    'get market data',
+    'market data for',
+    'data for',
+    'lookup for'
+  ],
   market_overview: [
     'market overview',
     'market summary',
@@ -160,14 +168,22 @@ export const SELECTABLE_KEYWORD_HINTS: Readonly<Record<string, string[]>> = {
   ],
   create_order: [
     'buy',
+    'sell',
     'purchase',
     'add activity',
     'record buy',
+    'record sell',
     'add order',
     'record a buy',
     'record a sell',
     'i want to buy',
-    'i want to sell'
+    'i want to sell',
+    'i want to purchase',
+    'buy shares',
+    'sell shares',
+    'purchase shares',
+    'create order',
+    'place order'
   ],
   create_other_activities: [
     'dividend',
@@ -197,6 +213,13 @@ export const SELECTABLE_KEYWORD_HINTS: Readonly<Record<string, string[]>> = {
     'find my orders',
     'orders for',
     'which orders',
-    'what do you want to update'
+    'what do you want to update',
+    'show my orders',
+    'my orders',
+    'orders for apple',
+    'show orders',
+    'get orders',
+    'fetch orders',
+    'retrieve orders'
   ]
 };

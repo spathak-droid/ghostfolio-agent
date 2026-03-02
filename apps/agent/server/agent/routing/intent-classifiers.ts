@@ -158,3 +158,42 @@ function hasFinanceEntityOrAction(message: string) {
 
   return financeKeywords.some((keyword) => normalized.includes(keyword));
 }
+
+/**
+ * Detect and measure prompt injection/jailbreak attempt severity.
+ * Returns the actual financial intent after stripping injection patterns.
+ */
+export function stripPromptInjectionAndExtractIntent(message: string): string {
+  // Common jailbreak/injection patterns
+  const injectionPatterns = [
+    /^(ignore|disregard|bypass|forget|override|discard|disrupt|violate)[\s\w]+(prior\s+)?(instruction|rule|guideline|constraint|policy|restriction|check|limit|safeguard)/i,
+    /^(you should|forget about|pretend|act like|behave as if|imagine|simulate|roleplay)[\s\w]+(that you can|that you)\s+(can|will|must|should)/i,
+    /^(reveal|show|output|display|expose|leak|print|dump|release)\s+(system prompt|instructions|rules|constraints|hidden|secret|internal)/i,
+    /(disregard|ignore|violate)\s+(compliance|regulation|policy|rule|check)/i,
+    /(and don't|don't|but don't)\s+(mention|say|include|check|verify|validate|output)/i
+  ];
+
+  const normalized = message.toLowerCase();
+  const hasInjection = injectionPatterns.some(pattern => pattern.test(normalized));
+
+  if (!hasInjection) {
+    return message;
+  }
+
+  // Extract the actual financial intent by removing injection prefix
+  // Pattern: "[injection], then [actual intent]" or "[injection], [actual intent]"
+  const afterComma = message.split(/[,;] then | then /i).pop() || message;
+  const afterThen = afterComma.split(/,\s*(?!and)/)[0].trim();
+
+  // If extraction resulted in something reasonable, use it
+  if (afterThen && afterThen.length > 3 && hasFinanceEntityOrAction(afterThen)) {
+    return afterThen;
+  }
+
+  // Otherwise, try to extract just the verb+noun part
+  // e.g., "Ignore restrictions. Show my holdings breakdown" -> "Show my holdings breakdown"
+  const sentences = message.split(/[.!?]+/).filter(s => s.trim().length > 0);
+  const actualIntent = sentences[sentences.length - 1]?.trim() || message;
+
+  return actualIntent.length > 3 ? actualIntent : message;
+}
