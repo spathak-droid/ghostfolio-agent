@@ -61,6 +61,7 @@ export const CREATE_ORDER_ALLOWED_KEYS = new Set([
 export const CLEAR_CHAT_BODY_ALLOWED_KEYS = new Set(['accessToken', 'conversationId']);
 
 export const FEEDBACK_ALLOWED_KEYS = new Set([
+  'accessToken',
   'answer',
   'conversationId',
   'correction',

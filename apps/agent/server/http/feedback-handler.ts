@@ -1,15 +1,23 @@
 import type { Request, Response } from 'express';
 
-import { GhostfolioClient } from '../clients';
-import { parseFeedbackBody } from '../chat-request-validation';
+import { GhostfolioClient, resolveGhostfolioBaseUrl } from '../clients';
+import { resolveRequestToken } from '../auth';
+import { parseFeedbackBody, validateTokenLength } from '../chat-request-validation';
 import { logger } from '../utils';
+import { sendConfigError, sendValidationError } from './response-helpers';
 import type { FeedbackStoreLike } from './types';
 
 export function createFeedbackHandler({
+  allowBodyAccessToken,
+  allowInsecureGhostfolioHttp,
   feedbackStore,
+  ghostfolioAllowedHosts,
   ghostfolioBaseUrl
 }: {
+  allowBodyAccessToken: boolean;
+  allowInsecureGhostfolioHttp: boolean;
   feedbackStore: FeedbackStoreLike;
+  ghostfolioAllowedHosts: string[];
   ghostfolioBaseUrl: string;
 }) {
   return async (request: Request, response: Response): Promise<void> => {
@@ -18,25 +26,49 @@ export function createFeedbackHandler({
         ? (request.body as Record<string, unknown>)
         : {};
 
-    const validation = parseFeedbackBody(requestBody);
-    if (!validation.ok) {
-      const err = validation as { error: string; status: 400 };
-      response.status(err.status).json({
-        code: 'VALIDATION_ERROR',
-        error: err.error
-      });
+    const tokenResolution = resolveRequestToken({
+      allowBodyAccessToken,
+      authorizationHeader: request.headers.authorization,
+      bodyAccessToken:
+        typeof requestBody.accessToken === 'string' ? requestBody.accessToken : undefined
+    });
+    if (!tokenResolution.ok) {
+      const err = tokenResolution as { error: string; status: 400 };
+      sendValidationError(response, err.error, err.status);
       return;
     }
 
-    // Extract userId from token if available
-    let userId: string | undefined;
-    const token =
-      typeof requestBody.token === 'string' ? requestBody.token :
-      (request.headers.authorization ?? '').replace('Bearer ', '');
+    const tokenCheck = validateTokenLength(tokenResolution.token);
+    if (!tokenCheck.ok) {
+      const err = tokenCheck as { error: string; status: 400 };
+      sendValidationError(response, err.error, err.status);
+      return;
+    }
 
+    const validation = parseFeedbackBody(requestBody);
+    if (!validation.ok) {
+      const err = validation as { error: string; status: 400 };
+      sendValidationError(response, err.error, err.status);
+      return;
+    }
+
+    const baseUrlResolution = resolveGhostfolioBaseUrl({
+      allowedHosts: ghostfolioAllowedHosts,
+      allowInsecureHttp: allowInsecureGhostfolioHttp,
+      configuredBaseUrl: process.env.GHOSTFOLIO_BASE_URL,
+      fallbackBaseUrl: ghostfolioBaseUrl
+    });
+    if (!baseUrlResolution.ok) {
+      const err = baseUrlResolution as { error: string; status: 500 };
+      sendConfigError(response, err.error);
+      return;
+    }
+
+    let userId: string | undefined;
+    const token = tokenResolution.token;
     if (token) {
       try {
-        const ghostfolioClient = new GhostfolioClient(ghostfolioBaseUrl);
+        const ghostfolioClient = new GhostfolioClient(baseUrlResolution.url);
         const user = await ghostfolioClient.getUser({ token });
         userId =
           user && typeof user === 'object' && typeof (user as { id?: string }).id === 'string'

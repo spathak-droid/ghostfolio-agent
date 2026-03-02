@@ -70,7 +70,10 @@ try {
       windowMs: config.clearRateLimitWindowMs
     }),
     feedbackHandler: createFeedbackHandler({
+      allowBodyAccessToken: config.allowBodyAccessToken,
+      allowInsecureGhostfolioHttp: config.allowInsecureGhostfolioHttp,
       feedbackStore: config.feedbackStore,
+      ghostfolioAllowedHosts: config.ghostfolioAllowedHosts,
       ghostfolioBaseUrl: config.ghostfolioBaseUrl
     }),
     feedbackRateLimiter: createRateLimitMiddleware({

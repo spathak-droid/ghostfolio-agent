@@ -23,6 +23,7 @@ import {
 import { persistConversationArtifacts } from './workflow-state';
 import { type AgentConversationStore, type AgentWorkflowState } from '../stores';
 import {
+  inferToolRecoverableFromThrownError,
   isTimeoutError,
   timeoutMessageForOperation,
   withOperationTimeout
@@ -277,7 +278,7 @@ export async function handleNoToolRoute({
             error instanceof Error
               ? error.message
               : 'llm.answer_finance_question failed',
-          recoverable: true
+          recoverable: inferToolRecoverableFromThrownError(error)
         });
         baseAnswer =
           'I could not generate a direct response right now. Please retry your request.';
@@ -401,7 +402,7 @@ export async function finalizeDirectResponse({
         code: 'LLM_EXECUTION_FAILED',
         message:
           error instanceof Error ? error.message : 'llm.answer_finance_question failed',
-        recoverable: true
+        recoverable: inferToolRecoverableFromThrownError(error)
       });
       baseAnswer = 'I could not generate a response right now. Please retry.';
     }
